@@ -1,0 +1,769 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package fullpipeline
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	gwtypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	oomkilled = "OOMKilled"
+	// oomkilledLower is the lowercase-normalized signal name variant, distinct
+	// from oomkilled (container termination Reason, PascalCase) and oomkill
+	// (workflow catalog key prefix).
+	oomkilledLower = "oomkilled"
+	// fpPartKindText is the A2A ContentPart "kind" discriminator for text parts.
+	fpPartKindText = "text"
+)
+
+// ────────────────────────────────────────────────────────────────────────────
+// JSON-RPC helpers (adapted from test/e2e/apifrontend/helpers_test.go)
+// ────────────────────────────────────────────────────────────────────────────
+
+// fpCreateTargetPod gives isolated zero-replica Deployment fixtures the Pod
+// that RCA and workflow discovery resolve as the concrete target. The owner
+// reference preserves the Deployment root-owner chain used by enrichment.
+func fpCreateTargetPod(ctx context.Context, deployment *appsv1.Deployment) {
+	controller := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployment.Name,
+			Namespace: deployment.Namespace,
+			Labels:    map[string]string{"app": "memory-eater"},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       deployment.Name,
+				UID:        deployment.UID,
+				Controller: &controller,
+			}},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name:    "app",
+				Image:   "busybox:1.36",
+				Command: []string{"sleep", "3600"},
+			}},
+		},
+	}
+	key := client.ObjectKeyFromObject(pod)
+	existing := &corev1.Pod{}
+	getErr := apiReader.Get(ctx, key, existing)
+	if getErr == nil {
+		Expect(k8sClient.Delete(ctx, existing)).To(Succeed(), "delete stale isolated target Pod %s/%s", pod.Namespace, pod.Name)
+		Eventually(func() bool {
+			current := &corev1.Pod{}
+			return apierrors.IsNotFound(apiReader.Get(context.Background(), key, current))
+		}, 30*time.Second, time.Second).Should(BeTrue(), "stale isolated target Pod %s/%s should finish deletion", pod.Namespace, pod.Name)
+	} else {
+		Expect(apierrors.IsNotFound(getErr)).To(BeTrue(), "check for stale isolated target Pod %s/%s", pod.Namespace, pod.Name)
+	}
+	Expect(k8sClient.Create(ctx, pod)).To(Succeed(), "create isolated target Pod %s/%s", pod.Namespace, pod.Name)
+	DeferCleanup(func() {
+		_ = k8sClient.Delete(context.Background(), pod)
+	})
+}
+
+// FullPipeline A2A specs use a process-scoped SRE persona from the E2E DEX
+// overlay. This keeps per-user MCP rate-limit and active-context state isolated
+// while allowing independent A2A specs to run in parallel. Direct
+// service-account MCP specs remain parallel as before.
+
+func fpBuildJSONRPC(id, method string, params map[string]interface{}) string {
+	payload := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"id":      id,
+		"params":  params,
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
+// fpA2ATasksSend builds a message/send JSON-RPC payload with a user text message.
+// Each call gets a unique contextId to prevent the SessionInterceptor from
+// routing independent tests to a shared session.
+func fpA2ATasksSend(id, text string) string {
+	return fpBuildJSONRPC(id, "message/send", map[string]interface{}{
+		"message": map[string]interface{}{
+			"messageId": "msg-" + id,
+			"contextId": "ctx-" + id,
+			"role":      "user",
+			"parts": []map[string]interface{}{
+				{"kind": "text", "text": text},
+			},
+		},
+	})
+}
+
+// fpA2AMessageStreamWithContext is a message/stream JSON-RPC payload builder
+// (SSE variant of fpA2ATasksSend/fpA2ATasksSendWithTask) that takes an
+// explicit shared contextID instead of deriving one from id, so a later SSE
+// turn lands in the same ADK session as an earlier one. Mirrors
+// test/e2e/apifrontend/helpers_test.go's a2aMessageStreamWithContext, which
+// is the established pattern for multi-turn SSE conversations (SessionInterceptor
+// only overrides ContextID when the message doesn't already set one).
+//
+//nolint:unparam // contextID currently only varies within a single test's own turns (sharedCtxID), but the param must stay generic — future FP SSE tests (e.g. a client-disconnect-during-reinvocation scenario) will call this with their own distinct context IDs, mirroring apifrontend's helpers_test.go equivalent.
+func fpA2AMessageStreamWithContext(id, contextID, text string) string {
+	return fpBuildJSONRPC(id, "message/stream", map[string]interface{}{
+		"message": map[string]interface{}{
+			"messageId": "msg-" + id,
+			"contextId": contextID,
+			"role":      "user",
+			"parts": []map[string]interface{}{
+				{"kind": "text", "text": text},
+			},
+		},
+	})
+}
+
+// fpA2ATasksSendWithContext continues an existing A2A task like
+// fpA2ATasksSendWithTask, but pins contextId to the caller-supplied ctxID
+// instead of deriving one from taskID. Use this when Turn 1's own message
+// (sent via fpA2ATasksSend, whose session context is "ctx-"+turn1ID) already
+// ran a driver-establishing tool (kubernaut_investigate) chained together
+// with other tool calls in that SAME turn: subsequent genuine turns must
+// keep landing in that exact ADK session (ctxID = "ctx-"+turn1ID) to see the
+// af_interactive_driver_active / af_phase*_blocked / interaction_mode state
+// Turn 1 persisted, rather than a fresh "ctx-"+taskID session that never saw
+// it (issue #1899).
+func fpA2ATasksSendWithContext(id, ctxID, taskID, text string) string {
+	return fpBuildJSONRPC(id, "message/send", map[string]interface{}{
+		"id": taskID,
+		"message": map[string]interface{}{
+			"messageId": "msg-" + id,
+			"contextId": ctxID,
+			"role":      "user",
+			"parts": []map[string]interface{}{
+				{"kind": "text", "text": text},
+			},
+		},
+	})
+}
+
+type fpRPCResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *fpRPCError     `json:"error"`
+}
+
+type fpRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type fpA2ATaskResult struct {
+	ID     string `json:"id"`
+	Status struct {
+		State   string          `json:"state"`
+		Message json.RawMessage `json:"message,omitempty"`
+	} `json:"status"`
+}
+
+// fpA2AInvoke sends a JSON-RPC request to POST /a2a/invoke.
+func fpA2AInvoke(body string) (*http.Response, error) {
+	return fpA2AInvokeWithTimeout(body, 0)
+}
+
+// fpA2AInvokeWithTimeout sends a JSON-RPC request to POST /a2a/invoke with a
+// custom timeout. Use for multi-turn conversations where the session may still
+// be processing a prior turn's tool chain (AF → MCP → KA → mock-LLM).
+// A zero timeout uses the default afHTTPClient (30s).
+func fpA2AInvokeWithTimeout(body string, timeout time.Duration) (*http.Response, error) {
+	return fpA2AInvokeWithContext(context.Background(), body, timeout)
+}
+
+// fpA2AInvokeWithContext sends a JSON-RPC request with caller-controlled
+// cancellation. Long-running turns can be observed concurrently by the test
+// and cancelled if the test exits before the server reaches a terminal state.
+func fpA2AInvokeWithContext(requestContext context.Context, body string, timeout time.Duration) (*http.Response, error) {
+	token := getAFToken()
+	req, err := http.NewRequestWithContext(requestContext, http.MethodPost, afBaseURL+"/a2a/invoke", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if timeout > 0 {
+		client := &http.Client{
+			Transport: afHTTPClient.Transport,
+			Timeout:   timeout,
+		}
+		return client.Do(req)
+	}
+	return afHTTPClient.Do(req)
+}
+
+// fpA2ASSEInvoke sends a JSON-RPC request to POST /a2a/invoke with
+// Accept: text/event-stream, so AF returns a live SSE stream instead of a
+// single blocking JSON response. This is the transport a real Kubernaut
+// Console client uses (see test/e2e/apifrontend/streaming_test.go); FP's
+// other fpA2A* helpers all use message/send and never exercise it against the
+// full RO/SP/AA/KA/WE pipeline (E2E-FP-1189-005 closes that gap).
+// A zero timeout uses the default afHTTPClient (30s); pass an explicit
+// timeout for turns that block until the pipeline (or KA tool call) completes.
+func fpA2ASSEInvoke(body string, timeout time.Duration) (*http.Response, error) {
+	token := getAFToken()
+	req, err := http.NewRequest(http.MethodPost, afBaseURL+"/a2a/invoke", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if timeout > 0 {
+		streamClient := &http.Client{
+			Transport: afHTTPClient.Transport,
+			Timeout:   timeout,
+		}
+		return streamClient.Do(req)
+	}
+	return afHTTPClient.Do(req)
+}
+
+// fpSSEEvent is the JSON-RPC envelope carried by each SSE "data:" frame.
+type fpSSEEvent struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Result  json.RawMessage `json:"result"`
+}
+
+// fpTaskStatusUpdate mirrors A2A's TaskStatusUpdateEvent — carries lifecycle
+// state (working/completed/failed/input-required) plus optional status
+// message text (e.g. reasoning/progress narration a Console user would see).
+type fpTaskStatusUpdate struct {
+	Kind   string `json:"kind"`
+	Status struct {
+		State   string `json:"state"`
+		Message *struct {
+			Parts []struct {
+				Kind string `json:"kind"`
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"message,omitempty"`
+	} `json:"status"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// fpTaskArtifactUpdate mirrors A2A's TaskArtifactUpdateEvent — carries the
+// progressively-streamed LLM output/tool results a Console renders as the
+// main response. Metadata/Data are captured (not just Text) because
+// production schema-tagging (e.g. metadata.type="execution_progress" from
+// pkg/apifrontend/tools/execution_progress.go's BuildProgressSnapshot) lives
+// on the artifact/DataPart, not the text fallback.
+type fpTaskArtifactUpdate struct {
+	Kind     string `json:"kind"`
+	Artifact struct {
+		Metadata map[string]any `json:"metadata,omitempty"`
+		Parts    []struct {
+			Kind string         `json:"kind"`
+			Text string         `json:"text"`
+			Data map[string]any `json:"data,omitempty"`
+		} `json:"parts"`
+	} `json:"artifact"`
+}
+
+// fpArtifactDataPart returns the merged data map of the first DataPart in
+// the artifact, or nil if none is present.
+func fpArtifactDataPart(art fpTaskArtifactUpdate) map[string]any {
+	for _, p := range art.Artifact.Parts {
+		if p.Kind == "data" && p.Data != nil {
+			return p.Data
+		}
+	}
+	return nil
+}
+
+// fpStatusesBySchema returns the status-update events whose metadata.schema
+// matches the given value (e.g. "early_rca" — see emitEarlyRCA in
+// pkg/apifrontend/tools/ka_investigate_bridge.go).
+func fpStatusesBySchema(statuses []fpTaskStatusUpdate, schema string) []fpTaskStatusUpdate {
+	var out []fpTaskStatusUpdate
+	for _, st := range statuses {
+		if s, _ := st.Metadata["schema"].(string); s == schema {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// fpArtifactsByMetaType returns the artifact-update events whose
+// metadata.type matches the given value (e.g. "execution_progress" — see
+// BuildProgressSnapshot in pkg/apifrontend/tools/execution_progress.go).
+func fpArtifactsByMetaType(artifacts []fpTaskArtifactUpdate, metaType string) []fpTaskArtifactUpdate {
+	var out []fpTaskArtifactUpdate
+	for _, art := range artifacts {
+		if t, _ := art.Artifact.Metadata["type"].(string); t == metaType {
+			out = append(out, art)
+		}
+	}
+	return out
+}
+
+// fpArtifactsBySchema returns the artifact-update events whose metadata.schema
+// matches the given value. Unlike fpArtifactsByMetaType (which filters on the
+// coarse-grained metadata.type, e.g. "execution_progress"), this targets the
+// finer-grained "schema" key production uses to distinguish sibling payloads
+// that share the same type -- e.g. investigation_summary artifacts
+// (pkg/apifrontend/tools/ka_investigate_bridge.go) tags its artifact
+// metadata.type="decision" + metadata.schema="investigation_summary", the
+// same "decision" type emitEarlyRCA uses for its early_rca status-update.
+func fpArtifactsBySchema(artifacts []fpTaskArtifactUpdate, schema string) []fpTaskArtifactUpdate {
+	var out []fpTaskArtifactUpdate
+	for _, art := range artifacts {
+		if s, _ := art.Artifact.Metadata["schema"].(string); s == schema {
+			out = append(out, art)
+		}
+	}
+	return out
+}
+
+// fpStatusText concatenates all text parts of a status-update's message.
+func fpStatusText(st fpTaskStatusUpdate) string {
+	if st.Status.Message == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, part := range st.Status.Message.Parts {
+		if part.Kind == fpPartKindText {
+			sb.WriteString(part.Text)
+		}
+	}
+	return sb.String()
+}
+
+// fpScanSSEFrames drains an SSE response body, decoding every "data:" frame
+// into either an artifact-update or status-update event. Mirrors
+// test/e2e/apifrontend/streaming_test.go's scanSSEFrames so FP and AF-only
+// suites assert streaming behavior identically.
+func fpScanSSEFrames(resp *http.Response) (artifacts []fpTaskArtifactUpdate, statuses []fpTaskStatusUpdate) {
+	sc := bufio.NewScanner(resp.Body)
+	// SSE lines can be very long (investigation summaries); allow a larger token than default.
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if !strings.HasPrefix(payload, "{") {
+			continue
+		}
+
+		var evt fpSSEEvent
+		if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+			continue
+		}
+		if len(evt.Result) == 0 {
+			continue
+		}
+
+		var raw map[string]interface{}
+		if err := json.Unmarshal(evt.Result, &raw); err != nil {
+			continue
+		}
+
+		switch kind, _ := raw["kind"].(string); kind {
+		case "artifact-update":
+			var art fpTaskArtifactUpdate
+			if json.Unmarshal(evt.Result, &art) == nil {
+				artifacts = append(artifacts, art)
+			}
+		case "status-update":
+			var st fpTaskStatusUpdate
+			if json.Unmarshal(evt.Result, &st) == nil {
+				statuses = append(statuses, st)
+			}
+		}
+	}
+	return artifacts, statuses
+}
+
+// fpSSETerminalState returns the last terminal state (completed/failed/
+// input-required) seen across the given status-update events, or "" if none
+// reached a terminal state before the stream closed.
+func fpSSETerminalState(statuses []fpTaskStatusUpdate) string {
+	for i := len(statuses) - 1; i >= 0; i-- {
+		switch statuses[i].Status.State {
+		case "completed", "failed", "input-required":
+			return statuses[i].Status.State
+		}
+	}
+	return ""
+}
+
+// fpSSEHasNonEmptyText reports whether any artifact or status-message text
+// part carries visible, non-whitespace content — i.e. whether a Console user
+// watching this stream would have actually seen something render.
+func fpSSEHasNonEmptyText(artifacts []fpTaskArtifactUpdate, statuses []fpTaskStatusUpdate) bool {
+	for _, art := range artifacts {
+		for _, part := range art.Artifact.Parts {
+			if part.Kind == fpPartKindText && strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	for _, st := range statuses {
+		if st.Status.Message == nil {
+			continue
+		}
+		for _, part := range st.Status.Message.Parts {
+			if part.Kind == fpPartKindText && strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fpParseRPC(resp *http.Response) (fpRPCResponse, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fpRPCResponse{}, err
+	}
+	var r fpRPCResponse
+	err = json.Unmarshal(body, &r)
+	return r, err
+}
+
+func fpExtractTask(raw json.RawMessage) (fpA2ATaskResult, error) {
+	var task fpA2ATaskResult
+	err := json.Unmarshal(raw, &task)
+	return task, err
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pipeline polling helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+// fpWaitForRR polls for a RemediationRequest whose targetResource.name contains
+// nameSubstring. Returns the RR name or fails after timeout.
+func fpWaitForRR(nameSubstring string, timeout time.Duration) string {
+	var rrName string
+	Eventually(func() bool {
+		rrList := &remediationv1.RemediationRequestList{}
+		if err := apiReader.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+			return false
+		}
+		for _, rr := range rrList.Items {
+			if strings.Contains(rr.Spec.TargetResource.Name, nameSubstring) {
+				rrName = rr.Name
+				return true
+			}
+		}
+		return false
+	}, timeout, 2*time.Second).Should(BeTrue(), "RemediationRequest targeting %q not found", nameSubstring)
+	return rrName
+}
+
+// fpWaitForRRWithTargetNS polls for a RemediationRequest whose targetResource.name
+// contains "memory-eater" AND whose spec.targetResource.namespace equals targetNS.
+// This avoids picking up RRs from parallel tests that share the same name pattern
+// but target different namespaces. Every FP suite caller targets the shared
+// "memory-eater" fixture Deployment, so the name is fixed rather than parameterized.
+func fpWaitForRRWithTargetNS(targetNS string, timeout time.Duration) string {
+	const nameSubstring = "memory-eater"
+	var rrName string
+	Eventually(func() bool {
+		rrList := &remediationv1.RemediationRequestList{}
+		if err := apiReader.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+			return false
+		}
+		for _, rr := range rrList.Items {
+			if strings.Contains(rr.Spec.TargetResource.Name, nameSubstring) && rr.Spec.TargetResource.Namespace == targetNS {
+				rrName = rr.Name
+				return true
+			}
+		}
+		return false
+	}, timeout, 2*time.Second).Should(BeTrue(),
+		"RemediationRequest targeting %q in namespace %q not found", nameSubstring, targetNS)
+	return rrName
+}
+
+// rrFingerprint computes the signal fingerprint for a target resource, matching
+// the production logic in HandleCreateRR (pkg/apifrontend/tools/af_create_rr.go).
+//
+// Issue #54 bug fix: this previously hashed "namespace/kind/name" with '/'
+// separators, but production (rrFingerprintWithCluster ->
+// gwtypes.CalculateClusterAwareFingerprint) hashes "namespace:kind:name" with
+// ':' separators. The mismatch meant this helper could never match a real RR's
+// spec.signalFingerprint, so fpWaitForRRByFingerprint always timed out even
+// when AF successfully created the RR (E2E-FP-1189-002). Delegating directly
+// to the production function eliminates any future drift.
+func rrFingerprint(namespace, kind, name string) string {
+	return gwtypes.CalculateClusterAwareFingerprint("", gwtypes.ResourceIdentifier{
+		Namespace: namespace,
+		Kind:      kind,
+		Name:      name,
+	})
+}
+
+// fpWaitForRRByFingerprint polls for a RemediationRequest whose spec.signalFingerprint
+// matches the given fingerprint. This uniquely identifies an RR by its target resource
+// (namespace+kind+name hash) regardless of deployment name collisions across tests.
+func fpWaitForRRByFingerprint(fingerprint string, timeout time.Duration) string {
+	var rrName string
+	Eventually(func() bool {
+		rrList := &remediationv1.RemediationRequestList{}
+		if err := apiReader.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+			return false
+		}
+		for _, rr := range rrList.Items {
+			if rr.Spec.SignalFingerprint == fingerprint {
+				rrName = rr.Name
+				return true
+			}
+		}
+		return false
+	}, timeout, 2*time.Second).Should(BeTrue(),
+		"RemediationRequest with fingerprint %q not found", fingerprint[:12])
+	return rrName
+}
+
+// fpWaitForWEComplete waits until a WorkflowExecution for the given RR reaches Completed phase.
+// Fails fast if the WE enters Failed phase, and logs pipeline state periodically for diagnostics.
+func fpWaitForWEComplete(rrName string, timeout time.Duration) {
+	lastLog := time.Time{}
+	logInterval := 30 * time.Second
+	Eventually(func() bool {
+		now := time.Now()
+		shouldLog := now.Sub(lastLog) >= logInterval
+
+		weList := &workflowexecutionv1.WorkflowExecutionList{}
+		if err := apiReader.List(ctx, weList, client.InNamespace(namespace)); err != nil {
+			if shouldLog {
+				GinkgoWriter.Printf("  [fpWaitForWEComplete] failed to list WEs: %v\n", err)
+				lastLog = now
+			}
+			return false
+		}
+		for _, we := range weList.Items {
+			if strings.Contains(we.Name, rrName) || we.Spec.RemediationRequestRef.Name == rrName {
+				phase := we.Status.Phase
+				if phase == "Failed" {
+					Fail(fmt.Sprintf("WorkflowExecution %s failed (phase=Failed)", we.Name))
+				}
+				if shouldLog {
+					GinkgoWriter.Printf("  WE %s phase: %s, engine: %s\n", we.Name, phase, we.Spec.WorkflowRef.ExecutionEngine)
+					lastLog = now
+				}
+				return phase == "Completed"
+			}
+		}
+
+		// No WE found yet -- check upstream pipeline state for diagnostics.
+		if shouldLog {
+			aaList := &aianalysisv1.AIAnalysisList{}
+			if err := apiReader.List(ctx, aaList, client.InNamespace(namespace)); err == nil {
+				found := false
+				for _, aa := range aaList.Items {
+					if strings.Contains(aa.Name, rrName) || aa.Spec.RemediationRequestRef.Name == rrName {
+						GinkgoWriter.Printf("  AA %s phase: %s (WE not yet created)\n", aa.Name, aa.Status.Phase)
+						found = true
+						break
+					}
+				}
+				if !found {
+					GinkgoWriter.Printf("  [fpWaitForWEComplete] no WE or AA found for RR %q (pipeline may not have started)\n", rrName)
+				}
+			}
+			lastLog = now
+		}
+		return false
+	}, timeout, 3*time.Second).Should(BeTrue(), "WorkflowExecution for %q did not complete", rrName)
+}
+
+// fpWaitForPodCrash waits until at least one pod matching the given label has
+// entered a crash state (OOMKilled or CrashLoopBackOff). AF's deriveSignalName
+// uses DominantEventReason to produce a grounded signal name; if called before
+// the pod crashes, only Normal lifecycle events (ScalingReplicaSet, Scheduled)
+// exist and DominantEventReason correctly returns "" (F-SIG-08). Waiting for a
+// crash ensures Warning events like BackOff are present, giving KA a meaningful
+// signal to drive investigation.
+func fpWaitForPodCrash(appLabel string, timeout time.Duration) {
+	fpWaitForPodCrashInNS(appLabel, namespace, timeout)
+}
+
+// fpWaitForPodCrashInNS waits until at least one pod matching the given label
+// in the specified namespace has entered a crash state (OOMKilled or CrashLoopBackOff).
+func fpWaitForPodCrashInNS(appLabel, ns string, timeout time.Duration) {
+	Eventually(func() bool {
+		pods := &corev1.PodList{}
+		if err := apiReader.List(ctx, pods,
+			client.InNamespace(ns),
+			client.MatchingLabels{"app": appLabel}); err != nil {
+			return false
+		}
+		for _, pod := range pods.Items {
+			for _, cs := range pod.Status.ContainerStatuses {
+				if cs.LastTerminationState.Terminated != nil &&
+					cs.LastTerminationState.Terminated.Reason == oomkilled {
+					GinkgoWriter.Printf("  OOMKill detected for %s in %s (restarts=%d)\n", appLabel, ns, cs.RestartCount)
+					return true
+				}
+				if cs.State.Terminated != nil &&
+					cs.State.Terminated.Reason == oomkilled {
+					GinkgoWriter.Printf("  OOMKill detected for %s in %s\n", appLabel, ns)
+					return true
+				}
+				if cs.RestartCount > 0 && cs.State.Waiting != nil &&
+					cs.State.Waiting.Reason == crashloopbackoff {
+					GinkgoWriter.Printf("  CrashLoopBackOff detected for %s in %s\n", appLabel, ns)
+					return true
+				}
+			}
+		}
+		return false
+	}, timeout, 2*time.Second).Should(BeTrue(),
+		"pod with label app=%s in namespace %s should crash (OOMKill or CrashLoopBackOff)", appLabel, ns)
+}
+
+// fpAssertNoISForRR asserts that no InvestigationSession exists for the given RR.
+// Issue #1332: Autonomous flow (kubernaut_remediate) must NOT create an IS.
+func fpAssertNoISForRR(rrName, ns string) {
+	var isList isv1alpha1.InvestigationSessionList
+	err := k8sClient.List(ctx, &isList, client.InNamespace(ns))
+	Expect(err).NotTo(HaveOccurred(), "failed to list InvestigationSessions")
+
+	for _, is := range isList.Items {
+		for _, ref := range is.OwnerReferences {
+			Expect(ref.Name).NotTo(Equal(rrName),
+				"autonomous flow must not create InvestigationSession for RR %s", rrName)
+		}
+	}
+}
+
+// fpAssertNoWEForRR asserts that no WorkflowExecution owned by the given RR
+// exists over a 10-second observation window. Pattern from RO E2E dryrun_e2e_test.go.
+// #1432 / BR-KA-200: Verifies no WE is created for the no-action path.
+func fpAssertNoWEForRR(rrName string) {
+	Consistently(func() int {
+		weList := &workflowexecutionv1.WorkflowExecutionList{}
+		if err := apiReader.List(ctx, weList, client.InNamespace(namespace)); err != nil {
+			return 0
+		}
+		count := 0
+		for _, we := range weList.Items {
+			for _, ref := range we.OwnerReferences {
+				if ref.Kind == "RemediationRequest" && ref.Name == rrName {
+					count++
+				}
+			}
+		}
+		return count
+	}, 10*time.Second, 1*time.Second).Should(Equal(0),
+		"#1432: no WorkflowExecution should be created for RR %s (no-action path)", rrName)
+}
+
+// gatewaySignalResponse mirrors the Gateway's ProcessingResponse for JSON unmarshaling.
+type gatewaySignalResponse struct {
+	Status                      string `json:"status"`
+	Message                     string `json:"message"`
+	Fingerprint                 string `json:"fingerprint"`
+	Duplicate                   bool   `json:"duplicate"`
+	RemediationRequestName      string `json:"remediationRequestName,omitempty"`
+	RemediationRequestNamespace string `json:"remediationRequestNamespace,omitempty"`
+}
+
+// fpPostSignalToGateway injects a K8s event signal via direct Gateway HTTP POST.
+// Retries with Eventually until HTTP 201 (handles scope informer propagation delay).
+// Returns the RemediationRequest name from the Gateway response.
+// #1432: First use of fpAuthToken for direct Gateway signal injection in FP suite.
+func fpPostSignalToGateway(reason, podName, podNamespace string) string {
+	gwURL := gatewayBaseURL + "/api/v1/signals/kubernetes-event"
+	now := time.Now()
+	payload := map[string]interface{}{
+		"type":    "Warning",
+		"reason":  reason,
+		"message": fmt.Sprintf("E2E injected signal: %s", reason),
+		"involvedObject": map[string]interface{}{
+			"kind":      "Pod",
+			"name":      podName,
+			"namespace": podNamespace,
+		},
+		"metadata": map[string]interface{}{
+			"name":      fmt.Sprintf("e2e-signal-%d", now.UnixNano()),
+			"namespace": podNamespace,
+		},
+		"firstTimestamp": now.Format(time.RFC3339),
+		"lastTimestamp":  now.Format(time.RFC3339),
+		"count":          1,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	Expect(err).NotTo(HaveOccurred(), "failed to marshal signal payload")
+
+	var rrName string
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	Eventually(func() int {
+		req, reqErr := http.NewRequest("POST", gwURL, bytes.NewBuffer(payloadBytes))
+		if reqErr != nil {
+			return 0
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if fpAuthToken != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", fpAuthToken))
+		}
+		resp, doErr := httpClient.Do(req)
+		if doErr != nil {
+			return 0
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			var gwResp gatewaySignalResponse
+			if json.Unmarshal(body, &gwResp) == nil {
+				rrName = gwResp.RemediationRequestName
+			}
+		}
+		return resp.StatusCode
+	}, 30*time.Second, 1*time.Second).Should(Equal(http.StatusCreated),
+		"Gateway should accept signal %q and return HTTP 201", reason)
+
+	Expect(rrName).NotTo(BeEmpty(),
+		"Gateway response must include remediationRequestName for signal %q", reason)
+	return rrName
+}

@@ -1,0 +1,798 @@
+package e2e_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// persona holds credentials for a DEX E2E user with a specific RBAC role.
+type persona struct {
+	Email    string
+	Password string
+	Role     string
+}
+
+// BR-AUDIT-005: this fixture's existing AF provider records the DEX subject.
+// Decode only for test attribution, never for authentication; the subsequent
+// real MCP initialize/call must still pass AF's signature/issuer/audience checks.
+func auditOIDCSubject(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("audit OIDC fixture token is not a jwt")
+	}
+	claims, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("decode audit OIDC fixture claims: %w", err)
+	}
+	var identity struct {
+		Subject string `json:"sub"`
+	}
+	if err := json.Unmarshal(claims, &identity); err != nil {
+		return "", fmt.Errorf("parse audit OIDC fixture claims: %w", err)
+	}
+	if identity.Subject == "" {
+		return "", fmt.Errorf("audit OIDC fixture has no subject")
+	}
+	return identity.Subject, nil
+}
+
+// BR-AUDIT-005 (#2501): clone only the existing test SRE identity; preserve
+// issuer, clients, password hash and groups. This never changes AF auth policy.
+func addAuditOIDCActor(config, actor string) (string, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(config), &document); err != nil {
+		return "", fmt.Errorf("parse audit OIDC fixture: %w", err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return "", fmt.Errorf("audit OIDC fixture requires a mapping")
+	}
+	root := document.Content[0]
+	var passwords *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "staticPasswords" {
+			passwords = root.Content[i+1]
+			break
+		}
+	}
+	if passwords == nil || passwords.Kind != yaml.SequenceNode {
+		return "", fmt.Errorf("audit OIDC fixture requires staticPasswords")
+	}
+	var template *yaml.Node
+	for _, entry := range passwords.Content {
+		for i := 0; i+1 < len(entry.Content); i += 2 {
+			if entry.Content[i].Value == "email" && entry.Content[i+1].Value == "sre@kubernaut.ai" {
+				template = entry
+				break
+			}
+		}
+		if template != nil {
+			break
+		}
+	}
+	if template == nil {
+		return "", fmt.Errorf("audit OIDC fixture has no existing SRE identity")
+	}
+	encoded, err := yaml.Marshal(template)
+	if err != nil {
+		return "", fmt.Errorf("clone SRE OIDC fixture: %w", err)
+	}
+	var clone yaml.Node
+	if err := yaml.Unmarshal(encoded, &clone); err != nil {
+		return "", fmt.Errorf("parse cloned SRE OIDC fixture: %w", err)
+	}
+	identity := clone.Content[0]
+	for i := 0; i+1 < len(identity.Content); i += 2 {
+		switch identity.Content[i].Value {
+		case "email", "username", "userID":
+			identity.Content[i+1].Value = actor
+		}
+	}
+	passwords.Content = append(passwords.Content, identity)
+	result, err := yaml.Marshal(&document)
+	if err != nil {
+		return "", fmt.Errorf("marshal audit OIDC fixture: %w", err)
+	}
+	return string(result), nil
+}
+
+func prepareAuditOIDCActor(ctx context.Context, kubeconfigPath, actor string, writer io.Writer) error {
+	fixtureClient, err := newFleetAFSetupClient(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("build audit OIDC fixture client: %w", err)
+	}
+	configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "dex-config", Namespace: e2eNamespace}}
+	if err := fixtureClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap); err != nil {
+		return fmt.Errorf("get audit OIDC fixture: %w", err)
+	}
+	config, err := addAuditOIDCActor(configMap.Data["config.yaml"], actor)
+	if err != nil {
+		return err
+	}
+	configMap.Data["config.yaml"] = config
+	if err := fixtureClient.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("update audit OIDC fixture: %w", err)
+	}
+	// BeforeSuite only: never restart the issuer while parallel specs run.
+	// DEX's existing PVC retains its signing keys and issuer identity.
+	for _, args := range [][]string{
+		{"--kubeconfig", kubeconfigPath, "-n", e2eNamespace, "rollout", "restart", "deployment/dex"},
+		{"--kubeconfig", kubeconfigPath, "-n", e2eNamespace, "rollout", "status", "deployment/dex", "--timeout=120s"},
+	} {
+		cmd := exec.CommandContext(ctx, "kubectl", args...) //nolint:gosec // G204: owned E2E fixture
+		cmd.Stdout, cmd.Stderr = writer, writer
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("restart audit OIDC fixture before specs: %w", err)
+		}
+	}
+	return nil
+}
+
+func afFailureMarkerPath(cluster string) string {
+	return filepath.Join(os.TempDir(), "apifrontend-e2e-failures", cluster)
+}
+
+func markAFFailure(cluster string) error {
+	path := afFailureMarkerPath(cluster)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create owned AF failure marker directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte("1"), 0600); err != nil {
+		return fmt.Errorf("write owned AF failure marker: %w", err)
+	}
+	return nil
+}
+
+type dexPersonaTokenCacheKey struct {
+	role         string
+	dexURL       string
+	clientID     string
+	clientSecret string
+}
+
+var (
+	dexPersonaTokenCacheMu sync.Mutex
+	// Reuse persona tokens across BeforeEach hooks to limit DEX NodePort traffic per worker.
+	dexPersonaTokens      = make(map[dexPersonaTokenCacheKey]string, 6)
+	dexTokenHTTPTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: E2E self-signed certs
+	}
+)
+
+// e2ePersonas defines all 6 RBAC personas available in E2E.
+var e2ePersonas = map[string]persona{
+	"sre":                  {Email: "sre@kubernaut.ai", Password: "password", Role: "sre"},
+	"ai-orchestrator":      {Email: "orchestrator@kubernaut.ai", Password: "password", Role: "ai-orchestrator"},
+	"cicd":                 {Email: "cicd@kubernaut.ai", Password: "password", Role: "cicd"},
+	"observability":        {Email: "observability@kubernaut.ai", Password: "password", Role: "observability"},
+	"l3-audit":             {Email: "auditor@kubernaut.ai", Password: "password", Role: "l3-audit"},
+	"remediation-approver": {Email: "approver@kubernaut.ai", Password: "password", Role: "remediation-approver"},
+}
+
+// Dedicated identities reuse an existing RBAC group without becoming an
+// additional ACL-matrix persona. This keeps session continuity isolated while
+// preserving the same SRE-authorized tool surface.
+const structuredDecisionPersonaName = "structured-decision"
+
+var dedicatedE2EPersonas = map[string]persona{
+	structuredDecisionPersonaName: {
+		Email:    "structured-decision@kubernaut.ai",
+		Password: "password",
+		Role:     "sre",
+	},
+}
+
+// fetchDEXTokenForPersona obtains a JWT for the given persona role.
+func fetchDEXTokenForPersona(role string) (string, error) {
+	p, ok := e2ePersonas[role]
+	if !ok {
+		return "", fmt.Errorf("unknown persona role: %s", role)
+	}
+	return fetchDEXTokenForConfiguredPersona(role, p)
+}
+
+func fetchDEXTokenForDedicatedPersona(name string) (string, error) {
+	p, ok := dedicatedE2EPersonas[name]
+	if !ok {
+		return "", fmt.Errorf("unknown dedicated persona: %s", name)
+	}
+	return fetchDEXTokenForConfiguredPersona(name, p)
+}
+
+func fetchDEXTokenForConfiguredPersona(role string, p persona) (string, error) {
+	key := dexPersonaTokenCacheKey{
+		role:         role,
+		dexURL:       dexURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+	}
+	dexPersonaTokenCacheMu.Lock()
+	defer dexPersonaTokenCacheMu.Unlock()
+	if token, ok := dexPersonaTokens[key]; ok {
+		return token, nil
+	}
+
+	token, err := fetchDEXToken(dexURL, clientID, clientSecret, p.Email, p.Password)
+	if err != nil {
+		return "", err
+	}
+	dexPersonaTokens[key] = token
+	return token, nil
+}
+
+func seedDEXPersonaTokenCache(tokens map[string]string) error {
+	for role, token := range tokens {
+		if _, ok := e2ePersonas[role]; !ok {
+			if _, ok := dedicatedE2EPersonas[role]; !ok {
+				return fmt.Errorf("unknown DEX persona role %q", role)
+			}
+		}
+		if strings.TrimSpace(token) == "" {
+			return fmt.Errorf("empty DEX token for persona %q", role)
+		}
+	}
+
+	dexPersonaTokenCacheMu.Lock()
+	defer dexPersonaTokenCacheMu.Unlock()
+	for role, token := range tokens {
+		key := dexPersonaTokenCacheKey{
+			role:         role,
+			dexURL:       dexURL,
+			clientID:     clientID,
+			clientSecret: clientSecret,
+		}
+		dexPersonaTokens[key] = token
+	}
+	return nil
+}
+
+// a2aInvoke sends a JSON-RPC request to POST /a2a/invoke with the given auth token.
+func a2aInvoke(client *http.Client, base, token, body string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, base+"/a2a/invoke", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	return client.Do(req)
+}
+
+// buildJSONRPC builds a JSON-RPC 2.0 request string.
+func buildJSONRPC(id, method string, params map[string]interface{}) string {
+	payload := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"id":      id,
+		"params":  params,
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
+// a2aTasksSend builds a message/send JSON-RPC payload with a user text message.
+// Each call gets a unique contextId derived from the task ID to prevent the
+// SessionInterceptor from routing independent tests to a shared session.
+func a2aTasksSend(id, text string) string {
+	return a2aTasksSendWithContext(id, "ctx-"+id, text)
+}
+
+// a2aTasksSendWithContext builds a message/send JSON-RPC payload with an explicit
+// contextId, ensuring the SessionInterceptor does not redirect to a stale session.
+func a2aTasksSendWithContext(id, contextID, text string) string {
+	return buildJSONRPC(id, "message/send", map[string]interface{}{
+		"message": map[string]interface{}{
+			"messageId": "msg-" + id,
+			"contextId": contextID,
+			"role":      "user",
+			"parts": []map[string]interface{}{
+				{"kind": "text", "text": text},
+			},
+		},
+	})
+}
+
+// a2aMessageStream builds a message/stream JSON-RPC payload (SSE variant).
+// Each call gets a unique contextId derived from the task ID to prevent the
+// SessionInterceptor from routing independent SSE streams to a shared session,
+// which causes phantom connections that never drain.
+func a2aMessageStream(id, text string) string {
+	return a2aMessageStreamWithContext(id, "ctx-"+id, text)
+}
+
+// a2aMessageStreamWithContext is like a2aMessageStream but takes an explicit
+// shared contextID instead of deriving one from id. Used by multi-turn tests
+// (#1637) where a follow-up turn must land in the same ADK session as an
+// earlier turn — e.g. a kubernaut_investigate call followed by a
+// kubernaut_message call continuing that same interactive session. Since
+// SessionInterceptor only overrides ContextID when the message doesn't
+// already set one (see pkg/apifrontend/launcher/session_interceptor.go),
+// passing the identical contextID across calls is sufficient for ADK-level
+// session continuity — no interceptor involvement required.
+func a2aMessageStreamWithContext(id, contextID, text string) string {
+	return buildJSONRPC(id, "message/stream", map[string]interface{}{
+		"message": map[string]interface{}{
+			"messageId": "msg-" + id,
+			"contextId": contextID,
+			"role":      "user",
+			"parts": []map[string]interface{}{
+				{"kind": "text", "text": text},
+			},
+		},
+	})
+}
+
+// rpcResponse represents a JSON-RPC 2.0 response.
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *rpcError       `json:"error"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// a2aTaskResult represents the task object in an A2A response.
+type a2aTaskResult struct {
+	ID     string `json:"id"`
+	Status struct {
+		State   string          `json:"state"`
+		Message json.RawMessage `json:"message,omitempty"`
+	} `json:"status"`
+}
+
+// a2aSSEEvent models the shared A2A SSE result shape used by the streaming
+// contract tests. Status and artifact payloads use the same event envelope;
+// keeping their nested parts typed avoids repeating map assertions in each
+// test suite.
+type a2aSSEEvent struct {
+	Kind     string          `json:"kind"`
+	Metadata map[string]any  `json:"metadata,omitempty"`
+	Status   *a2aSSEStatus   `json:"status,omitempty"`
+	Artifact *a2aSSEArtifact `json:"artifact,omitempty"`
+}
+
+type a2aSSEStatus struct {
+	State   string         `json:"state,omitempty"`
+	Message *a2aSSEMessage `json:"message,omitempty"`
+}
+
+type a2aSSEMessage struct {
+	Parts []a2aSSEPart `json:"parts,omitempty"`
+}
+
+type a2aSSEArtifact struct {
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Parts    []a2aSSEPart   `json:"parts,omitempty"`
+}
+
+type a2aSSEPart struct {
+	Data json.RawMessage `json:"data,omitempty"`
+	Text string          `json:"text,omitempty"`
+}
+
+// parseRPCResponse reads and parses a JSON-RPC response from an http.Response.
+func parseRPCResponse(resp *http.Response) (rpcResponse, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return rpcResponse{}, err
+	}
+	var r rpcResponse
+	err = json.Unmarshal(body, &r)
+	return r, err
+}
+
+// extractTaskFromResult unmarshals the result field into an a2aTaskResult.
+func extractTaskFromResult(raw json.RawMessage) (a2aTaskResult, error) {
+	var task a2aTaskResult
+	err := json.Unmarshal(raw, &task)
+	return task, err
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+func e2eHostPort(defaultPort int) int {
+	offset, err := strconv.Atoi(getEnvOrDefault("AF_E2E_HOST_PORT_OFFSET", "0"))
+	if err != nil {
+		return defaultPort
+	}
+	return defaultPort + offset
+}
+
+func e2eHostURL(scheme string, defaultPort int) string {
+	return fmt.Sprintf("%s://localhost:%d", scheme, e2eHostPort(defaultPort))
+}
+
+func newTLSClient(caCertPath string) *http.Client {
+	return newTLSClientForKubeconfig(caCertPath, kubeconfigPath)
+}
+
+func newTLSClientForKubeconfig(caCertPath, clusterKubeconfigPath string) *http.Client {
+	base := newTLSTransportForKubeconfig(caCertPath, clusterKubeconfigPath)
+	return &http.Client{
+		Transport: &retryOn429Transport{base: base, maxRetries: 5, baseDelay: 500 * time.Millisecond},
+	}
+}
+
+func newTLSTransportForKubeconfig(caCertPath, clusterKubeconfigPath string) *http.Transport {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caCertPath != "" {
+		caCert, err := os.ReadFile(caCertPath)
+		if err != nil {
+			panic(fmt.Sprintf("read CA cert: %v", err))
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			panic("failed to add CA cert to pool")
+		}
+		// DEX serves a leaf signed by the inter-service CA
+		// (GenerateInterServiceTLS), not the e2e CA above — trust both
+		// (mirrors dex_e2e.go's NewTLSAwareClient for infra-side callers).
+		if isCAPath := kinfra.InterServiceCAPath(clusterKubeconfigPath); isCAPath != "" {
+			if isCA, err := os.ReadFile(isCAPath); err == nil {
+				pool.AppendCertsFromPEM(isCA)
+			}
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return &http.Transport{TLSClientConfig: tlsCfg}
+}
+
+// retryOn429Transport automatically retries on HTTP 429 with exponential
+// backoff. Mirrors kubernaut/test/shared/auth.RetryOn429Transport so that
+// parallel E2E procs absorb transient rate-limiter rejections without
+// requiring inflated limits.
+type retryOn429Transport struct {
+	base       http.RoundTripper
+	maxRetries int
+	baseDelay  time.Duration
+}
+
+func (t *retryOn429Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	delay := t.baseDelay
+	const maxDelay = 4 * time.Second
+
+	for attempt := 0; ; attempt++ {
+		resp, err := t.base.RoundTrip(req)
+		if err != nil {
+			return resp, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests || attempt >= t.maxRetries {
+			return resp, nil
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		wait := delay
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, parseErr := strconv.Atoi(ra); parseErr == nil && secs > 0 {
+				wait = time.Duration(secs) * time.Second
+			}
+		}
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-time.After(wait):
+		}
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+}
+
+// unwrapSSEDataLine extracts the JSON payload from an SSE "data:" line.
+// MCP Streamable HTTP responses may be SSE-wrapped.
+func unwrapSSEDataLine(raw []byte) string {
+	s := string(raw)
+	if !strings.Contains(s, "data:") {
+		return strings.TrimSpace(s)
+	}
+	// MCP Streamable HTTP may return multiple SSE data lines: session
+	// notifications (e.g. tools_list_changed) followed by the actual
+	// JSON-RPC response. Prefer the line containing "result" (the
+	// JSON-RPC response), then fall back to the last JSON data line.
+	var lastJSON, resultLine string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if !strings.HasPrefix(payload, "{") {
+			continue
+		}
+		lastJSON = payload
+		if strings.Contains(payload, `"result"`) {
+			resultLine = payload
+		}
+	}
+	if resultLine != "" {
+		return resultLine
+	}
+	if lastJSON != "" {
+		return lastJSON
+	}
+	return strings.TrimSpace(s)
+}
+
+// initMCPSession performs the MCP initialize handshake and returns the session ID.
+func initMCPSession(token string) (string, error) {
+	body := buildJSONRPC("init-1", "initialize", map[string]interface{}{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]interface{}{},
+		"clientInfo": map[string]interface{}{
+			"name":    "e2e",
+			"version": "1.0",
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("MCP initialize: HTTP %d", resp.StatusCode)
+	}
+	return resp.Header.Get("Mcp-Session-Id"), nil
+}
+
+// mcpPOST sends a JSON-RPC request to the MCP endpoint with auth + session headers.
+func mcpPOST(token, sessionID, jsonBody string) (body []byte, statusCode int, err error) {
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/mcp", strings.NewReader(jsonBody))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err = io.ReadAll(resp.Body)
+	statusCode = resp.StatusCode
+	return body, statusCode, err
+}
+
+// parseMCPToolPayload extracts tool result text from a JSON-RPC MCP response.
+func parseMCPToolPayload(payload string) (text string, toolIsError bool, err error) {
+	var root map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &root); err != nil {
+		return "", false, fmt.Errorf("parse MCP JSON: %w", err)
+	}
+	if e, ok := root["error"]; ok && e != nil {
+		return "", false, fmt.Errorf("json-rpc error: %v", e)
+	}
+	res, ok := root["result"].(map[string]interface{})
+	if !ok {
+		return payload, false, nil
+	}
+	toolIsError, _ = res["isError"].(bool)
+	text = extractMCPResultText(root)
+	return text, toolIsError, nil
+}
+
+// extractMCPResultText walks result.content[0].text in a CallToolResult.
+func extractMCPResultText(root map[string]interface{}) string {
+	res, _ := root["result"].(map[string]interface{})
+	if res == nil {
+		return ""
+	}
+	content, _ := res["content"].([]interface{})
+	if len(content) == 0 {
+		return ""
+	}
+	first, _ := content[0].(map[string]interface{})
+	if first == nil {
+		return ""
+	}
+	t, _ := first["text"].(string)
+	return t
+}
+
+// dexTokenRetryBackoff bounds the retry delay for transient network errors
+// (e.g. "connection reset by peer") observed when many Ginkgo-parallel
+// processes fetch fresh Dex tokens concurrently through the single Kind
+// hostPort -> Dex NodePort path (issue #1807). Short base period: these are
+// sub-second network hiccups, not slow-server backoff.
+var dexTokenRetryBackoff = backoff.Config{
+	BasePeriod:    200 * time.Millisecond,
+	MaxPeriod:     2 * time.Second,
+	Multiplier:    2.0,
+	JitterPercent: 10,
+}
+
+const dexTokenMaxAttempts = 4
+
+const dexTokenRequestTimeout = 3 * time.Second
+
+func fetchDEXToken(dexURL, clientID, clientSecret, username, password string) (string, error) {
+	tlsClient := &http.Client{
+		Timeout:   dexTokenRequestTimeout,
+		Transport: dexTokenHTTPTransport,
+	}
+	return fetchDEXTokenWithClient(tlsClient, dexURL, clientID, clientSecret, username, password)
+}
+
+func fetchDEXTokenWithClient(tlsClient *http.Client, dexURL, clientID, clientSecret, username, password string) (string, error) {
+	tokenURL := dexURL + "/token"
+	data := url.Values{
+		"grant_type":    {"password"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"username":      {username},
+		"password":      {password},
+		"scope":         {"openid email profile groups"},
+	}
+
+	var lastErr error
+	for attempt := int32(1); attempt <= dexTokenMaxAttempts; attempt++ {
+		token, retriable, err := postDEXTokenRequest(tlsClient, tokenURL, data)
+		if err == nil {
+			return token, nil
+		}
+		lastErr = err
+		if !retriable || attempt == dexTokenMaxAttempts {
+			break
+		}
+		time.Sleep(dexTokenRetryBackoff.Calculate(attempt))
+	}
+	return "", lastErr
+}
+
+// postDEXTokenRequest performs a single Dex token request attempt.
+// retriable reports whether err is a transient network-level failure (no
+// HTTP response received) worth retrying, as opposed to a deterministic
+// auth/protocol failure (bad credentials, malformed response) that would
+// fail identically on every retry.
+func postDEXTokenRequest(tlsClient *http.Client, tokenURL string, data url.Values) (token string, retriable bool, err error) {
+	resp, err := tlsClient.PostForm(tokenURL, data)
+	if err != nil {
+		return "", true, fmt.Errorf("token request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", true, fmt.Errorf("read token response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("token request returned %d: %s", resp.StatusCode, body)
+	}
+
+	var tokenResp struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", false, fmt.Errorf("unmarshal token response: %w", err)
+	}
+	if tokenResp.IDToken == "" {
+		return "", false, fmt.Errorf("id_token not found in response: %s", body)
+	}
+	return tokenResp.IDToken, false, nil
+}
+
+func buildRR(namespace, rrName, targetName string) *remediationv1alpha1.RemediationRequest {
+	h := sha256.Sum256([]byte(fmt.Sprintf("e2e-%s-Deployment-%s", namespace, targetName)))
+	fp := hex.EncodeToString(h[:])
+	firingTime := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	receivedTime := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC))
+	return &remediationv1alpha1.RemediationRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rrName,
+			Namespace: namespace,
+		},
+		Spec: remediationv1alpha1.RemediationRequestSpec{
+			SignalName:        "E2ETestAlert",
+			SignalFingerprint: fp,
+			SignalType:        "prometheus",
+			Severity:          "warning",
+			FiringTime:        firingTime,
+			ReceivedTime:      receivedTime,
+			TargetType:        "kubernetes",
+			TargetResource: remediationv1alpha1.ResourceIdentifier{
+				Kind: "Deployment",
+				Name: targetName,
+			},
+		},
+	}
+}
+
+// createRR creates a RemediationRequest targeting a Deployment (the only
+// target kind used across all e2e/apifrontend tests).
+func createRR(namespace, rrName, targetName string) error {
+	rr := buildRR(namespace, rrName, targetName)
+	return k8sClient.Create(context.Background(), rr)
+}
+
+func deleteRR(namespace, rrName string) {
+	rr := &remediationv1alpha1.RemediationRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rrName,
+			Namespace: namespace,
+		},
+	}
+	_ = client.IgnoreNotFound(k8sClient.Delete(context.Background(), rr))
+}
+
+func buildRAR(namespace, rarName, rrName string) *remediationv1alpha1.RemediationApprovalRequest {
+	return &remediationv1alpha1.RemediationApprovalRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rarName,
+			Namespace: namespace,
+		},
+		Spec: remediationv1alpha1.RemediationApprovalRequestSpec{
+			RemediationRequestRef: corev1.ObjectReference{
+				Name:      rrName,
+				Namespace: namespace,
+			},
+			AIAnalysisRef: remediationv1alpha1.ObjectRef{
+				Name: "e2e-analysis-" + rarName,
+			},
+			Confidence:           0.65,
+			ConfidenceLevel:      "medium",
+			InvestigationSummary: fmt.Sprintf("E2E RAR flow — RR %s", rrName),
+			Reason:               "E2E approval gate",
+			WhyApprovalRequired:  "E2E coverage G5",
+			RequiredBy:           metav1.NewTime(time.Now().UTC()),
+			RecommendedActions: []remediationv1alpha1.ApprovalRecommendedAction{
+				{
+					Action:    "RestartPod",
+					Rationale: "E2E recommended action",
+				},
+			},
+			RecommendedWorkflow: remediationv1alpha1.RecommendedWorkflowSummary{
+				WorkflowID:      "wf-restart-pod-v1",
+				Version:         "1.0.0",
+				ExecutionBundle: "ghcr.io/jordigilh/kubernaut/bundles/restart-pod@sha256:e2e",
+				Rationale:       "E2E workflow",
+			},
+		},
+	}
+}

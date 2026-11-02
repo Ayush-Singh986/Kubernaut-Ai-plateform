@@ -1,0 +1,140 @@
+# ADR-064: Multi-Cluster Investigation via OCP MCP Server
+
+**Status**: Superseded by [ADR-068](ADR-068-fleet-federation-architecture.md) (Fleet Federation Architecture)
+**Date**: 2026-06-04
+**Updated**: 2026-06-13
+**Deciders**: Architecture Team
+**Context**: ServiceNow signal investigation requires multi-cluster K8s access
+
+> **Superseded (Issue [#2254](https://github.com/jordigilh/kubernaut/issues/2254))**: The
+> direct KA-to-per-cluster-OCP-MCP-Server design described below (no MCP Gateway) was never
+> what shipped for fleet/multi-cluster tool discovery. The actual v1.6 architecture is the
+> Gateway-fronted design in [ADR-068](ADR-068-fleet-federation-architecture.md) (Status:
+> Implemented (MVP)): an MCP Gateway (Kuadrant or Envoy AI Gateway) fronts per-cluster K8s
+> MCP Server backends, and KA calls a `fleetclient.GatewayDiscoverer` server-side to pre-scope
+> tools per investigation (current mechanism: [DD-FLEET-005](DD-FLEET-005-cluster-transparent-tool-exposure.md);
+> code: `internal/kubernautagent/investigator/fleet_overlay.go`,
+> `pkg/fleet/mcpclient/discovery.go`). There is no direct-connect code path in the shipped
+> implementation. Kept below as a historical record of the originally-deferred design.
+
+## v1.5 Decision
+
+For v1.5 MVP, multi-cluster resource status is achieved via **Thanos Querier** (existing Prometheus tools, zero new code). The direct KA→OCP MCP architecture described below is validated (spike complete, prototype working) and deferred to v1.6+ for full K8s API access (events, logs, resource specs).
+
+## Context
+
+ServiceNow tickets reference resources (nodes, clusters) across multiple workload clusters. Kubernaut's Knowledge Agent (KA) runs in a management cluster and currently only accesses the local cluster via `client-go`. For ServiceNow signals (`TargetType="servicenow"`), KA must investigate resources in the workload cluster where the CMDB CI lives.
+
+Single-cluster investigation is insufficient for a real ServiceNow use case.
+
+## Decision
+
+KA connects **directly** to per-cluster OCP MCP servers, authenticating with a short-lived JWT per cluster. No MCP Gateway.
+
+```
+Management Cluster
+└── KA ──JWT──> OCP MCP Server (Workload Cluster A, read-only)
+    ──JWT──> OCP MCP Server (Workload Cluster B, read-only)
+```
+
+1. **Per-cluster OCP MCP servers**: Deploy `openshift/openshift-mcp-server` on each workload cluster in read-only mode (`--read-only --stateless`) with investigation-scoped RBAC.
+
+2. **KA as direct MCP client**: KA connects to each OCP MCP server via `StreamableClientTransport`. A cluster registry (ConfigMap or Secret) maps cluster names to MCP server endpoints + auth credentials.
+
+3. **Per-cluster JWT authentication**: KA mints or obtains a short-lived token per cluster. Options (in order of preference):
+   - **Projected SA token with audience**: `TokenRequest` API targeting the OCP MCP server's expected audience per cluster
+   - **ACM managed cluster credentials**: Leverage existing hub-spoke auth (kubeconfig secrets in management cluster)
+   - **OIDC federation**: Management cluster's SA token issuer trusted by workload clusters
+
+4. **Cluster routing**: CMDB CI name → cluster endpoint lookup from the cluster registry. KA connects to exactly one MCP server per investigation -- no tool aggregation needed.
+
+5. **Dual tool path**: K8s-originated signals continue using local `client-go` tools. ServiceNow signals use MCP Bridge tools for remote cluster access.
+
+## Why Not MCP Gateway (for ADR-064's Direct-Connect Use Case)
+
+The MCP Gateway was evaluated in the spike (4 spikes, all GO). It was **removed** from
+this ADR's architecture because KA's direct-connect use case does not benefit from aggregation:
+
+| Gateway Capability | Does KA need it? | Reason |
+|-------------------|-----------------|--------|
+| Tool prefix routing (aggregate N servers) | **No** | KA knows the target cluster from `ProviderData.cmdb_ci` -- connects to exactly one server per investigation |
+| Centralized auth | **No** | KA authenticates per-connection with JWT |
+| Rate limiting | **No** | KA self-limits; investigation tool calls are sequential |
+| Observability | **No** | KA instruments its own MCP calls |
+
+**Net effect of removing the gateway for this use case:**
+- ~10-50ms lower latency per tool call (no gateway hop)
+- Simpler deployment: OCP MCP server per cluster + cluster registry Secret
+
+> **Note**: The MCP Gateway is used in the fleet federation architecture (ADR-068) where
+> multiple Kubernaut services (GW, KA, RO, SP, AF, EM, FMC, WE) need aggregated access
+> to all managed clusters. ADR-068 uses **Envoy AI Gateway** (not Kuadrant) for this
+> purpose — Kuadrant was evaluated and rejected due to its Istio dependency. See ADR-068
+> Alternative I for the full comparison.
+
+## Consequences
+
+### Positive
+
+- Multi-cluster investigation without modifying KA's existing K8s tool surface
+- Security: per-cluster ServiceAccounts with least-privilege RBAC
+- Failure isolation: one cluster's MCP server failing doesn't affect others
+- No Technology Preview dependencies
+- Lower latency than gateway architecture
+- Same MCP SDK (`modelcontextprotocol/go-sdk v1.6.1`) already in use
+- OCP MCP server provides bonus tools (nodes_log, alertmanager_alerts) KA doesn't have
+- `StreamableProvider` prototype already supports direct connections
+
+### Negative
+
+- KA manages N MCP client connections (one per cluster) instead of 1
+- Cluster registry (endpoint + credential per cluster) must be maintained
+- No Envoy-level observability on MCP traffic (KA instruments its own calls)
+
+### Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Network connectivity to workload clusters | Medium | High | Leverage ACM hub-spoke connectivity; OCP MCP server exposed via Route |
+| Credential rotation across N clusters | Low | Medium | Short-lived projected SA tokens; no long-lived secrets |
+| Cross-cluster latency | Low | Low | Investigation tools are sequential, not latency-critical |
+
+## Alternatives Considered
+
+### A: MCP Gateway (Kuadrant) -- Rejected for Direct-Connect
+
+**Approach**: Deploy MCP Gateway in management cluster, register per-cluster OCP MCP servers with tool prefixes.
+
+**Rejected for this use case because**: Gateway adds infrastructure complexity without value -- KA already knows the target cluster and doesn't need tool aggregation. The simpler direct approach is preferred for single-server-per-investigation patterns.
+
+> **Note**: For fleet federation (ADR-068), an MCP Gateway IS used but with **Envoy AI Gateway**
+> instead of Kuadrant, eliminating the Istio dependency.
+
+### B: Multi-kubeconfig in KA -- Rejected
+
+KA directly manages kubeconfigs for all workload clusters via `client-go`.
+
+**Rejected because**: Doesn't leverage OCP MCP server's toolset. Requires KA to reimplement tool logic for remote clusters.
+
+### C: Single multi-context OCP MCP server -- Rejected
+
+One OCP MCP server with kubeconfig containing all cluster contexts.
+
+**Rejected because**: Single point of failure, violates least-privilege (one SA for all clusters), kubeconfig rotation requires restart.
+
+## Validation
+
+Spike evidence in `docs/spikes/multi-cluster-mcp-gateway/`:
+
+| Spike | Status | Key Finding |
+|-------|--------|-------------|
+| Spike 1: Tool Coverage | GO | OCP MCP server covers 82% of KA's investigation tools |
+| Spike 2: Gateway Deployment | GO (architecture validated, gateway removed from design) | Manifests documented but gateway deemed unnecessary |
+| Spike 3: KA MCP Client | GO | `StreamableProvider` + `BridgeTool` working (14 tests). Works for direct connections -- no gateway needed. |
+| Spike 4: Cluster Routing | GO | Direct cluster endpoint lookup replaces prefix routing |
+
+## References
+
+- DD-INT-020 v1.5: ServiceNow Signal Target Type (Part E)
+- ADR-063: ServiceNow Signal Integration Architecture
+- `openshift/openshift-mcp-server`: https://github.com/openshift/openshift-mcp-server

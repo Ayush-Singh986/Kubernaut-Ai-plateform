@@ -1,0 +1,43 @@
+# Gateway Service - Valid Configuration
+# Used for testing configuration loading
+
+server:
+  listenAddr: ":8080"
+  readTimeout: "30s"
+  writeTimeout: "30s"
+  idleTimeout: "120s"
+
+cors:
+  allowedOrigins:
+    - "https://no-browser-clients.invalid"
+  allowedMethods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowCredentials: false
+  maxAge: 300
+
+middleware:
+  # Concurrency limiting via chi Throttle in server.maxConcurrentRequests (ADR-048-ADDENDUM-001)
+
+datastorage:
+  # ADR-030: DataStorage connectivity (audit trail + workflow catalog)
+  url: "http://data-storage-service:8080"
+  timeout: 10s
+  buffer:
+    bufferSize: 10000
+    batchSize: 100
+    flushInterval: 1s
+    maxRetries: 3
+
+processing:
+  deduplication:
+    # DD-GATEWAY-011: TTL removed; deduplication window = CRD lifecycle
+    cooldownPeriod: "5m"
+
+  # Note: environment and priority configuration removed (2025-12-06)
+  # Classification now owned by Signal Processing per DD-CATEGORIZATION-001
+
+

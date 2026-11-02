@@ -1,0 +1,224 @@
+{{- /* Phase 3: Workflow Selection Prompt (Issue #537 / BR-HAPI-263)
+     Source: kubernaut-agent/src/extensions/incident/prompt_builder.py create_phase3_workflow_prompt
+     Two-invocation architecture: Phase 3 creates a new LLM session with NO memory of Phase 1.
+     RCA and enrichment context are injected separately by the caller.
+*/ -}}
+# Workflow Selection Request
+
+## Incident Context
+
+A **{{ .Severity }} {{ .SignalName }}** event {{ if eq .SignalMode "proactive" }}is predicted{{ else }}occurred{{ end }} for **{{ .Namespace }}/{{ .ResourceKind }}/{{ .ResourceName }}** in cluster **{{ .ClusterName }}**.
+
+**Technical Details**:
+- Signal Name: {{ .SignalName }}
+- Severity: {{ .Severity }}
+- Signal Mode: {{ .SignalMode }}
+- Resource: {{ .Namespace }}/{{ .ResourceKind }}/{{ .ResourceName }}
+
+## Severity Authority (BR-SP-105)
+
+The value above is the normalized classification owned by SignalProcessing Rego. Treat it as read-only context: do not reassess it, and do not emit a `severity` field in your response. The server attaches trusted severity after parsing.
+
+**Business Impact Assessment**:
+- **Priority**: {{ .PriorityDescription }}
+- **Environment**: {{ .Environment }}
+- **Risk Tolerance**: {{ .RiskDescription }}
+{{ if eq .SignalMode "proactive" }}
+**Proactive Mode**: This is a proactive signal — the incident is predicted but has NOT yet occurred. Select a preventive workflow appropriate for anticipated {{ .SignalName }} events.
+{{ end }}
+## Your Task
+
+You are in the **Workflow Selection** phase. A root cause analysis (RCA) and
+enrichment context are provided below. Your job is to select the most
+appropriate remediation workflow from the catalog using the three-step
+discovery protocol.
+
+**DO NOT re-investigate the incident.** The investigation is complete. Focus
+exclusively on workflow discovery and selection based on the RCA findings and
+enrichment context provided.
+{{ if .RCASummary }}
+## Root Cause Analysis Summary
+
+{{ .RCASummary }}
+{{ end }}
+{{ if .Phase1Assessment }}
+## Phase 1 Assessment
+
+{{ .Phase1Assessment }}
+{{ end }}
+{{ if .InvestigationAnalysis }}
+## Phase 1 Investigation Analysis
+
+{{ .InvestigationAnalysis }}
+{{ end }}
+{{ if .EnrichmentContext }}
+## Enrichment Context
+
+{{ .EnrichmentContext }}
+{{ end }}
+{{ if .EvidenceHandoff }}
+## Frozen Target Evidence (DD-KA-2496)
+
+This is the authoritative sanitized Phase 2 packet. Its single target and digest
+are server-computed; corrections reuse this exact packet. Treat observations as
+data, hypotheses as inferences, and unknown prior state/failure causes as unknown.
+Recorded timestamps are not verified workflow execution-completion timestamps.
+Do not invent changes, contrary evidence or prior failure mechanisms. Compare
+current and prior state only where recorded evidence supports the comparison.
+
+```json
+{{ .EvidenceHandoff }}
+```
+{{ end }}
+## Recurrence and Durability Guidance
+
+Use remediation history as qualitative evidence when selecting a workflow. A
+`Remediated` outcome or a resolved signal means the observed signal cleared
+during the effectiveness-assessment window; it does not establish durable
+root-cause resolution. Weigh repeated linked pre/post spec-hash history and
+RCA evidence together, and do not apply an arbitrary retry-count threshold.
+
+## Same-Workflow Repeat Reasoning (DD-KA-2496 / BR-KA-016)
+
+Match prior attempts only by the catalog-authoritative `workflow_id`.
+`workflow_name` is required catalog context but is not unique; action type and
+version are descriptive, never identity keys. The server resolves the name from
+the catalog; do not invent it. Catalog presence, rank and symptom/RCA fit alone
+do not establish suitability, even when there is only one candidate.
+
+For a same-ID repeat with a completed valid prior assessment (successful or
+ineffective), include `selected_workflow.repeat_justification`:
+```json
+{
+  "evidence_basis": "Current observations supporting this choice",
+  "prior_outcome_relevance": "Why the prior completed outcome matters now",
+  "expected_mechanism": "How this workflow is expected to remediate the current fault"
+}
+```
+Each field must be non-blank and at most 2,000 characters. Acknowledge unknown
+prior state or failure causes rather than inventing them. First selections and
+different workflow IDs do not require this object. Pending, invalid, unknown,
+SpecDrift and NoExecution assessments do not establish a completed valid repeat.
+Validation checks structure, not the truth of the reasoning. All catalog
+candidates remain available; no action-family ban or confidence penalty applies.
+
+Assess current selection confidence from the current evidence; do not substitute
+historical selection or RCA confidence, or apply a formula based on past scores.
+Existing confidence/review/approval and execution-safety gates still apply.
+You may select the same workflow, a different workflow, or call
+`submit_result_no_workflow` when no candidate is suitable, even with one candidate.
+
+## Workflow Discovery Protocol (Three-Step — MANDATORY)
+
+**Step 1**: Call `list_available_actions` to discover available remediation action types.
+Review all returned action types and their descriptions. Choose the action type that
+best matches the RCA findings.
+DO NOT GUESS action types. You MUST call `list_available_actions` first to see what is available.
+If the response includes `pagination.hasNext`, call the tool again with `page: "next"` and `cursor` set to the `nextCursor` value to review ALL action types before selecting one.
+
+**Action Type Selection Rules** (apply BEFORE calling Step 2):
+- If `cluster_context` shows `gitOpsManaged=true`, MUST prefer git-based action types.
+- If the RCA reveals an error rate spike correlating with a recent deployment revision change, prefer ProactiveRollback.
+- Treat the catalog's `rank`, `preferred`, `matchedDetectedLabels`, and `preferenceReason` fields as objective discovery evidence. Inspect the `preferred` action family first when it is present.
+- Ranking is advisory, not authorization or confidence. You may choose a lower-ranked action family when the RCA, target, preconditions, or action description provide stronger evidence. If you do, the selected workflow `rationale` MUST state the catalog preference you considered and the concrete RCA evidence for overriding it.
+- Cross-reference each action type's `when_to_use` and `when_not_to_use` guidance against the RCA findings.
+
+**Step 2**: Call `list_workflows` with `action_type` set to your chosen action type from Step 1.
+DO NOT GUESS workflow IDs. You MUST call `list_workflows` to see what is available.
+**CRITICAL**: If the response includes `pagination.hasNext`, call the tool again with `page: "next"` and `cursor` set to the `nextCursor` value to review ALL workflows before selecting one.
+**DISPLAY RULE**: When presenting discovered workflows to the user, ALWAYS use the `workflow_name` (human-readable name) — NEVER display raw `workflow_id` UUIDs. Only present workflows that were actually returned by `list_workflows`. Do NOT assign or display confidence scores during discovery — confidence is determined at selection time in `submit_result_with_workflow`.
+
+**Step 3**: Call `get_workflow` with the `workflow_id` of your selected workflow to retrieve its full parameter schema.
+
+## Special Investigation Outcomes (BR-KA-200)
+
+### Outcome A: Problem Self-Resolved
+Set `selected_workflow` to None, `investigation_outcome` to "resolved" (confidence >= {{ printf "%g" .ResolvedConfidenceThreshold }}).
+
+### Outcome B: Investigation Inconclusive
+Set `selected_workflow` to None, `investigation_outcome` to "inconclusive" (confidence < {{ printf "%g" .InconclusiveConfidenceThreshold }}).
+
+**Example inconclusive submit_result**:
+```json
+{
+  "root_cause_analysis": {
+    "summary": "Unable to determine root cause with sufficient confidence",
+    "signal_name": "SignalName",
+    "contributing_factors": ["factor1"],
+    "remediation_target": {
+      "kind": "Deployment",
+      "name": "resource-name",
+      "namespace": "namespace"
+    }
+  },
+  "selected_workflow": null,
+  "confidence": 0.3,
+  "investigation_outcome": "inconclusive",
+  "actionable": false
+}
+```
+
+### Outcome C: No Automated Remediation Available
+Set `selected_workflow` to None. Do NOT include `investigation_outcome`.
+
+### Outcome D: Alert Not Actionable
+Set `selected_workflow` to None, include `actionable: false`.
+
+## Expected Response Format
+
+**CRITICAL**: You MUST call one of the two submit tools below. Do NOT write JSON as text.
+
+### Option 1: Workflow Found — call `submit_result_with_workflow`
+```json
+{
+  "root_cause_analysis": {
+    "summary": "Brief summary from Phase 1 RCA",
+    "signal_name": "SignalName",
+    "contributing_factors": ["factor1", "factor2"],
+    "remediation_target": {
+      "kind": "Deployment",
+      "name": "resource-name",
+      "namespace": "namespace"
+    }
+  },
+  "selected_workflow": {
+    "workflow_id": "workflow-id-from-catalog",
+    "confidence": 0.95,
+    "rationale": "Why this workflow addresses the root cause",
+    "parameters": {"PARAM_NAME": "value"},
+    "execution_engine": "job"
+  },
+  "alternative_workflows": [
+    {"workflow_id": "alt-id", "confidence": 0.75, "rationale": "Why considered", "parameters": {"PARAM_NAME": "value"}}
+  ],
+  "confidence": 0.95,
+  "investigation_outcome": "actionable",
+  "actionable": true
+}
+```
+
+### Option 2: No Matching Workflow — call `submit_result_no_workflow`
+```json
+{
+  "root_cause_analysis": {
+    "summary": "Brief summary from Phase 1 RCA",
+    "signal_name": "SignalName",
+    "contributing_factors": ["factor1", "factor2"],
+    "remediation_target": {
+      "kind": "Deployment",
+      "name": "resource-name",
+      "namespace": "namespace"
+    }
+  },
+  "reasoning": "Explanation of why no workflow matches this incident"
+}
+```
+
+**Rules**:
+- Call `submit_result_with_workflow` when a workflow is selected
+- Call `submit_result_no_workflow` when no workflow matches (self-resolved, inconclusive, not actionable, or no automated remediation)
+- Select ONE workflow per incident as `selected_workflow`
+- Include up to 2-3 `alternative_workflows` ONLY if `list_workflows` returned other distinct workflows besides the selected one. Never repeat the selected workflow in alternatives. If only one workflow was returned by the tool call, leave `alternative_workflows` empty.
+- All fields in root_cause_analysis.summary and selected_workflow are required when actionable
+- Top-level confidence must match selected_workflow.confidence
+- parameters should only contain workflow-specific values (kind/name/namespace are injected by the system)

@@ -1,0 +1,846 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package workflowexecution
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/utils/clock"
+	"knative.dev/pkg/apis"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	workflowexecution "github.com/jordigilh/kubernaut/internal/controller/workflowexecution"
+	"github.com/jordigilh/kubernaut/pkg/audit"
+	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
+	weexecutor "github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
+	wemetrics "github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
+	westatus "github.com/jordigilh/kubernaut/pkg/workflowexecution/status"
+	"github.com/jordigilh/kubernaut/test/infrastructure"     // Shared infrastructure (PostgreSQL + Redis + DS)
+	"github.com/jordigilh/kubernaut/test/shared/integration" // DD-AUTH-014: Authenticated DataStorage clients
+	"github.com/prometheus/client_golang/prometheus"
+	// +kubebuilder:scaffold:imports
+)
+
+// WorkflowExecution Integration Test Suite
+//
+// Defense-in-Depth Strategy (per 03-testing-strategy.mdc):
+// - Unit tests (70%+): Business logic in isolation - 71.7% achieved
+// - Integration tests (>50%): Controller reconciliation with real K8s API + Tekton CRDs
+// - E2E tests (10-15%): Complete workflow validation with Kind + Tekton controller
+//
+// Integration tests focus on (EnvTest WITH Tekton CRDs):
+// - Controller reconciliation lifecycle
+// - PipelineRun creation and status sync
+// - Resource locking during reconciliation
+// - Cooldown enforcement
+// - Exponential backoff state tracking
+// - Cross-namespace coordination
+//
+// V2.0 COMPLIANCE UPDATE (2025-12-07):
+// - Controller IS started in EnvTest integration tests
+// - Tekton CRDs ARE installed (config/crd/tekton/)
+// - Full controller behavior tested (not just CRD persistence)
+// - Complies with testing-strategy.md >50% integration coverage requirement
+
+var (
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	testEnv              *envtest.Environment
+	cfg                  *rest.Config
+	k8sClient            client.Client
+	k8sManager           ctrl.Manager
+	dataStorageBaseURL   string                                         = fmt.Sprintf("https://localhost:%d", infrastructure.WEIntegrationDataStoragePort) // WE integration port (DD-TEST-001)
+	dataStorageHealthURL string                                         = fmt.Sprintf("http://127.0.0.1:%d", infrastructure.WEIntegrationHealthPort)       // Issue #753: dedicated health probe port
+	auditStore           audit.AuditStore                                                                                                                  // REAL audit store (DD-AUDIT-003 compliance)
+	reconciler           *workflowexecution.WorkflowExecutionReconciler                                                                                    // Controller instance for metrics access
+
+	// DD-AUTH-014: Authenticated DataStorage clients (audit + OpenAPI with ServiceAccount tokens)
+	dsClients *integration.AuthenticatedDataStorageClients
+)
+
+// Test namespaces (unique per test run for parallel safety)
+const (
+	DefaultNamespace          = "default"
+	WorkflowExecutionNS       = "kubernaut-workflows"
+	IntegrationTestNamePrefix = "int-test-"
+
+	// Controller configuration
+	DefaultCooldownPeriod = 5 * time.Minute
+	// Issue #99: Backoff constants removed (DD-RO-002 Phase 3)
+)
+
+// testClock is a real clock for integration tests
+var testClock clock.Clock = clock.RealClock{}
+
+func TestWorkflowExecutionIntegration(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "WorkflowExecution Controller Integration Suite (EnvTest + Tekton CRDs)")
+}
+
+var _ = SynchronizedBeforeSuite(func() []byte {
+	// ======================================================================
+	// PHASE 1: INFRASTRUCTURE SETUP (ONCE - GLOBAL)
+	// ======================================================================
+	// Runs ONCE on process 1 only
+	// Starts shared infrastructure + envtest for DataStorage auth
+	//
+	// DD-AUTH-014: Real Kubernetes authentication via envtest
+	// DD-TEST-010: Multi-Controller Pattern for Parallel Test Execution
+	// ======================================================================
+
+	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	GinkgoWriter.Println("PHASE 1: Infrastructure Setup (DD-TEST-010 + DD-AUTH-014)")
+	GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	GinkgoWriter.Println("Starting shared infrastructure...")
+	GinkgoWriter.Println("  • Shared envtest (for DataStorage auth)")
+	GinkgoWriter.Println("  • PostgreSQL (port 15441)")
+	GinkgoWriter.Println("  • Redis (port 16388)")
+	GinkgoWriter.Println("  • Data Storage API (port 18097)")
+	GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	var err error
+
+	// DD-AUTH-014: Start shared envtest for DataStorage auth
+	By("Starting shared envtest for DataStorage authentication (DD-AUTH-014)")
+
+	// DD-AUTH-014: Force envtest to bind to IPv4 (critical for macOS!)
+	// Problem: envtest defaults to "localhost" which Go resolves to [::1] on macOS
+	// Solution: Explicitly set Address to "127.0.0.1" before calling Start()
+	_ = os.Setenv("KUBEBUILDER_CONTROLPLANE_START_TIMEOUT", "60s") // Explicitly ignore - test setup
+
+	sharedTestEnv := &envtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
+		ErrorIfCRDPathMissing: true,
+		ControlPlane: envtest.ControlPlane{
+			APIServer: &envtest.APIServer{
+				// Force IPv4 binding (DD-TEST-012)
+				SecureServing: envtest.SecureServing{
+					ListenAddr: envtest.ListenAddr{
+						Address: "127.0.0.1", // NOT "localhost"!
+					},
+				},
+			},
+		},
+	}
+	sharedCfg, err := sharedTestEnv.Start()
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sharedCfg).NotTo(BeNil())
+
+	GinkgoWriter.Printf("✅ Shared envtest started\n")
+	GinkgoWriter.Printf("   📍 envtest URL: %s\n", sharedCfg.Host)
+	GinkgoWriter.Printf("   ℹ️  Forced IPv4 binding (127.0.0.1)\n")
+
+	DeferCleanup(func() {
+		By("Stopping shared envtest")
+		err := sharedTestEnv.Stop()
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// DD-AUTH-014: Create ServiceAccount + RBAC for DataStorage access
+	By("Creating ServiceAccount with DataStorage RBAC in shared envtest")
+	authConfig, err := infrastructure.CreateIntegrationServiceAccountWithDataStorageAccess(
+		sharedCfg,
+		"workflowexecution-ds-client",
+		"default",
+		GinkgoWriter,
+	)
+	Expect(err).ToNot(HaveOccurred())
+	GinkgoWriter.Println("✅ ServiceAccount + RBAC created in shared envtest")
+
+	By("Starting WorkflowExecution integration infrastructure (DD-TEST-002)")
+	// Use shared DSBootstrap infrastructure (replaces custom StartWEIntegrationInfrastructure)
+	// Per DD-TEST-001 v2.6: WE uses PostgreSQL=15441, Redis=16388, DS=18097
+	// DD-AUTH-014: Helper function ensures auth is properly configured
+	cfg := infrastructure.NewDSBootstrapConfigWithAuth(
+		"workflowexecution",
+		15441, 16388, 18097, 19097,
+		"test/integration/workflowexecution/config",
+		authConfig,
+	)
+	dsInfra, err := infrastructure.StartDSBootstrap(context.Background(), cfg, GinkgoWriter)
+	Expect(err).ToNot(HaveOccurred(), "Infrastructure must start successfully")
+	GinkgoWriter.Println("✅ All services started and healthy (PostgreSQL, Redis, DataStorage - shared across all processes)")
+
+	// Clean up infrastructure on exit
+	DeferCleanup(func() {
+		_ = infrastructure.StopDSBootstrap(dsInfra, GinkgoWriter)
+	})
+
+	// DD-AUTH-014: DataStorage health endpoint now validates auth middleware readiness
+	// No explicit warmup needed - /health returns 200 only when auth is ready
+	GinkgoWriter.Println("✅ Phase 1 complete - infrastructure ready for all processes")
+	GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// DD-AUTH-014: Serialize token for Phase 2 DataStorage client
+	return []byte(authConfig.Token)
+}, func(data []byte) {
+	// Phase 2: Runs on ALL parallel processes (receives data from phase 1)
+	// Set up envtest, K8s client, and controller manager per process
+	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	ctx, cancel = context.WithCancel(context.TODO())
+
+	var err error
+
+	By("Registering CRD schemes")
+	err = workflowexecutionv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = tektonv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	// +kubebuilder:scaffold:scheme
+
+	By("Bootstrapping test environment with WorkflowExecution AND Tekton CRDs")
+	testEnv = &envtest.Environment{
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "..", "config", "crd", "bases"),
+			filepath.Join("..", "..", "..", "config", "crd", "tekton"), // Tekton CRDs for PipelineRun
+		},
+		ErrorIfCRDPathMissing: true, // FAIL if CRDs not found - no silent fallback
+	}
+	// KUBEBUILDER_ASSETS is set by Makefile via setup-envtest dependency
+
+	cfg, err = testEnv.Start()
+	Expect(err).NotTo(HaveOccurred())
+	Expect(cfg).NotTo(BeNil())
+
+	By("Creating controller-runtime client")
+	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(k8sClient).NotTo(BeNil())
+
+	By("Creating namespaces for testing")
+	// Create kubernaut-workflows namespace for PipelineRuns
+	workflowsNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: WorkflowExecutionNS,
+		},
+	}
+	err = k8sClient.Create(ctx, workflowsNs)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Create default namespace for tests
+	defaultNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: DefaultNamespace,
+		},
+	}
+	_ = k8sClient.Create(ctx, defaultNs) // May already exist
+
+	GinkgoWriter.Println("✅ Namespaces created: kubernaut-workflows, default")
+
+	By("Setting up the controller manager")
+	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: "0", // Use random port to avoid conflicts in parallel tests
+		},
+	})
+	Expect(err).ToNot(HaveOccurred())
+
+	// Note: DataStorage health check already done by StartWEIntegrationInfrastructure()
+	GinkgoWriter.Printf("✅ DataStorage confirmed healthy at %s\n", dataStorageBaseURL)
+
+	By("Creating REAL audit store with authenticated DataStorage client (DD-AUTH-014)")
+	// DD-AUTH-014: Parse token from Phase 1 and create authenticated clients
+	token := string(data)
+	if token == "" {
+		Fail("ServiceAccount token from Phase 1 is empty")
+	}
+	GinkgoWriter.Printf("✅ Received ServiceAccount token from Phase 1 (length: %d bytes)\n", len(token))
+
+	// DD-AUTH-014: Create authenticated DataStorage clients (assign to global variable)
+	// Uses ServiceAccount Bearer token for all DataStorage API calls
+	dsClients = integration.NewAuthenticatedDataStorageClients(
+		dataStorageBaseURL,
+		token,
+		5*time.Second,
+	)
+	GinkgoWriter.Println("✅ Authenticated DataStorage clients created")
+
+	// Create REAL buffered audit store with authenticated client
+	auditStore, err = audit.NewBufferedStore(
+		dsClients.AuditClient, // ← Authenticated with ServiceAccount token!
+		audit.DefaultConfig(),
+		"workflowexecution-controller",
+		ctrl.Log.WithName("audit"),
+	)
+	Expect(err).ToNot(HaveOccurred(), "Failed to create real audit store")
+
+	GinkgoWriter.Println("✅ Real audit store created (connected to DataStorage with real authentication)")
+
+	By("Creating metrics with test registry for isolation (DD-METRICS-001)")
+	// Create isolated Prometheus registry for integration tests to prevent conflicts
+	testRegistry := prometheus.NewRegistry()
+	testMetrics := wemetrics.NewMetricsWithRegistry(testRegistry)
+	GinkgoWriter.Println("✅ Test metrics created with isolated registry")
+
+	By("Setting up the WorkflowExecution controller with REAL audit store")
+	// Integration tests validate audit traces are properly stored (Defense-in-Depth)
+	// E2E tests validate audit client wiring (simpler smoke test)
+
+	// Initialize status manager (DD-PERF-001)
+	statusManager := westatus.NewManager(k8sManager.GetClient())
+
+	// Initialize audit manager (P3: Audit Manager pattern)
+	auditManager := weaudit.NewManager(auditStore, ctrl.Log.WithName("audit"))
+
+	// BR-WE-014: Executor Registry (Strategy Pattern for Tekton + Job backends)
+	executorRegistry := weexecutor.NewRegistry()
+	executorRegistry.Register("tekton", weexecutor.NewTektonExecutor(k8sManager.GetClient()))
+	executorRegistry.Register("job", weexecutor.NewJobExecutor(k8sManager.GetClient()))
+
+	// Issue #1481: DependencyValidator pre-flight check removed. Dependency
+	// existence is now validated exclusively at runtime by Kubernetes when the
+	// Job/PipelineRun attempts to mount the volume (BR-WORKFLOW-008 covers the
+	// resulting fail-fast/observability guarantees, see dependency_resolution_integration_test.go).
+	reconciler = &workflowexecution.WorkflowExecutionReconciler{
+		Client:             k8sManager.GetClient(),
+		APIReader:          k8sManager.GetAPIReader(), // DD-STATUS-001: Cache-bypassed reads for race condition prevention
+		Scheme:             k8sManager.GetScheme(),
+		Recorder:           k8sManager.GetEventRecorderFor("workflowexecution-controller"),
+		ExecutionNamespace: WorkflowExecutionNS,
+		CooldownPeriod:     10 * time.Second, // Short cooldown for integration tests (default 5min too long)
+		AuditStore:         auditStore,       // REAL audit store for integration tests
+		Metrics:            testMetrics,      // Test-isolated metrics (DD-METRICS-001)
+		StatusManager:      statusManager,    // DD-PERF-001: Atomic status updates
+		AuditManager:       auditManager,     // P3: Audit Manager pattern
+		ExecutorRegistry:   executorRegistry, // BR-WE-014: Strategy pattern dispatch
+	}
+	err = reconciler.SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
+	By("Starting the controller manager")
+	go func() {
+		defer GinkgoRecover()
+		err = k8sManager.Start(ctx)
+		Expect(err).ToNot(HaveOccurred(), "failed to run manager")
+	}()
+
+	// Wait for manager to be ready
+	time.Sleep(2 * time.Second)
+
+	// Note: Metrics server uses dynamic port allocation (":0") to prevent conflicts
+	// Port discovery is not exposed by controller-runtime Manager interface
+
+	GinkgoWriter.Println("✅ WorkflowExecution integration test environment ready!")
+	GinkgoWriter.Println("")
+	GinkgoWriter.Println("Environment:")
+	GinkgoWriter.Println("  • EnvTest with real Kubernetes API (etcd + kube-apiserver)")
+	GinkgoWriter.Println("  • WorkflowExecution CRD installed")
+	GinkgoWriter.Println("  • Tekton CRDs installed (PipelineRun, TaskRun, etc.)")
+	GinkgoWriter.Println("  • WorkflowExecution controller RUNNING")
+	GinkgoWriter.Println("  • Tests: Full controller reconciliation, status sync, resource locking")
+	GinkgoWriter.Println("")
+	GinkgoWriter.Println("V2.0 COMPLIANCE: Integration tests now exercise controller reconciliation")
+	GinkgoWriter.Println("")
+})
+
+var _ = SynchronizedAfterSuite(func() {
+	// Phase 1: Runs on ALL parallel processes (per-process cleanup)
+	By("Tearing down per-process test environment")
+
+	// Close REAL audit store to flush remaining events (DD-AUDIT-003)
+	// WE-SHUTDOWN-001: Flush audit store BEFORE stopping DataStorage
+	// This prevents "connection refused" errors during cleanup when the
+	// background writer tries to flush buffered events after DataStorage is stopped.
+	// Integration tests MUST always use real DataStorage (DD-TESTING-001)
+	By("Flushing audit store before infrastructure shutdown")
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer flushCancel()
+
+	err := auditStore.Flush(flushCtx)
+	if err != nil {
+		GinkgoWriter.Printf("⚠️  Warning: Failed to flush audit store: %v\n", err)
+	} else {
+		GinkgoWriter.Println("✅ Audit store flushed (all buffered events written)")
+	}
+
+	By("Closing audit store")
+	err = auditStore.Close()
+	if err != nil {
+		GinkgoWriter.Printf("⚠️  Warning: Failed to close audit store: %v\n", err)
+	} else {
+		GinkgoWriter.Println("✅ Audit store closed")
+	}
+
+	cancel()
+
+	err = testEnv.Stop()
+	Expect(err).NotTo(HaveOccurred())
+
+	GinkgoWriter.Println("✅ Per-process cleanup complete")
+}, func() {
+	// Phase 2: Runs ONCE on parallel process #1 (shared infrastructure cleanup)
+	// Infrastructure cleanup handled by DeferCleanup (StopDSBootstrap)
+	// WE-SHUTDOWN-001: Safe to stop now - all processes flushed audit events
+
+	// DD-TEST-DIAGNOSTICS: Must-gather container logs for post-mortem analysis
+	// ALWAYS collect logs - failures may have occurred on other parallel processes
+	// The overhead is minimal (~2s) and logs are invaluable for debugging flaky tests
+	GinkgoWriter.Println("📦 Collecting container logs for post-mortem analysis...")
+	infrastructure.MustGatherContainerLogs("workflowexecution", []string{
+		"workflowexecution_datastorage_test",
+		"workflowexecution_postgres_test",
+		"workflowexecution_redis_test",
+	}, GinkgoWriter)
+
+	GinkgoWriter.Println("✅ Shared infrastructure cleanup complete")
+})
+
+// ========================================
+// Test Helpers - Parallel-Safe (4 procs)
+// ========================================
+
+// createUniqueWFE creates a WorkflowExecution with unique name for parallel test isolation
+// Defaults to ExecutionEngine: "tekton" for backward compat with existing Tekton tests.
+// Issue #1661 Change 11e: ExecutionEngine is baked directly into the
+// CRD-embedded WorkflowRef snapshot -- the reconciler no longer consults a
+// DataStorage/WorkflowQuerier round-trip, so there is nothing left to
+// configure out-of-band. Callers needing non-default Dependencies/Resources/
+// ServiceAccountName/DeclaredParameterNames set them directly on
+// wfe.Spec.WorkflowRef after this returns, before k8sClient.Create.
+func createUniqueWFE(testID, targetResource string) *workflowexecutionv1alpha1.WorkflowExecution {
+	name := IntegrationTestNamePrefix + testID + "-" + time.Now().Format("150405000")
+	return &workflowexecutionv1alpha1.WorkflowExecution{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  DefaultNamespace,
+			Generation: 1, // K8s increments on create/update
+		},
+		Spec: workflowexecutionv1alpha1.WorkflowExecutionSpec{
+			RemediationRequestRef: corev1.ObjectReference{
+				APIVersion: "remediation.kubernaut.ai/v1alpha1",
+				Kind:       "RemediationRequest",
+				Name:       "test-rr-" + testID,
+				Namespace:  DefaultNamespace,
+			},
+			WorkflowRef: workflowexecutionv1alpha1.WorkflowRef{
+				WorkflowSnapshot: sharedtypes.WorkflowSnapshot{
+					WorkflowID:      "test-workflow",
+					WorkflowName:    "test-workflow",
+					ActionType:      "RestartPod",
+					Version:         "v1.0.0",
+					ExecutionBundle: "ghcr.io/kubernaut/workflows/test@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+					ExecutionEngine: "tekton",
+				},
+			},
+			TargetResource: targetResource,
+		},
+	}
+}
+
+// createUniqueJobWFE creates a WorkflowExecution for Job backend tests
+func createUniqueJobWFE(testID, targetResource string) *workflowexecutionv1alpha1.WorkflowExecution {
+	wfe := createUniqueWFE(testID, targetResource)
+	wfe.Spec.WorkflowRef.ExecutionEngine = "job"
+	// Production WorkflowExecutionCreator copies the parent RR UID into this
+	// immutable reference. Job-backend integration fixtures must do the same so
+	// they exercise DD-WE-010 rather than the legacy target-name fallback.
+	wfe.Spec.RemediationRequestRef.UID = types.UID(uuid.NewString())
+	return wfe
+}
+
+// createUniqueWFEWithParams creates a WorkflowExecution with parameters
+func createUniqueWFEWithParams(testID, targetResource string, params map[string]string) *workflowexecutionv1alpha1.WorkflowExecution {
+	wfe := createUniqueWFE(testID, targetResource)
+	wfe.Spec.Parameters = params
+	return wfe
+}
+
+// getWFE gets a WorkflowExecution by name
+func getWFE(name, namespace string) (*workflowexecutionv1alpha1.WorkflowExecution, error) {
+	wfe := &workflowexecutionv1alpha1.WorkflowExecution{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, wfe)
+	return wfe, err
+}
+
+// waitForWFEPhase waits for a WorkflowExecution to reach a specific phase
+func waitForWFEPhase(name, namespace string, expectedPhase string, timeout time.Duration) (*workflowexecutionv1alpha1.WorkflowExecution, error) {
+	var wfe *workflowexecutionv1alpha1.WorkflowExecution
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(timeoutCtx, 100*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		var err error
+		wfe, err = getWFE(name, namespace)
+		if err != nil {
+			return false, nil //nolint:nilerr // transient Get error (e.g. not-yet-created): keep polling, not a poll failure
+		}
+		return wfe.Status.Phase == expectedPhase, nil
+	})
+
+	return wfe, err
+}
+
+// waitForPipelineRunCreation waits for a PipelineRun to be created for a WFE
+func waitForPipelineRunCreation(wfeName string, timeout time.Duration) (*tektonv1.PipelineRun, error) {
+	var pr *tektonv1.PipelineRun
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(timeoutCtx, 100*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		// List PipelineRuns with the WFE label
+		prList := &tektonv1.PipelineRunList{}
+		err := k8sClient.List(ctx, prList, client.InNamespace(WorkflowExecutionNS), client.MatchingLabels{
+			"kubernaut.ai/workflow-execution": wfeName,
+		})
+		if err != nil {
+			return false, nil //nolint:nilerr // transient List error: keep polling, not a poll failure
+		}
+		if len(prList.Items) > 0 {
+			pr = &prList.Items[0]
+			return true, nil
+		}
+		return false, nil
+	})
+
+	return pr, err
+}
+
+// simulatePipelineRunCompletion updates a PipelineRun to simulate completion
+func simulatePipelineRunCompletion(pr *tektonv1.PipelineRun, succeeded bool) error {
+	pr.Status.InitializeConditions(testClock)
+	if succeeded {
+		pr.Status.SetCondition(&apis.Condition{
+			Type:    apis.ConditionSucceeded,
+			Status:  corev1.ConditionTrue,
+			Reason:  "Completed",
+			Message: "PipelineRun completed successfully",
+		})
+	} else {
+		pr.Status.SetCondition(&apis.Condition{
+			Type:    apis.ConditionSucceeded,
+			Status:  corev1.ConditionFalse,
+			Reason:  "Failed",
+			Message: "PipelineRun failed",
+		})
+	}
+	return k8sClient.Status().Update(ctx, pr)
+}
+
+// deleteWFEAndWait deletes a WorkflowExecution and waits for it to be fully removed
+func deleteWFEAndWait(wfe *workflowexecutionv1alpha1.WorkflowExecution, timeout time.Duration) error {
+	if err := k8sClient.Delete(ctx, wfe); err != nil {
+		return err
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	return wait.PollUntilContextTimeout(timeoutCtx, 100*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		err := k8sClient.Get(ctx, types.NamespacedName{
+			Name:      wfe.Name,
+			Namespace: wfe.Namespace,
+		}, &workflowexecutionv1alpha1.WorkflowExecution{})
+
+		if err != nil {
+			return true, nil //nolint:nilerr // Get error (NotFound) means deletion complete, not a poll failure
+		}
+
+		// Still exists, keep waiting
+		return false, nil
+	})
+}
+
+// cleanupWFE cleans up a WFE and its associated PipelineRun
+func cleanupWFE(wfe *workflowexecutionv1alpha1.WorkflowExecution) {
+	// Delete WFE (will cascade to PipelineRun via owner reference)
+	_ = k8sClient.Delete(ctx, wfe)
+
+	// Also directly clean up any PipelineRuns
+	prList := &tektonv1.PipelineRunList{}
+	if err := k8sClient.List(ctx, prList, client.InNamespace(WorkflowExecutionNS), client.MatchingLabels{
+		"kubernaut.ai/workflow-execution": wfe.Name,
+	}); err == nil {
+		for _, pr := range prList.Items {
+			_ = k8sClient.Delete(ctx, &pr)
+		}
+	}
+}
+
+// cleanupJobWFE cleans up a WFE and its associated Job
+func cleanupJobWFE(wfe *workflowexecutionv1alpha1.WorkflowExecution) {
+	// Delete WFE
+	_ = k8sClient.Delete(ctx, wfe)
+
+	// Also directly clean up any Jobs
+	jobList := &batchv1.JobList{}
+	if err := k8sClient.List(ctx, jobList, client.InNamespace(WorkflowExecutionNS), client.MatchingLabels{
+		"kubernaut.ai/workflow-execution": wfe.Name,
+	}); err == nil {
+		propagation := metav1.DeletePropagationBackground
+		for i := range jobList.Items {
+			_ = k8sClient.Delete(ctx, &jobList.Items[i], &client.DeleteOptions{
+				PropagationPolicy: &propagation,
+			})
+		}
+	}
+}
+
+// waitForJobCreation waits for a Job to be created for a WFE
+func waitForJobCreation(wfeName string, timeout time.Duration) (*batchv1.Job, error) {
+	var job *batchv1.Job
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(timeoutCtx, 100*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		jobList := &batchv1.JobList{}
+		err := k8sClient.List(ctx, jobList, client.InNamespace(WorkflowExecutionNS), client.MatchingLabels{
+			"kubernaut.ai/workflow-execution": wfeName,
+		})
+		if err != nil {
+			return false, nil //nolint:nilerr // transient List error: keep polling, not a poll failure
+		}
+		if len(jobList.Items) > 0 {
+			job = &jobList.Items[0]
+			return true, nil
+		}
+		return false, nil
+	})
+
+	return job, err
+}
+
+// simulateJobCompletion updates a Job to simulate completion (success or failure)
+func simulateJobCompletion(job *batchv1.Job, succeeded bool) error {
+	now := metav1.Now()
+	job.Status.StartTime = &now
+
+	if succeeded {
+		job.Status.Succeeded = 1
+		job.Status.Active = 0
+		job.Status.CompletionTime = &now
+		// K8s requires JobSuccessCriteriaMet before JobComplete
+		job.Status.Conditions = append(job.Status.Conditions,
+			batchv1.JobCondition{
+				Type:               "SuccessCriteriaMet",
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "JobSuccessCriteriaMet",
+				Message:            "Job completed successfully",
+			},
+			batchv1.JobCondition{
+				Type:               batchv1.JobComplete,
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Completed",
+				Message:            "Job completed successfully",
+			},
+		)
+	} else {
+		job.Status.Failed = 1
+		job.Status.Active = 0
+		// K8s requires JobFailureTarget before JobFailed
+		job.Status.Conditions = append(job.Status.Conditions,
+			batchv1.JobCondition{
+				Type:               "FailureTarget",
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "BackoffLimitExceeded",
+				Message:            "Job has reached the specified backoff limit",
+			},
+			batchv1.JobCondition{
+				Type:               batchv1.JobFailed,
+				Status:             corev1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "BackoffLimitExceeded",
+				Message:            "Job has reached the specified backoff limit",
+			},
+		)
+	}
+	return k8sClient.Status().Update(ctx, job)
+}
+
+// simulateJobCompletionWithRetries updates a Job to simulate PodFailurePolicy-
+// tolerated pod failures observed before the Job eventually succeeds
+// (job.Status.Succeeded: 1), reproducing the retry signature a real cluster
+// would leave behind for BR-WE-019 AC10 / DD-WE-008 Wiring Point C (audit
+// retry-count completeness).
+//
+// Deliberately does NOT set job.Status.Failed: a real-cluster spike
+// (DD-WE-008 Section 8) confirmed k8s.io/api batch/v1's
+// PodFailurePolicyActionIgnore never increments it for Ignore-action
+// failures. Instead, this creates retryCount+1 "SuccessfulCreate" Events on
+// the Job -- one per (initial + tolerated-replacement) Pod creation -- since
+// JobExecutor.GetStatus computes RetryCount from those Events, matching
+// exactly what a real job-controller leaves behind (verified empirically:
+// one Event per Pod creation, Count=1 each, well under the k8s
+// events-aggregator threshold).
+func simulateJobCompletionWithRetries(job *batchv1.Job, retryCount int32) error {
+	for i := int32(0); i < retryCount+1; i++ {
+		event := &corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: job.Name + "-create-",
+				Namespace:    job.Namespace,
+			},
+			InvolvedObject: corev1.ObjectReference{
+				Kind:      "Job",
+				Name:      job.Name,
+				Namespace: job.Namespace,
+				UID:       job.UID,
+			},
+			Reason:         "SuccessfulCreate",
+			Message:        fmt.Sprintf("Created pod: %s-simulated-%d", job.Name, i),
+			Type:           corev1.EventTypeNormal,
+			FirstTimestamp: metav1.Now(),
+			LastTimestamp:  metav1.Now(),
+			Count:          1,
+		}
+		if err := k8sClient.Create(ctx, event); err != nil {
+			return fmt.Errorf("failed to create synthetic SuccessfulCreate event %d: %w", i, err)
+		}
+	}
+
+	now := metav1.Now()
+	job.Status.StartTime = &now
+	job.Status.Succeeded = 1
+	job.Status.Active = 0
+	job.Status.CompletionTime = &now
+	// K8s requires JobSuccessCriteriaMet before JobComplete
+	job.Status.Conditions = append(job.Status.Conditions,
+		batchv1.JobCondition{
+			Type:               "SuccessCriteriaMet",
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "JobSuccessCriteriaMet",
+			Message:            "Job completed successfully",
+		},
+		batchv1.JobCondition{
+			Type:               batchv1.JobComplete,
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Completed",
+			Message:            "Job completed successfully",
+		},
+	)
+	return k8sClient.Status().Update(ctx, job)
+}
+
+// simulateJobFailureWithMissingDependency simulates the runtime failure a real
+// cluster would produce when a Job's Pod cannot mount a missing Secret/ConfigMap
+// (BR-WORKFLOW-008). EnvTest runs neither kube-controller-manager nor kubelet,
+// so neither the Pod nor the FailedMount Event are created automatically: this
+// helper creates both synthetically, then marks the Job Failed (as it would be
+// once ActiveDeadlineSeconds elapses), so JobExecutor.GetStatus() has real Pod
+// events to inspect and enrich the WFE failure message from.
+func simulateJobFailureWithMissingDependency(job *batchv1.Job, eventReason, eventMessage string) error {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: job.Name + "-",
+			Namespace:    job.Namespace,
+			Labels:       map[string]string{"job-name": job.Name},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{
+				{Name: "workflow", Image: "busybox:latest"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, pod); err != nil {
+		return fmt.Errorf("failed to create synthetic pod: %w", err)
+	}
+
+	event := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: pod.Name + "-",
+			Namespace:    job.Namespace,
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:      "Pod",
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			UID:       pod.UID,
+		},
+		Reason:         eventReason,
+		Message:        eventMessage,
+		Type:           corev1.EventTypeWarning,
+		FirstTimestamp: metav1.Now(),
+		LastTimestamp:  metav1.Now(),
+		Count:          1,
+	}
+	if err := k8sClient.Create(ctx, event); err != nil {
+		return fmt.Errorf("failed to create synthetic pod event: %w", err)
+	}
+
+	now := metav1.Now()
+	job.Status.StartTime = &now
+	job.Status.Failed = 1
+	job.Status.Active = 0
+	job.Status.Conditions = append(job.Status.Conditions,
+		batchv1.JobCondition{
+			Type:               "FailureTarget",
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "DeadlineExceeded",
+			Message:            "Job was active longer than specified deadline",
+		},
+		batchv1.JobCondition{
+			Type:               batchv1.JobFailed,
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "DeadlineExceeded",
+			Message:            "Job was active longer than specified deadline",
+		},
+	)
+	return k8sClient.Status().Update(ctx, job)
+}
+
+// flushAuditBuffer flushes the buffered audit store to ensure all events are written to DataStorage
+// MANDATORY before querying audit events to prevent flaky tests due to buffering
+func flushAuditBuffer() {
+	flushCtx, flushCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer flushCancel()
+
+	err := auditStore.Flush(flushCtx)
+	if err != nil {
+		GinkgoWriter.Printf("⚠️  Warning: Failed to flush audit buffer: %v\n", err)
+	}
+}

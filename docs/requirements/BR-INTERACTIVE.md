@@ -1,0 +1,254 @@
+# Business Requirements: Interactive Investigation Mode
+
+**Category**: Kubernaut Agent Interactive Mode
+**Priority**: P1 (HIGH) - Core v1.5 Feature
+**Target Version**: v1.5
+**Status**: Proposed
+**Date**: April 29, 2026 (Updated: May 15, 2026 — SEC-TAKEOVER-001 clarification on BR-INTERACTIVE-004 #5; Updated: August 24, 2026 — BR-INTERACTIVE-004 #2/#3 corrected to match production's in-place upgrade mechanism, see DD-INTERACTIVE-002 v1.2 amendment)
+**Related ADRs**: ADR-038 (Async Buffered Audit Ingestion)
+**Related DDs**: DD-AUTH-MCP-001 (MCP Endpoint Security), DD-INTERACTIVE-002 (Dynamic Takeover Model)
+**GitHub Issue**: [#703](https://github.com/jordigilh/kubernaut/issues/703)
+
+---
+
+## BR-INTERACTIVE-001: Interactive Investigation Sessions
+
+**Business Requirement ID**: BR-INTERACTIVE-001
+**Priority**: P0
+**Status**: Proposed
+
+### Business Need
+
+SREs and platform engineers need the ability to connect to an active or autonomous investigation via MCP (Model Context Protocol) to observe, interact with, and direct the AI's root cause analysis in real-time.
+
+### Success Criteria
+
+1. KA exposes an internal MCP Streamable HTTP endpoint at `/api/v1/mcp` when `interactive.enabled: true`
+2. MCP clients can connect using K8s service account tokens (Pattern A) or via apifrontend delegation (Pattern B)
+3. The endpoint supports `kubernaut_investigate`, `kubernaut_enrich`, and `kubernaut_select_workflow` tools
+4. When `interactive.enabled: false` (default), the MCP endpoint is not registered (returns 404)
+5. Autonomous mode behavior is completely unaffected by interactive mode code
+
+---
+
+## BR-INTERACTIVE-002: User-Scoped RBAC for Interactive Tools
+
+**Business Requirement ID**: BR-INTERACTIVE-002
+**Priority**: P0
+**Status**: Proposed
+
+### Business Need
+
+When a human user drives an investigation, K8s API calls made during that session must execute under the user's identity (not KA SA), respecting the user's RBAC permissions. This prevents privilege escalation where a user could access resources beyond their authorization via KA.
+
+### Success Criteria
+
+1. K8s API calls during interactive sessions use `rest.ImpersonationConfig{UserName, Groups}` with the authenticated user's identity
+2. Pattern A (direct): identity from TokenReview; Pattern B (apifrontend): identity from SAR-verified `Impersonate-*` headers
+3. All `Impersonate-*` headers stripped from incoming requests before processing (defense-in-depth)
+4. Non-K8s tools (Prometheus, DS) use KA SA (documented known limitation)
+5. KA SA requires `impersonate` RBAC verb (kubernaut-operator#26)
+
+---
+
+## BR-INTERACTIVE-003: Audit Attribution for Interactive Actions
+
+**Business Requirement ID**: BR-INTERACTIVE-003
+**Priority**: P0
+**Status**: Proposed
+
+### Business Need
+
+Every action during an interactive session must be attributable to the user who performed it, enabling SOC2 CC8.1 compliance and forensic reconstruction.
+
+### Success Criteria
+
+1. `session_id` is a mandatory top-level field on ALL `AuditEvent` instances
+2. `acting_user` is set on all interactive audit events (the resolved identity, not KA SA)
+3. `EventTypeInteractiveK8sCall` emitted for every impersonated K8s API call with: `acting_user`, `resource`, `verb`, `namespace`, `result`
+4. Full conversation reconstruction possible via DS query by `correlation_id` ordered by `event_timestamp`
+5. Identity transitions (KA SA → user → KA SA) explicitly visible in audit trail via `session.suspended` and `session.resumed` events
+
+---
+
+## BR-INTERACTIVE-004: Dynamic Takeover of Autonomous Investigations
+
+**Business Requirement ID**: BR-INTERACTIVE-004
+**Priority**: P0
+**Status**: Proposed
+
+### Business Need
+
+SREs must be able to take over an ongoing autonomous investigation at any point without predicting at creation time whether human intervention will be needed. The transition must preserve all prior work.
+
+### Success Criteria
+
+1. Every RemediationRequest is takeover-capable by default (no spec field, no annotation)
+2. **[Corrected 2026-08-24]** Takeover is auto-detected server-side (`isAutonomousInvestigation` checks for an active `AIAnalysis` with a session already assigned) from a plain `kubernaut_investigate(rr_id=...)` call — not an explicit `action: takeover` parameter. There is no separate `kubernaut_takeover` tool (consolidated into `kubernaut_investigate` per #1332); the caller cannot distinguish a fresh start from a takeover at the API layer, by design (LLM-ergonomics, mirrors the two-explicit-tools rationale in DD-AF-004).
+3. **[Corrected 2026-08-24]** The autonomous investigation is **upgraded in place**, not cancelled — the same running KA session is flagged interactive (`UpgradeToInteractive` → `InteractiveHold`, checked at the next `checkRCAEarlyReturn` checkpoint) and the user continues driving it. No new session is created, no work is lost, and no DS-reconstruction query is needed for this path. (Original v1.0/v1.1 design specified cancel + reconstruct-from-audit-trail into a *new* session; issue #1390 (2026-06-09) replaced this in production after a duplicate-submission race showed cancel+reconstruct wasting an entire re-run of RCA's LLM tokens. See DD-INTERACTIVE-002 v1.2's Post-Decision Amendment for the full trace.)
+4. If the `InteractiveHold` flag arrives after all `checkRCAEarlyReturn` checkpoints have already passed (investigation already complete / workflow already selected), takeover has no effect on that investigation — this is an accepted best-effort race, not a consent veto (see item 8 below)
+5. **v1.5**: Once upgraded, takeover is a **one-way door** — the session does NOT revert to autonomous on disconnect. If the user abandons the session, the inactivity timeout releases the Lease, the AA phase times out on the RO side, and the Gateway creates a fresh RemediationRequest. See SEC-TAKEOVER-001 in DD-INTERACTIVE-002 for security rationale.
+6. **v1.6+ (deferred)**: Resume-on-disconnect may be revisited once alignment grounding review can verify the user's interactive turns did not introduce unsafe directives
+7. Single-driver guarantee via K8s Lease (concurrent drivers rejected)
+8. **[Added 2026-08-24]** A single chat turn/session MAY call `kubernaut_remediate` then immediately `kubernaut_investigate(rr_id=<same RR>)` to attach observability to the RR it just autonomously committed. This is a best-effort observability attach to an already-committed decision, not a consent veto — `kubernaut_remediate` has already committed the RR to autonomous execution before the attach call happens. See DD-INTERACTIVE-002 v1.2 §4 and `docs/services/apifrontend/design/ARCHITECTURE.md` Flow 4.
+
+---
+
+## BR-INTERACTIVE-005: Session Lifecycle and Timeout Management
+
+**Business Requirement ID**: BR-INTERACTIVE-005
+**Priority**: P1
+**Status**: Proposed
+
+### Business Need
+
+Interactive sessions must have well-defined lifecycle boundaries (creation, activity, timeout, disconnect) to prevent resource exhaustion and orphaned state.
+
+### Success Criteria
+
+1. K8s Lease lock (30s duration, 15s heartbeat) provides distributed session exclusivity
+2. Inactivity timeout (configurable, default 10m) releases session if no tool call arrives
+3. Global timeout (1h) is a hard cap -- interactive sessions bounded by remaining global time
+4. Timeout warnings emitted at T-10m and T-2m via MCP `notifications/progress`
+5. Inactivity warning at T-2m before 10m cutoff
+6. Lease explicitly released on session complete/cancel/disconnect
+7. Pod restart recovery: Lease expires (30s), client reconnects, conversation reconstructed from DS
+
+---
+
+## BR-INTERACTIVE-006: Cross-Session Visibility via Audit Trail
+
+**Business Requirement ID**: BR-INTERACTIVE-006
+**Priority**: P1
+**Status**: Proposed
+
+### Business Need
+
+When multiple actors work on the same remediation (autonomous AI + human user, or multiple users in v1.6), each must see what others have found -- like joining an ongoing Slack thread.
+
+### Success Criteria
+
+1. `session_id` mandatory on all audit events enables cross-session queries
+2. Auto-inject: on takeover, user's LLM context seeded with autonomous findings (DS query by `correlation_id`, exclude own `session_id`)
+3. Auto-inject: on resume, autonomous LLM context seeded with user's findings
+4. DS REST API supports `session_id` as optional query parameter (positive match)
+5. Client-side exclusion for "exclude own session" (simple, backward-compatible)
+
+---
+
+## BR-INTERACTIVE-007: Observable Interactive State on CRDs
+
+**Business Requirement ID**: BR-INTERACTIVE-007
+**Priority**: P2
+**Status**: Proposed
+
+### Business Need
+
+Cluster operators need to see who is currently driving an investigation by inspecting the AIAnalysis CRD status, without querying KA directly.
+
+### Success Criteria
+
+1. `AIAnalysisStatus.InteractiveSession` populated when a user takes over (who, when)
+2. `InteractiveSession.CompletedAt` set when user disconnects
+3. `handleSessionPoll` reports `status: "user_driving"` when interactive session is active
+4. AA controller requeues with extended poll interval during interactive sessions
+5. All fields on `InteractiveSessionInfo` are observable via `kubectl get aa -o yaml`
+
+---
+
+## BR-INTERACTIVE-008: Graceful Degradation
+
+**Business Requirement ID**: BR-INTERACTIVE-008
+**Priority**: P2
+**Status**: Proposed
+
+### Business Need
+
+Interactive mode must be additive. Failures in interactive infrastructure must not affect autonomous remediation.
+
+### Success Criteria
+
+1. Feature gate `interactive.enabled: false` (default) results in zero MCP-related code executing
+2. DS unavailable during auto-inject: takeover proceeds with empty prior context (warning logged)
+3. Apifrontend outage: only interactive clients affected, autonomous pipeline continues
+4. Auth middleware nil: KA refuses to start MCP handler (hard guard, not runtime failure)
+5. MCP session loss: Lease expires, client reconnects, conversation reconstructed
+
+---
+
+## BR-INTERACTIVE-009: Workflow Discovery with Per-Workflow Parameters
+
+**Business Requirement ID**: BR-INTERACTIVE-009
+**Priority**: P1
+**Status**: Implemented
+**GitHub Issue**: [#1169](https://github.com/jordigilh/kubernaut/issues/1169)
+
+### Business Need
+
+When the LLM discovers workflows during interactive investigation, each workflow (recommended and alternatives) may have specific parameters (e.g., `MEMORY_LIMIT_NEW`, `REPLICA_COUNT`). These parameters must be surfaced to the MCP client so the AF UI can display them, and they must flow through to the workflow execution engine when a workflow is selected.
+
+### Success Criteria
+
+1. `discover_workflows` action returns `parameters` on both recommended and alternative workflows in the MCP JSON response
+2. `select_workflow` merges the selected workflow's parameters into the final `InvestigationResult`
+3. Selecting an alternative workflow uses that alternative's parameters, not the recommended workflow's
+4. Parameter maps are cloned to prevent aliasing between session state and the completed result
+5. Workflows without parameters omit the `parameters` key from JSON (backward compatible)
+
+### Contract Reference
+
+See [docs/mcp/discover-workflows-contract.md](../mcp/discover-workflows-contract.md) for the authoritative MCP tool contract.
+
+---
+
+## BR-INTERACTIVE-011: AF Remediation Mode Selection and Full Interactive Remediation
+
+**Business Requirement ID**: BR-INTERACTIVE-011
+**Priority**: P1
+**Status**: Implemented
+**GitHub Issue**: [#1855](https://github.com/jordigilh/kubernaut/issues/1855)
+
+### Business Need
+
+AF's ADK agent (`pkg/apifrontend/agent/prompt.txt`) selects between three distinct remediation modes purely from LLM judgment of user phrasing, with no explicit mode parameter or API contract. Two of the three modes (autonomous, interactive) were already formalized by BR-INTERACTIVE-001..010 and covered by tests; the third mode -- "Full Interactive Remediation" -- streams the same RCA transparency as interactive mode but then auto-selects the highest-confidence workflow and proceeds to execution without pausing for user selection. This mode existed in production and had E2E coverage (`E2E-FP-1853-002`, #1853) but no business-requirement record of its trigger phrasing, decision algorithm, or success criteria, leaving operators and future contributors with no authoritative reference for how mode selection works or why mode 3 is safe to auto-select.
+
+### Mode Selection Decision Algorithm
+
+AF's agent selects a mode per user turn based on phrasing alone (no session state, no explicit mode flag):
+
+| Mode | Trigger phrasing (examples) | Tool sequence | Pauses for user? |
+|------|------------------------------|----------------|-------------------|
+| 1. Autonomous | "fix", "remediate", "address", "resolve", "heal" (alone, no oversight implied) | `kubernaut_remediate` only | No — pipeline (AA/RO/WFE) handles investigation and workflow selection autonomously after RR creation |
+| 2. Interactive | "investigate", "what's wrong with", "diagnose", "look into" (alone) | `kubernaut_investigate` → **stop** | Yes — after RCA (Phase 1), waits for the user to explicitly drive `kubernaut_discover_workflows` → `kubernaut_select_workflow` → `kubernaut_watch` |
+| 3. Full Interactive Remediation | "investigate and fix", "diagnose and remediate", "look into and fix", or combined intent implying both transparency and completion | `kubernaut_investigate` → `kubernaut_discover_workflows` → `kubernaut_select_workflow` → `kubernaut_watch` (no pause) | No — same RCA transparency as mode 2, but auto-selects the highest-confidence workflow and proceeds straight through to a terminal state |
+
+Modes 2 and 3 share identical Phase 1 (RCA) behavior; the only branch point is whether the agent pauses after presenting findings (mode 2) or immediately proceeds to workflow discovery/selection/execution using the highest-confidence recommendation (mode 3). This mirrors `prompt.txt`'s own framing: "In interactive mode: STOP here and wait for user selection" vs. mode 3's "select the highest-confidence workflow automatically."
+
+### Success Criteria
+
+1. `prompt.txt` documents all three modes with explicit trigger-phrase lists, distinguishable by an LLM without ambiguity between mode 1 (single-verb fix intent) and mode 3 (combined investigate+fix intent)
+2. Mode 3 streams full Phase 1 (RCA) transparency to the user/A2A artifact before any workflow action is taken — parity with mode 2's transparency, not a shortcut that hides reasoning
+3. Mode 3 never pauses between Phase 1 and Phase 4 (execution) — no manual tool call is required from the user once mode 3 is triggered
+4. Mode 3 selects the workflow discovery result's highest-confidence recommendation, not an arbitrary or first-listed option
+5. Mode selection is re-evaluated per user turn from phrasing alone; there is no persistent "mode" field on RR/AIAnalysis/IS that could desynchronize from the agent's actual behavior
+
+### Contract Reference
+
+Behavioral proof: `test/e2e/fullpipeline/17_af_a2a_full_interactive_remediation_test.go` (`E2E-FP-1853-002`, #1853) drives mode 3 end-to-end (zero manual turns, terminal `WorkflowExecution`) using the `af_full_interactive_remediation_1853` mock-llm scenario (`test/infrastructure/shared_e2e.go`). Sibling mode-2 coverage: `test/e2e/fullpipeline/16_af_a2a_combined_investigate_test.go` (`E2E-FP-1853-001`). Mode 1 coverage: `E2E-FP-1189-002` (#1332). See `docs/testing/1853/TEST_PLAN.md` for the full test rationale.
+
+---
+
+## Traceability Matrix
+
+| BR ID | PR | Checkpoint | Test Tier |
+|-------|-----|------------|-----------|
+| BR-INTERACTIVE-001 | PR2 | CP-2 | Unit + Integration |
+| BR-INTERACTIVE-002 | PR2 | CP-2 | Unit + Integration + E2E |
+| BR-INTERACTIVE-003 | PR2 + PR3 | CP-3 | Unit + Integration |
+| BR-INTERACTIVE-004 | PR3 | CP-3 | Unit + Integration + E2E |
+| BR-INTERACTIVE-005 | PR1 + PR3 | CP-1 + CP-3 | Unit + Integration |
+| BR-INTERACTIVE-006 | PR2 + PR3 | CP-3 | Unit + Integration |
+| BR-INTERACTIVE-007 | PR1 | CP-1 | Unit |
+| BR-INTERACTIVE-008 | PR2 + PR6 | CP-2 + CP-5 | Unit + E2E |
+| BR-INTERACTIVE-009 | #1169 | — | Unit + IT + E2E |
+| BR-INTERACTIVE-011 | #1853 | — | E2E (`E2E-FP-1853-001`, `E2E-FP-1853-002`) |

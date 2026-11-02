@@ -1,0 +1,628 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package enricher provides Kubernetes context enrichment for signal processing.
+//
+// The K8sEnricher fetches Kubernetes resource details based on signal type,
+// following a signal-driven enrichment strategy:
+//
+//   - Pod signals: Namespace + Pod + Node + OwnerChain context
+//   - Deployment signals: Namespace + Deployment context
+//   - StatefulSet signals: Namespace + StatefulSet context
+//   - DaemonSet signals: Namespace + DaemonSet context
+//   - ReplicaSet signals: Namespace + ReplicaSet context
+//   - Service signals: Namespace + Service context
+//   - Node signals: Node context only (no namespace)
+//   - Unknown resource types: Namespace context only (graceful fallback)
+//
+// Design Decisions:
+//   - DD-005 v2.0: Uses logr.Logger for unified logging
+//   - DD-017: Standard depth fetching (hardcoded, no configuration)
+//   - Graceful degradation: Returns partial context on non-critical failures
+//
+// Business Requirements:
+//   - BR-SP-001: K8s Context Enrichment (<2s P95)
+//
+// Per IMPLEMENTATION_PLAN_V1.21.md Day 3 specification.
+package enricher
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/jordigilh/kubernaut/pkg/signalprocessing/cache"
+	"github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	"github.com/jordigilh/kubernaut/pkg/signalprocessing/ownerchain"
+)
+
+// kindPod is the Kubernetes Kind string for Pod resources, used across
+// signal-driven dispatch, workload identification, and GVK lookups below.
+const kindPod = "Pod"
+
+// K8sEnricher fetches Kubernetes context for signal enrichment.
+type K8sEnricher struct {
+	client            client.Client
+	apiReader         client.Reader
+	logger            logr.Logger
+	cache             *cache.TTLCache
+	metrics           *metrics.Metrics
+	timeout           time.Duration
+	ownerChainBuilder *ownerchain.Builder     // BR-SP-100: Full owner chain traversal
+	readerFactory     fleet.ReaderFactory     // BR-INTEGRATION-054: nil = local-only mode
+	clusterRegistry   registry.ClusterQuerier // BR-FLEET-003 (#1511): nil = no cluster classification labels
+}
+
+// NewK8sEnricher creates a new K8s context enricher.
+// Per IMPLEMENTATION_PLAN_V1.21.md Day 3 specification.
+//
+// Panics if metrics is nil (metrics are mandatory for observability).
+// cacheTTL controls how long namespace lookups are cached (ADR-030: from YAML config).
+// apiReader bypasses the informer cache for namespace lookups, preventing stale label reads
+// when namespaces are newly created or relabeled (Issue #SP-CACHE-001).
+func NewK8sEnricher(c client.Client, apiReader client.Reader, logger logr.Logger, m *metrics.Metrics, timeout, cacheTTL time.Duration) *K8sEnricher {
+	if m == nil {
+		panic("metrics cannot be nil: metrics are mandatory for observability")
+	}
+	return &K8sEnricher{
+		client:            c,
+		apiReader:         apiReader,
+		logger:            logger.WithName("k8s-enricher"),
+		cache:             cache.NewTTLCache(cacheTTL),
+		metrics:           m,
+		ownerChainBuilder: ownerchain.NewBuilder(c, logger), // BR-SP-100: Full owner chain traversal
+		timeout:           timeout,
+	}
+}
+
+// SetReaderFactory configures a ReaderFactory for remote cluster support.
+// When set and signal.ClusterID is non-empty, enrichment uses the factory
+// to obtain a client.Reader for the remote cluster (BR-INTEGRATION-054).
+func (e *K8sEnricher) SetReaderFactory(rf fleet.ReaderFactory) {
+	e.readerFactory = rf
+}
+
+// SetClusterRegistry configures a ClusterQuerier used to resolve cluster
+// classification labels for the `cluster` Rego dimension (BR-FLEET-003, #1511).
+// When set and signal.ClusterID is registered, Enrich populates
+// KubernetesContext.Cluster from ClusterInfo.Labels. An unset registry, or a
+// ClusterID with no registration, is not an error -- Cluster stays nil
+// (graceful degradation, SI-10).
+func (e *K8sEnricher) SetClusterRegistry(cr registry.ClusterQuerier) {
+	e.clusterRegistry = cr
+}
+
+// Enrich fetches Kubernetes context based on signal type.
+// BR-SP-001: <2 seconds P95
+//
+// Standard Depth Strategy (no configuration):
+//
+//	Pod signal    → Namespace + Pod + Node + OwnerChain
+//	Deploy signal → Namespace + Deployment
+//	SS signal     → Namespace + StatefulSet
+//	DS signal     → Namespace + DaemonSet
+//	RS signal     → Namespace + ReplicaSet
+//	Svc signal    → Namespace + Service
+//	Node signal   → Node only (no namespace)
+//	Unknown       → Namespace only (graceful fallback)
+func (e *K8sEnricher) Enrich(ctx context.Context, signal *signalprocessingv1alpha1.SignalData) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	// Apply timeout
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+
+	// Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	result, err := e.enrichByKind(ctx, signal)
+	if err != nil {
+		return nil, err
+	}
+
+	// BR-FLEET-003 (#1511): cluster classification labels are resolved
+	// independently of the workload enrichment path (local or remote) above --
+	// applied uniformly as a post-processing step so every enrichment branch
+	// gets the same graceful-degradation behavior for free.
+	e.populateClusterContext(result, signal)
+
+	return result, nil
+}
+
+// enrichByKind performs the signal-driven Kubernetes context enrichment
+// (local or remote), independent of cluster classification labels.
+// Extracted from Enrich (BR-FLEET-003, #1511) -- pure code motion so the new
+// cluster-label population step applies uniformly to every return path.
+func (e *K8sEnricher) enrichByKind(ctx context.Context, signal *signalprocessingv1alpha1.SignalData) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	if signal.ClusterID != "" && e.readerFactory != nil {
+		return e.enrichRemote(ctx, signal)
+	}
+
+	result := &signalprocessingv1alpha1.KubernetesContext{}
+
+	// Signal-driven enrichment based on resource kind
+	switch signal.TargetResource.Kind {
+	case kindPod:
+		return e.enrichPodSignal(ctx, signal, result)
+	case "Deployment":
+		return e.enrichDeploymentSignal(ctx, signal, result)
+	case "StatefulSet":
+		return e.enrichStatefulSetSignal(ctx, signal, result)
+	case "DaemonSet":
+		return e.enrichDaemonSetSignal(ctx, signal, result)
+	case "ReplicaSet":
+		return e.enrichReplicaSetSignal(ctx, signal, result)
+	case "Service":
+		return e.enrichServiceSignal(ctx, signal, result)
+	case "Node":
+		return e.enrichNodeSignal(ctx, signal, result)
+	default:
+		// Graceful fallback: namespace only for unknown resource types
+		return e.enrichNamespaceOnly(ctx, signal, result)
+	}
+}
+
+// populateClusterContext resolves cluster classification labels via
+// ClusterRegistry.Get(signal.ClusterID) and sets result.Cluster.
+// BR-FLEET-003 (#1511), SI-10: an unconfigured registry or an unregistered
+// cluster degrades gracefully (Cluster stays nil, no error) rather than
+// failing enrichment -- unlike severity, cluster classification is an
+// optional targeting dimension, not a correctness gate.
+func (e *K8sEnricher) populateClusterContext(result *signalprocessingv1alpha1.KubernetesContext, signal *signalprocessingv1alpha1.SignalData) {
+	if e.clusterRegistry == nil || signal.ClusterID == "" || result == nil {
+		return
+	}
+	info, ok := e.clusterRegistry.Get(signal.ClusterID)
+	if !ok {
+		e.logger.V(1).Info("cluster not registered in fleet, skipping cluster classification labels",
+			"clusterID", signal.ClusterID)
+		return
+	}
+	result.Cluster = &sharedtypes.ClusterContext{Labels: ensureMap(info.Labels)}
+}
+
+// enrichPodSignal fetches Namespace + Pod + Node + OwnerChain.
+// BR-SP-001: Sets DegradedMode=true if target pod not found
+func (e *K8sEnricher) enrichPodSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	// 1. Fetch namespace (required)
+	ns, err := e.getNamespace(ctx, signal.TargetResource.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %s: %w", signal.TargetResource.Namespace, err)
+	}
+	e.populateNamespaceContext(result, ns)
+
+	// 2. Fetch pod - enter degraded mode if not found (BR-SP-001)
+	pod, err := e.getPod(ctx, signal.TargetResource.Namespace, signal.TargetResource.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// BR-SP-001: Enter degraded mode when target resource not found
+			e.logger.Info("Target pod not found, entering degraded mode", "name", signal.TargetResource.Name)
+			result.DegradedMode = true
+			e.metrics.RecordEnrichmentError("not_found")
+			return result, nil
+		}
+		e.logger.Error(err, "Failed to fetch pod", "name", signal.TargetResource.Name)
+		e.metrics.RecordEnrichmentError("api_error")
+		return nil, fmt.Errorf("failed to fetch pod: %w", err)
+	}
+	result.Workload = &signalprocessingv1alpha1.WorkloadDetails{
+		Kind:        kindPod,
+		Name:        pod.Name,
+		Labels:      ensureMap(pod.Labels),
+		Annotations: ensureMap(pod.Annotations),
+	}
+
+	// 3. Build owner chain using full traversal (BR-SP-100)
+	// DD-WORKFLOW-001 v1.8: Traverses ownerReferences up the chain (Pod → ReplicaSet → Deployment)
+	if e.ownerChainBuilder != nil {
+		ownerChain, err := e.ownerChainBuilder.Build(ctx, signal.TargetResource.Namespace, signal.TargetResource.Kind, signal.TargetResource.Name)
+		if err != nil {
+			e.logger.V(1).Info("Owner chain build failed", "error", err)
+		} else {
+			result.OwnerChain = ownerChain
+		}
+	}
+
+	return result, nil
+}
+
+// enrichWorkloadSignal fetches Namespace + a single workload object of type T
+// and populates result.Workload from it. Shared by enrichDeploymentSignal/
+// enrichStatefulSetSignal/enrichDaemonSetSignal/enrichReplicaSetSignal/
+// enrichServiceSignal (dupl: these 5 were byte-for-byte identical apart from
+// the Kind string and which getter was called — every K8s workload type here
+// embeds metav1.ObjectMeta, so metav1.Object's Get* accessors cover Name/
+// Labels/Annotations generically without reflection).
+// BR-SP-001: Sets DegradedMode=true if the target object is not found.
+func enrichWorkloadSignal[T metav1.Object](
+	ctx context.Context,
+	e *K8sEnricher,
+	signal *signalprocessingv1alpha1.SignalData,
+	result *signalprocessingv1alpha1.KubernetesContext,
+	kind string,
+	getter func(ctx context.Context, namespace, name string) (T, error),
+) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	noun := strings.ToLower(kind)
+
+	// 1. Fetch namespace (required)
+	ns, err := e.getNamespace(ctx, signal.TargetResource.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %s: %w", signal.TargetResource.Namespace, err)
+	}
+	e.populateNamespaceContext(result, ns)
+
+	// 2. Fetch the workload object - enter degraded mode if not found (BR-SP-001)
+	obj, err := getter(ctx, signal.TargetResource.Namespace, signal.TargetResource.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			e.logger.Info(fmt.Sprintf("Target %s not found, entering degraded mode", noun), "name", signal.TargetResource.Name)
+			result.DegradedMode = true
+			e.metrics.RecordEnrichmentError("not_found")
+			return result, nil
+		}
+		e.logger.Error(err, fmt.Sprintf("Failed to fetch %s", noun), "name", signal.TargetResource.Name)
+		e.metrics.RecordEnrichmentError("api_error")
+		return nil, fmt.Errorf("failed to fetch %s: %w", noun, err)
+	}
+	result.Workload = &signalprocessingv1alpha1.WorkloadDetails{
+		Kind:        kind,
+		Name:        obj.GetName(),
+		Labels:      ensureMap(obj.GetLabels()),
+		Annotations: ensureMap(obj.GetAnnotations()),
+	}
+
+	return result, nil
+}
+
+// enrichDeploymentSignal fetches Namespace + Deployment.
+// BR-SP-001: Sets DegradedMode=true if target deployment not found
+func (e *K8sEnricher) enrichDeploymentSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	return enrichWorkloadSignal(ctx, e, signal, result, "Deployment", e.getDeployment)
+}
+
+// enrichStatefulSetSignal fetches Namespace + StatefulSet.
+// BR-SP-001: Sets DegradedMode=true if target statefulset not found
+func (e *K8sEnricher) enrichStatefulSetSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	return enrichWorkloadSignal(ctx, e, signal, result, "StatefulSet", e.getStatefulSet)
+}
+
+// enrichDaemonSetSignal fetches Namespace + DaemonSet.
+// BR-SP-001: Sets DegradedMode=true if target daemonset not found
+func (e *K8sEnricher) enrichDaemonSetSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	return enrichWorkloadSignal(ctx, e, signal, result, "DaemonSet", e.getDaemonSet)
+}
+
+// enrichReplicaSetSignal fetches Namespace + ReplicaSet.
+// BR-SP-001: Sets DegradedMode=true if target replicaset not found
+func (e *K8sEnricher) enrichReplicaSetSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	return enrichWorkloadSignal(ctx, e, signal, result, "ReplicaSet", e.getReplicaSet)
+}
+
+// enrichServiceSignal fetches Namespace + Service.
+// BR-SP-001: Sets DegradedMode=true if target service not found
+func (e *K8sEnricher) enrichServiceSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	return enrichWorkloadSignal(ctx, e, signal, result, "Service", e.getService)
+}
+
+// enrichNodeSignal fetches Node only (no namespace for node signals).
+// BLAST-A4 (BR-SP-112 R4): Returns degraded mode on NotFound instead of hard error,
+// matching Pod/Deployment/StatefulSet/DaemonSet/ReplicaSet degraded behavior (DD-017 Principle 3).
+func (e *K8sEnricher) enrichNodeSignal(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	node, err := e.getNode(ctx, signal.TargetResource.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			e.logger.Info("Node not found, entering degraded mode", "node", signal.TargetResource.Name)
+			e.metrics.RecordEnrichmentError("not_found")
+			result.DegradedMode = true
+			return result, nil
+		}
+		return nil, fmt.Errorf("failed to get node %s: %w", signal.TargetResource.Name, err)
+	}
+	result.Workload = &signalprocessingv1alpha1.WorkloadDetails{
+		Kind:        "Node",
+		Name:        node.Name,
+		Labels:      ensureMap(node.Labels),
+		Annotations: ensureMap(node.Annotations),
+	}
+
+	return result, nil
+}
+
+// enrichNamespaceOnly fetches namespace only for unknown resource types.
+// BLAST-A5 (BR-SP-112 R5): When namespace is empty (cluster-scoped kind),
+// returns degraded context instead of attempting to fetch empty namespace name.
+func (e *K8sEnricher) enrichNamespaceOnly(ctx context.Context, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	if signal.TargetResource.Namespace == "" {
+		e.logger.Info("Cluster-scoped unknown kind, entering degraded mode",
+			"kind", signal.TargetResource.Kind, "name", signal.TargetResource.Name)
+		result.DegradedMode = true
+		return result, nil
+	}
+	ns, err := e.getNamespace(ctx, signal.TargetResource.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %s: %w", signal.TargetResource.Namespace, err)
+	}
+	e.populateNamespaceContext(result, ns)
+
+	return result, nil
+}
+
+// ensureMap returns the input map if non-nil, otherwise returns an empty map.
+func ensureMap(m map[string]string) map[string]string {
+	if m == nil {
+		return make(map[string]string)
+	}
+	return m
+}
+
+// getNamespace fetches a namespace by name with caching.
+// SP-CACHE-001: Uses APIReader (direct API call) to bypass the informer cache,
+// preventing stale label reads when namespaces are newly created or relabeled.
+// The enricher's own TTL cache still reduces API server load for subsequent lookups.
+func (e *K8sEnricher) getNamespace(ctx context.Context, name string) (*corev1.Namespace, error) {
+	cacheKey := "ns:" + name
+	if cached, ok := e.cache.Get(cacheKey); ok {
+		if ns, ok := cached.(*corev1.Namespace); ok {
+			if hasKubernautLabels(ns.Labels) {
+				return ns, nil
+			}
+			// SP-CACHE-001: Cached namespace has no kubernaut.ai/* labels — likely stale.
+			// Evict and re-fetch from API server to pick up labels that may have propagated.
+			e.cache.Delete(cacheKey)
+			e.logger.V(1).Info("Evicted stale namespace cache entry (no kubernaut.ai labels)", "namespace", name)
+		} else {
+			e.cache.Delete(cacheKey)
+		}
+	}
+
+	reader := e.nsReader()
+	ns := &corev1.Namespace{}
+	if err := reader.Get(ctx, types.NamespacedName{Name: name}, ns); err != nil {
+		return nil, err
+	}
+
+	e.cache.Set(cacheKey, ns)
+	return ns, nil
+}
+
+// nsReader returns the APIReader if available, falling back to the cached client.
+func (e *K8sEnricher) nsReader() client.Reader {
+	if e.apiReader != nil {
+		return e.apiReader
+	}
+	return e.client
+}
+
+// hasKubernautLabels returns true if the labels map contains at least one kubernaut.ai/ key.
+func hasKubernautLabels(labels map[string]string) bool {
+	for k := range labels {
+		if len(k) > 13 && k[:13] == "kubernaut.ai/" {
+			return true
+		}
+	}
+	return false
+}
+
+// getPod fetches a pod by namespace and name.
+func (e *K8sEnricher) getPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
+	pod := &corev1.Pod{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, pod); err != nil {
+		return nil, err
+	}
+	return pod, nil
+}
+
+// getNode fetches a node by name.
+func (e *K8sEnricher) getNode(ctx context.Context, name string) (*corev1.Node, error) {
+	node := &corev1.Node{}
+	if err := e.client.Get(ctx, types.NamespacedName{Name: name}, node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// getDeployment fetches a deployment by namespace and name.
+func (e *K8sEnricher) getDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
+	deployment := &appsv1.Deployment{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, deployment); err != nil {
+		return nil, err
+	}
+	return deployment, nil
+}
+
+// getStatefulSet fetches a statefulset by namespace and name.
+func (e *K8sEnricher) getStatefulSet(ctx context.Context, namespace, name string) (*appsv1.StatefulSet, error) {
+	statefulset := &appsv1.StatefulSet{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, statefulset); err != nil {
+		return nil, err
+	}
+	return statefulset, nil
+}
+
+// getDaemonSet fetches a daemonset by namespace and name.
+func (e *K8sEnricher) getDaemonSet(ctx context.Context, namespace, name string) (*appsv1.DaemonSet, error) {
+	daemonset := &appsv1.DaemonSet{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, daemonset); err != nil {
+		return nil, err
+	}
+	return daemonset, nil
+}
+
+// getReplicaSet fetches a replicaset by namespace and name.
+func (e *K8sEnricher) getReplicaSet(ctx context.Context, namespace, name string) (*appsv1.ReplicaSet, error) {
+	replicaset := &appsv1.ReplicaSet{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, replicaset); err != nil {
+		return nil, err
+	}
+	return replicaset, nil
+}
+
+// getService fetches a service by namespace and name.
+func (e *K8sEnricher) getService(ctx context.Context, namespace, name string) (*corev1.Service, error) {
+	service := &corev1.Service{}
+	if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, service); err != nil {
+		return nil, err
+	}
+	return service, nil
+}
+
+// populateNamespaceContext populates the Namespace struct with namespace details.
+func (e *K8sEnricher) populateNamespaceContext(result *signalprocessingv1alpha1.KubernetesContext, ns *corev1.Namespace) {
+	result.Namespace = &signalprocessingv1alpha1.NamespaceContext{
+		Name:        ns.Name,
+		Labels:      ensureMap(ns.Labels),
+		Annotations: ensureMap(ns.Annotations),
+	}
+}
+
+// enrichRemote fetches metadata from a remote cluster via ReaderFactory.
+// Uses PartialObjectMetadata for efficient metadata-only reads over MCP Gateway.
+// BR-INTEGRATION-054: Remote enrichment path for multi-cluster signals.
+func (e *K8sEnricher) enrichRemote(ctx context.Context, signal *signalprocessingv1alpha1.SignalData) (*signalprocessingv1alpha1.KubernetesContext, error) {
+	result := &signalprocessingv1alpha1.KubernetesContext{
+		ClusterID: signal.ClusterID,
+	}
+
+	reader, err := e.readerFactory.ReaderFor(ctx, signal.ClusterID)
+	if err != nil {
+		e.logger.Error(err, "Failed to get reader for remote cluster, entering degraded mode",
+			"clusterID", signal.ClusterID)
+		result.DegradedMode = true
+		e.metrics.RecordEnrichmentError("remote_reader_unavailable")
+		return result, nil
+	}
+
+	e.fetchRemoteNamespaceContext(ctx, reader, signal, result)
+
+	if !e.fetchRemoteWorkloadContext(ctx, reader, signal, result) {
+		return result, nil
+	}
+
+	e.buildRemoteOwnerChain(ctx, reader, signal, result)
+
+	return result, nil
+}
+
+// fetchRemoteNamespaceContext populates result.Namespace from the remote
+// cluster's Namespace metadata, when the signal carries a target namespace.
+// A fetch failure degrades gracefully (namespace context stays nil) rather
+// than failing enrichment outright. Extracted from enrichRemote (Wave 6
+// 6e-iii GREEN: funlen remediation) — pure code motion, no behavior change.
+func (e *K8sEnricher) fetchRemoteNamespaceContext(ctx context.Context, reader client.Reader, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) {
+	if signal.TargetResource.Namespace == "" {
+		return
+	}
+	nsMeta := &metav1.PartialObjectMetadata{}
+	nsMeta.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"})
+	if nsErr := reader.Get(ctx, types.NamespacedName{Name: signal.TargetResource.Namespace}, nsMeta); nsErr != nil {
+		e.logger.V(1).Info("Remote namespace fetch failed, continuing without namespace context",
+			"namespace", signal.TargetResource.Namespace, "clusterID", signal.ClusterID, "error", nsErr)
+		return
+	}
+	result.Namespace = &signalprocessingv1alpha1.NamespaceContext{
+		Name:        nsMeta.Name,
+		Labels:      ensureMap(nsMeta.Labels),
+		Annotations: ensureMap(nsMeta.Annotations),
+	}
+}
+
+// fetchRemoteWorkloadContext populates result.Workload from the remote
+// cluster's target-resource metadata. Unlike the namespace fetch, a missing
+// workload is not degraded silently: it flips result.DegradedMode and
+// records the remote_not_found enrichment error, since the workload is the
+// primary enrichment target. Returns false when the caller must return
+// immediately (workload not found). Extracted from enrichRemote (Wave 6
+// 6e-iii GREEN: funlen remediation) — pure code motion, no behavior change.
+func (e *K8sEnricher) fetchRemoteWorkloadContext(ctx context.Context, reader client.Reader, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) bool {
+	workloadMeta := &metav1.PartialObjectMetadata{}
+	workloadMeta.SetGroupVersionKind(kindToGVK(signal.TargetResource.Kind))
+	key := types.NamespacedName{
+		Namespace: signal.TargetResource.Namespace,
+		Name:      signal.TargetResource.Name,
+	}
+	if wErr := reader.Get(ctx, key, workloadMeta); wErr != nil {
+		e.logger.Info("Remote workload not found, entering degraded mode",
+			"kind", signal.TargetResource.Kind, "name", signal.TargetResource.Name,
+			"clusterID", signal.ClusterID, "error", wErr)
+		result.DegradedMode = true
+		e.metrics.RecordEnrichmentError("remote_not_found")
+		return false
+	}
+	result.Workload = &signalprocessingv1alpha1.WorkloadDetails{
+		Kind:        signal.TargetResource.Kind,
+		Name:        workloadMeta.Name,
+		Labels:      ensureMap(workloadMeta.Labels),
+		Annotations: ensureMap(workloadMeta.Annotations),
+	}
+	return true
+}
+
+// buildRemoteOwnerChain builds the owner chain on the remote cluster for
+// Pod-kind targets only (owner references are only meaningful for Pods in
+// this enrichment flow). A build failure degrades gracefully (owner chain
+// stays nil). Extracted from enrichRemote (Wave 6 6e-iii GREEN: funlen
+// remediation) — pure code motion, no behavior change.
+func (e *K8sEnricher) buildRemoteOwnerChain(ctx context.Context, reader client.Reader, signal *signalprocessingv1alpha1.SignalData, result *signalprocessingv1alpha1.KubernetesContext) {
+	if signal.TargetResource.Kind != kindPod {
+		return
+	}
+	remoteBuilder := ownerchain.NewBuilder(reader, e.logger)
+	chain, chainErr := remoteBuilder.Build(ctx, signal.TargetResource.Namespace,
+		signal.TargetResource.Kind, signal.TargetResource.Name)
+	if chainErr != nil {
+		e.logger.V(1).Info("Remote owner chain build failed", "error", chainErr)
+		return
+	}
+	result.OwnerChain = chain
+}
+
+// kindToGVK maps common workload kinds to their GroupVersionKind.
+func kindToGVK(kind string) schema.GroupVersionKind {
+	switch kind {
+	case kindPod:
+		return schema.GroupVersionKind{Version: "v1", Kind: kindPod}
+	case "Deployment":
+		return schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
+	case "StatefulSet":
+		return schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "StatefulSet"}
+	case "DaemonSet":
+		return schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "DaemonSet"}
+	case "ReplicaSet":
+		return schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "ReplicaSet"}
+	case "Service":
+		return schema.GroupVersionKind{Version: "v1", Kind: "Service"}
+	case "Node":
+		return schema.GroupVersionKind{Version: "v1", Kind: "Node"}
+	default:
+		return schema.GroupVersionKind{Version: "v1", Kind: kind}
+	}
+}

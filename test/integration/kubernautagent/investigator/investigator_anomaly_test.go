@@ -1,0 +1,238 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package investigator_test
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/go-logr/logr"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	tool = "tool"
+)
+
+func containsSubstring(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+var _ = Describe("Kubernaut Agent Anomaly Detector Wiring — TP-433-WIR Phase 4", func() {
+
+	var (
+		invLogger  logr.Logger
+		auditStore *capturingAuditStore
+		builder    *prompt.Builder
+		rp         *parser.ResultParser
+		enricher   *enrichment.Enricher
+		phaseTools katypes.PhaseToolMap
+	)
+
+	BeforeEach(func() {
+		invLogger = logr.Discard()
+		auditStore = newCapturingAuditStore(suiteAuditStore)
+		builder, _ = prompt.NewBuilder()
+		rp = parser.NewResultParser()
+		k8sClient := &k8sFixtureClient{ownerChain: []enrichment.OwnerChainEntry{}}
+		enricher = enrichment.NewEnricher(k8sClient, suiteDSAdapter, auditStore, invLogger)
+		phaseTools = investigator.DefaultPhaseToolMap()
+	})
+
+	Describe("IT-KA-433W-012: executeTool rejects 11th call to same tool (per-tool limit=10, #860)", func() {
+		It("should return error JSON on 11th call when MaxToolCallsPerTool=10", func() {
+			reg := registry.New()
+			reg.Register(&fakeTool{name: "kubectl_describe", result: `{"status":"ok"}`})
+
+			detector := investigator.NewAnomalyDetector(
+				investigator.AnomalyConfig{MaxToolCallsPerTool: 10, MaxTotalToolCalls: 100, MaxRepeatedFailures: 10},
+				nil,
+			)
+
+			toolCalls := make([]llm.ToolCall, 11)
+			for i := range toolCalls {
+				toolCalls[i] = llm.ToolCall{ID: fmt.Sprintf("tc_%d", i+1), Name: "kubectl_describe", Arguments: `{}`}
+			}
+
+			mockClient := &mockLLMClient{
+				responses: []llm.ChatResponse{
+					{
+						Message:   llm.Message{Role: "assistant", Content: "checking"},
+						ToolCalls: toolCalls,
+					},
+					{Message: llm.Message{Role: "assistant", Content: `{"rca_summary":"done"}`}},
+					wfToolResp(`{"workflow_id":"restart","confidence":0.7}`),
+				},
+			}
+
+			inv := investigator.New(investigator.Config{Client: mockClient, Builder: builder, ResultParser: rp, Enricher: enricher, AuditStore: auditStore, Logger: invLogger, MaxTurns: 15, PhaseTools: phaseTools, Registry: reg, Pipeline: investigator.Pipeline{AnomalyDetector: detector}})
+			_, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api", Namespace: "default", Severity: "warning", Message: "CrashLoop",
+				Environment: "Development", Priority: "P2",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(mockClient.calls).To(HaveLen(3))
+			secondCall := mockClient.calls[1]
+			var foundRejection bool
+			for _, msg := range secondCall.Messages {
+				if msg.Role == tool && containsSubstring(msg.Content, "per-tool call limit exceeded") {
+					foundRejection = true
+					break
+				}
+			}
+			Expect(foundRejection).To(BeTrue(),
+				"11th tool call should be rejected with per-tool limit error")
+		})
+	})
+
+	Describe("IT-KA-433W-013: executeTool rejects 3rd repeated identical failure", func() {
+		It("should return error JSON on 3rd failure with MaxRepeatedFailures=3", func() {
+			reg := registry.New()
+			reg.Register(&fakeTool{name: "kubectl_describe", err: fmt.Errorf("connection refused")})
+
+			detector := investigator.NewAnomalyDetector(
+				investigator.AnomalyConfig{MaxToolCallsPerTool: 100, MaxTotalToolCalls: 100, MaxRepeatedFailures: 3},
+				nil,
+			)
+
+			toolCalls := make([]llm.ToolCall, 3)
+			for i := range toolCalls {
+				toolCalls[i] = llm.ToolCall{ID: fmt.Sprintf("tc_%d", i+1), Name: "kubectl_describe", Arguments: `{"kind":"Pod"}`}
+			}
+
+			mockClient := &mockLLMClient{
+				responses: []llm.ChatResponse{
+					{
+						Message:   llm.Message{Role: "assistant", Content: "trying"},
+						ToolCalls: toolCalls,
+					},
+					{Message: llm.Message{Role: "assistant", Content: `{"rca_summary":"failed"}`}},
+					wfToolResp(`{"workflow_id":"restart","confidence":0.5}`),
+				},
+			}
+
+			inv := investigator.New(investigator.Config{Client: mockClient, Builder: builder, ResultParser: rp, Enricher: enricher, AuditStore: auditStore, Logger: invLogger, MaxTurns: 15, PhaseTools: phaseTools, Registry: reg, Pipeline: investigator.Pipeline{AnomalyDetector: detector}})
+			_, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api", Namespace: "default", Severity: "critical", Message: "OOMKilled",
+				Environment: "Development", Priority: "P1",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(mockClient.calls).To(HaveLen(3))
+			secondCall := mockClient.calls[1]
+			var foundRejection bool
+			for _, msg := range secondCall.Messages {
+				if msg.Role == tool && containsSubstring(msg.Content, "repeated identical failure") {
+					foundRejection = true
+					break
+				}
+			}
+			Expect(foundRejection).To(BeTrue(),
+				"3rd identical failure should trigger repeated-failure anomaly")
+		})
+	})
+
+	Describe("IT-KA-860-001: executeTool allows pagination-heavy list_workflows sequence (#860, BR-KA-433-004 I7)", func() {
+		It("should allow 12 list_workflows calls (5 initial + 7 pagination) without per-tool rejection", func() {
+			reg := registry.New()
+			reg.Register(&fakeTool{name: "list_workflows", result: `{"workflows":[{"id":"drain-node"}],"pagination":{"hasNext":true,"nextCursor":"abc"}}`})
+
+			detector := investigator.NewAnomalyDetector(
+				investigator.AnomalyConfig{MaxToolCallsPerTool: 10, MaxTotalToolCalls: 100, MaxRepeatedFailures: 100},
+				nil,
+			)
+
+			toolCalls := make([]llm.ToolCall, 12)
+			for i := range toolCalls {
+				args := `{"action_type":"cordon"}`
+				if i >= 5 {
+					args = fmt.Sprintf(`{"action_type":"cordon","cursor":"page_%d"}`, i-4)
+				}
+				toolCalls[i] = llm.ToolCall{ID: fmt.Sprintf("tc_%d", i+1), Name: "list_workflows", Arguments: args}
+			}
+
+			mockClient := &mockLLMClient{
+				responses: []llm.ChatResponse{
+					{
+						Message:   llm.Message{Role: "assistant", Content: "listing workflows"},
+						ToolCalls: toolCalls,
+					},
+					{Message: llm.Message{Role: "assistant", Content: `{"rca_summary":"needs drain","confidence":0.9}`}},
+					wfToolResp(`{"workflow_id":"drain-node","confidence":0.9}`),
+				},
+			}
+
+			inv := investigator.New(investigator.Config{Client: mockClient, Builder: builder, ResultParser: rp, Enricher: enricher, AuditStore: auditStore, Logger: invLogger, MaxTurns: 15, PhaseTools: phaseTools, Registry: reg, Pipeline: investigator.Pipeline{AnomalyDetector: detector}})
+			_, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api", Namespace: "default", Severity: "warning", Message: "DiskPressure",
+				Environment: "Development", Priority: "P2",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			secondCall := mockClient.calls[1]
+			for _, msg := range secondCall.Messages {
+				if msg.Role == tool {
+					Expect(msg.Content).NotTo(ContainSubstring("per-tool call limit exceeded"),
+						"IT-KA-860-001: no list_workflows call should be rejected — pagination calls are exempt from per-tool budget")
+				}
+			}
+		})
+	})
+
+	Describe("IT-KA-433W-014: Investigation with >30 tool calls returns HumanReviewNeeded", func() {
+		It("should return HumanReviewNeeded when total tool calls exceed MaxTotalToolCalls", func() {
+			reg := registry.New()
+			reg.Register(&fakeTool{name: "kubectl_describe", result: `{"status":"ok"}`})
+
+			detector := investigator.NewAnomalyDetector(
+				investigator.AnomalyConfig{MaxToolCallsPerTool: 100, MaxTotalToolCalls: 5, MaxRepeatedFailures: 100},
+				nil,
+			)
+
+			mockClient := &mockLLMClient{}
+			for i := 0; i < 10; i++ {
+				mockClient.responses = append(mockClient.responses, llm.ChatResponse{
+					Message:   llm.Message{Role: "assistant", Content: "checking more"},
+					ToolCalls: []llm.ToolCall{{ID: fmt.Sprintf("tc_%d", i+1), Name: "kubectl_describe", Arguments: `{}`}},
+				})
+			}
+
+			inv := investigator.New(investigator.Config{Client: mockClient, Builder: builder, ResultParser: rp, Enricher: enricher, AuditStore: auditStore, Logger: invLogger, MaxTurns: 15, PhaseTools: phaseTools, Registry: reg, Pipeline: investigator.Pipeline{AnomalyDetector: detector}})
+			result, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api", Namespace: "default", Severity: "critical", Message: "OOMKilled",
+				Environment: "Development", Priority: "P1",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.HumanReviewNeeded).To(BeTrue(),
+				"investigation should require human review when total tool calls exceeded")
+		})
+	})
+})

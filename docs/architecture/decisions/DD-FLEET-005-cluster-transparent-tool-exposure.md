@@ -1,0 +1,380 @@
+# DD-FLEET-005: Cluster-Transparent Tool Exposure for KA's RCA Investigation
+
+**Status**: ✅ Implemented (issue #1732)
+**Date**: 2026-07-25
+**Author**: AI Assistant
+**Related**: Issue #1729, Issue #1732, ADR-068 (decision #11), BR-INTEGRATION-054, BR-INTEGRATION-1489
+
+---
+
+## Context
+
+Issue #1729 investigated why KubernautAgent's (KA) fleet MCP tool discovery
+is wired in Go (`cmd/kubernautagent/toolregistry.go:registerFleetTools`) but
+never rendered by the Helm chart. That investigation surfaced a second,
+more fundamental gap in the *design* itself, independent of the Helm
+parity issue: **the LLM is currently the one deciding which cluster to
+investigate, and it shouldn't be.**
+
+A single RCA investigation is always scoped to exactly one target cluster —
+`RemediationRequest.Spec.ClusterID`, already resolved into
+`SignalContext.ClusterID` (`pkg/kubernautagent/types/types.go`) before the
+investigator ever runs. There is never a "pick a cluster" decision to make
+during a single investigation.
+
+### What the code actually does today
+
+`registerFleetTools()` connects to the MCP Gateway at KA startup and
+registers exactly two **LLM-callable** tools into the shared, global tool
+registry:
+
+- `list_clusters` (`fleetclient.NewListClustersTool`)
+- `list_tools_for_cluster` (`fleetclient.NewListToolsForClusterTool`)
+
+Per ADR-068 decision #11's two-phase discovery design, the LLM is expected
+to call `list_clusters` to browse, then `list_tools_for_cluster(cluster_id)`
+to fetch and activate a specific cluster's tools — a `cluster_id` string
+parameter the LLM supplies itself. Only after that round trip does a real
+cluster resource tool (e.g. `{clusterID}__resources_get`) become callable.
+
+ADR-068 decision #11 also describes an intended optimization: KA
+"pre-scopes the MCP session to the alert's target cluster at investigation
+start," so the LLM begins with that cluster's tools already active and
+`list_clusters`/`list_tools_for_cluster` exist only for the rare
+cross-cluster-correlation case. **This pre-scoping was never implemented.**
+Confirmed by code search: `GatewayDiscoverer.ToolsForCluster()` — the exact
+call needed to pre-scope — has exactly one production caller in the
+repository: `list_tools_for_cluster`'s own `Execute()`
+(`pkg/fleet/mcpclient/discovery_tools.go`). Nothing calls it automatically
+using `signal.ClusterID`. In practice, every investigation — single-cluster
+or not — depends on the LLM autonomously performing the two-step discovery
+dance before it can read a single remote resource.
+
+### Why this is a problem, not just an inefficiency
+
+1. **Unnecessary LLM burden.** The LLM has to reason about fleet topology
+   (which it was never asked to reason about) before it can do the RCA work
+   it was actually asked to do.
+2. **Needless prompt-injection / scope-escape surface.** `list_tools_for_cluster`
+   takes a free-form `cluster_id` argument. A compromised or confused LLM
+   session could, in principle, call it with a cluster ID other than the
+   one it was asked to investigate — a capability that serves no business
+   need, since exactly one cluster is ever in scope per investigation.
+3. **Tool names leak cluster identity.** Even when the LLM correctly
+   targets the right cluster, tool names like `remote_cluster__resources_get`
+   are visibly different from the local-cluster equivalent
+   (`resources_get`), so the LLM's behavior/prompting differs by deployment
+   topology for no business reason — the MCP gateway already makes remote
+   resources available exactly as if they were local; KA's tool exposure
+   should reflect that.
+4. **Untested.** Issue #1729 found no unit, integration, or E2E test that
+   exercises an LLM tool-calling loop invoking a genuine fleet-discovered
+   tool. The two-step discovery dance is unverified in addition to being
+   undesirable.
+
+## Alternatives Considered
+
+### Alternative 1 — Full name transparency (server-side pre-scope + alias to local tool names) — ✅ CHOSEN
+
+At investigation launch, KA uses `signal.ClusterID` to call
+`ToolsForCluster()` server-side (no LLM involved), wraps the results as
+`BridgeTool`s, and registers them **under the same generic names the local
+K8s tools already use** (`resources_get`, not
+`remote-cluster__resources_get`) for that investigation's tool set. Local
+K8s tools are used unchanged when the signal has no `ClusterID` (hub-local).
+`list_clusters` / `list_tools_for_cluster` are never added to the LLM-facing
+RCA phase tool list.
+
+**Pros**:
+- ✅ Matches "same as if it were local" exactly — identical tool schema
+  regardless of target cluster.
+- ✅ Removes the prompt-injection/scope-escape surface (no `cluster_id`
+  parameter exposed to the LLM at all).
+- ✅ Finally implements ADR-068 decision #11's original pre-scoping intent.
+
+**Cons**:
+- ⚠️ Requires investigation-scoped tool resolution instead of the
+  single global `*registry.Registry` + static `Investigator.phaseTools`
+  used today (`internal/kubernautagent/investigator/investigator.go`) —
+  moderate refactor of registry construction and `launchInvestigation`
+  wiring (`internal/kubernautagent/session/manager.go`).
+- ⚠️ Needs a name-collision/adapter layer so a cluster's `BridgeTool`s can
+  be exposed under the same names as the local K8s tools without
+  colliding when both exist in the same process.
+
+### Alternative 2 — Server-side pre-scope, keep cluster-prefixed names — ❌ REJECTED
+
+Same automatic server-side pre-scoping and same removal of
+`list_clusters`/`list_tools_for_cluster` from the LLM's tool list, but skip
+the renaming — the LLM would see `remote_cluster__resources_get` instead of
+`resources_get`.
+
+**Rejected because**: still satisfies "LLM never chooses a cluster," but
+the tool *name* still reveals cluster identity, which does not fully match
+the "same as if it were local" requirement. Smaller implementation
+(no adapter layer) was not judged worth the incomplete transparency.
+
+### Alternative 3 — Unify local/fleet tool code paths entirely (always via MCP, even for the hub cluster) — ❌ REJECTED
+
+Collapse the local-K8s-client-backed tools and the MCP-gateway-backed
+`BridgeTool`s into one code path, so a hub-local investigation is "just
+another cluster" registration in the gateway.
+
+**Rejected because**: out of proportion to the problem — every local K8s
+tool (`pkg/kubernautagent/tools/k8s`, currently backed directly by
+`client-go`/the dynamic client) would need to be rewritten to go through
+the MCP client abstraction even when fleet mode is disabled entirely,
+regressing every non-fleet KA deployment for a fleet-only concern.
+
+## Decision
+
+**Alternative 1**: KA pre-scopes the RCA phase's tool set server-side, at
+investigation launch, using `signal.ClusterID`. Remote-cluster tools are
+exposed to the LLM under the exact same names as the equivalent local K8s
+tools (full name transparency). `list_clusters` and `list_tools_for_cluster`
+are removed from the LLM-facing RCA tool list; `GatewayDiscoverer.ToolsForCluster()`
+remains available for KA's own internal/server-side pre-scoping call (this
+is what performs the automatic pre-scoping) but is never LLM-callable.
+
+## Consequences
+
+**Positive**:
+- ✅ The LLM's tool-calling behavior is identical whether an incident is on
+  the hub or on any fleet member cluster — no fleet-specific prompting or
+  reasoning required.
+- ✅ Closes an unnecessary scope-escape surface: the LLM can never request
+  tools for a cluster other than the one it was asked to investigate.
+- ✅ Finally realizes ADR-068 decision #11's original pre-scoping design.
+
+**Negative**:
+- ⚠️ Investigation-scoped tool resolution is a real refactor of KA's
+  currently-global tool registry and static `Investigator.phaseTools` —
+  **Mitigation**: scope the change to the fleet-target code path only;
+  hub-local investigations keep using the existing global registry
+  unchanged.
+- ⚠️ Cross-cluster correlation (an LLM investigating a dependency on a
+  *different* cluster than the incident's own) is no longer possible via
+  an LLM-facing tool — **Mitigation**: this capability was never
+  implemented as a real production caller of `list_tools_for_cluster`
+  beyond the tool itself, and ADR-068 states it's needed in <1% of
+  investigations. If a genuine need emerges, it should be a KA-internal,
+  non-LLM-facing capability (mirroring how SP/WE/FMC already call
+  `GatewayDiscoverer.ToolsForCluster()` programmatically today), not an
+  LLM-driven cluster hop.
+
+**Neutral**:
+- 🔄 `GatewayDiscoverer` and `ToolsForCluster()` are unchanged as
+  interfaces — only their caller changes (KA-internal pre-scoping instead
+  of the `list_tools_for_cluster` tool's `Execute()`).
+
+## As-Built Wiring
+
+The design above was implemented as planned, with one deliberate deviation
+(noted below) chosen for blast-radius reasons rather than any change in
+intent.
+
+| Component | Production Entry Point | Wiring Code Location | IT Test ID |
+|---|---|---|---|
+| Per-investigation tool pre-scoping | `Investigator.Investigate()` -> `prescopeFleetOverlay()` | `internal/kubernautagent/investigator/fleet_overlay.go` | IT-KA-FLEET-013 |
+| `FleetOverlayResolver` (interface + context carrier) | `Investigator.Config.FleetOverlayResolver`, `New()` | `internal/kubernautagent/investigator/fleet_overlay.go` | IT-KA-FLEET-013 |
+| Name-transparent `BridgeTool` aliasing | `gatewayOverlayResolver.Overlay()` / `genericNameTool` | `cmd/kubernautagent/toolregistry.go` | IT-KA-FLEET-011/012, E2E-KA-FLEET-001 |
+| Overlay-vs-registry tool resolution | `toolDefinitionsForPhase()`, `executeResolved()` | `internal/kubernautagent/investigator/investigator_tools.go` | IT-KA-FLEET-015 |
+| Removal of LLM-facing discovery tools | `registerFleetTools` (no longer takes a `*registry.Registry`) | `cmd/kubernautagent/toolregistry.go` | IT-KA-FLEET-010 |
+| Alignment cluster attribution fix | `SubmitToolStep` -> `attributionClusterID()` | `internal/kubernautagent/alignment/toolproxy.go` | IT-KA-FLEET-016 |
+
+**Deviation from the original proposal**: the design above named
+`internal/kubernautagent/session/manager.go`'s `launchInvestigation` as the
+pre-scoping entry point. `session.NewManager` has ~100 call sites using
+positional construction, making a signature change there disruptive out of
+proportion to this fix. Pre-scoping was wired one layer down instead, into
+`Investigator.Config`/`New()` and `Investigate()` (both already using named
+struct-literal construction at their call sites), which are exercised by
+every investigation exactly the same way `launchInvestigation` would have
+been. No behavioral difference results from this choice.
+
+The implementation plan (Wiring Manifest with concrete IT test IDs) was
+tracked in Issue #1732 per the project's Pre-Implementation Workflow.
+
+## Amendment (2026-08-01, issue #1729 close-out): tool-transparency gap for non-colliding overlay names
+
+Closing issue #1729 (wiring `kubernautAgent.fleet` through Helm) surfaced a
+gap in the as-built `toolDefinitionsForPhase()`/`executeResolved()` overlay
+resolution above: it only ever **overrides** a local-registry tool entry with
+the overlay's `BridgeTool` when both share the exact same name. It never
+**adds** an overlay tool with no local-registry namesake at all.
+
+In practice this meant fleet-only tools were never advertised to the LLM at
+all: `executeResolved()` could still route to them by name, but the LLM never
+learns a name exists unless `toolDefinitionsForPhase()` puts it in the
+schema. kube-mcp-server's own tool naming convention
+(`resources_get`/`resources_list`/..., `pkg/fleet/mcpclient/tool_names.go`)
+never collides with KA's local k8s-tool naming convention
+(`kubectl_get_by_name`/`kubectl_list`/..., `pkg/kubernautagent/tools/k8s`),
+so this gap was total, not partial — the "cluster-transparent tool exposure"
+this decision is named for never actually reached kube-mcp-server's tools in
+practice, regardless of Helm/gateway wiring.
+
+**Fix**: `toolDefinitionsForPhase()` now appends every overlay tool name not
+already covered by the override loop, for the RCA phase only (where the
+local read/k8s tool set already lives — `WorkflowDiscovery`/`Validation`
+schemas are deliberately left untouched, preserving their existing
+least-privilege scoping, AC-6). Overlay-only names are sorted before
+appending so the resulting schema is deterministic across calls despite Go's
+randomized map iteration order.
+
+| Component | Production Entry Point | Wiring Code Location | IT Test ID |
+|---|---|---|---|
+| Non-colliding overlay tool append | `toolDefinitionsForPhase()` -> `appendNonCollidingOverlayTools()` | `internal/kubernautagent/investigator/investigator_tools.go` | IT-KA-FLEET-024 |
+
+## Amendment (2026-08-28, issue #2306 close-out): subtractive suppression + resourceContextTools cluster-awareness
+
+Issue #2306 found the override-and-append halves above still left a third
+gap: a local tool whose *behavior* depends on which cluster it queries
+(the client-go/dynamic-client-backed RCA tools — `k8s.AllToolNames`,
+`k8s.MetricsToolNames`, `k8s.NodeProxyToolNames`) but has no same-named
+overlay override stayed advertised to the LLM even for a fleet-target
+investigation. `kube-mcp-server`'s real tool names (`resources_get`,
+`resources_list`, ...) never collide with these local names, so the
+override loop never protected them — the LLM could silently call, e.g.,
+`kubectl_get_by_name` during a fleet-target investigation and get an answer
+from the hub, not the target cluster (the AC-6 defect in #2306's evidence
+trace, RR `rr-9dc9711199fd-bd25bdf5`).
+
+A second, related gap: `resourceContextTools` (`get_namespaced_resource_context`/
+`get_cluster_resource_context`, `internal/kubernautagent/tools/custom/resource_context.go`)
+unconditionally resolved owner-chain/spec-hash against the hub-bound
+`enrichment.K8sClient` and queried `ds.GetRemediationHistory` with an
+unscoped `clusterID`, for the same reason — no fleet-awareness in either
+code path.
+
+**Fix, part 1 (subtractive suppression)**: during the RCA phase of a
+fleet-target investigation (non-empty overlay), `toolDefinitionsForPhase()`
+now skips a local tool name entirely — never appends it to the schema —
+when it's in `fleetSuppressedToolNames` (the three name sets above) and has
+no same-named overlay override. A hub-local investigation (no overlay in
+ctx) never triggers the skip, so its schema is unchanged. Prometheus/
+Alertmanager tools stay always-visible, per the existing Thanos MVP
+federation-transparency decision (PR #1364) — they are not host-bound.
+
+**Fix, part 2 (resourceContextTools cluster-awareness)**: both tools now
+resolve owner-chain/spec-hash against the correct cluster instead of
+unconditionally querying the hub, reusing Gateway's own already-tested
+owner-chain resolver rather than reimplementing a walk loop and static kind
+table from scratch. `pkg/gateway/adapters/owner_resolver.go`'s
+`K8sOwnerResolver` (used by Gateway for signal-fingerprinting owner-chain
+resolution, including its own already-proven remote-cluster resolution via
+`mcpclient.Client`) moved unchanged in behavior to a new shared package,
+`pkg/shared/k8s/ownerchain`, alongside the existing `pkg/shared/k8s/gvk.go`
+GVK helpers — the same `pkg/shared/*` pattern already used for `hash` and
+`scope` so services can share domain logic as peers, without cross-service
+imports. A minimal `KindResolver` interface (`KindToGVR`, `IsCoreBatchAppsKind`)
+replaces the resolver's direct binding to Gateway's concrete
+`APIResourceRegistry`; `*APIResourceRegistry` satisfies it automatically via
+structural typing, with zero code changes to `resource_registry.go`.
+
+On top of the moved package, `internal/kubernautagent/tools/custom/fleet_resource_context.go`
+adds `overlayClientReader` (a `client.Reader` adapter over the fleet
+overlay's `resources_get` tool, reusing the newly-exported
+`mcpclient.ParseUnstructuredResponse`/`mcpclient.PopulateObject` — mechanical
+renames of previously-private helpers, zero behavior change) and
+`overlayK8sClient` (wraps `ownerchain.NewK8sOwnerResolver` for
+`GetOwnerChain`, and `ownerchain.KindToGroup()` + `hash.CanonicalResourceFingerprint`
+for `GetSpecHash`). `resource_context.go`'s `resolveK8sClient()` picks
+the hub-bound client for a hub-local investigation, `overlayK8sClient` for a
+fleet-target investigation whose overlay publishes `resources_get`, or a
+no-op client (clear "not available" error, no silent hub fallback) if the
+overlay lacks it. `fetchRemediationHistory()` now threads
+`audit.ClusterIDFromContext(ctx)` (already set by `prescopeFleetOverlay`)
+into `ds.GetRemediationHistory` instead of an unscoped `""`.
+
+**Fix, part 3 (execution-time backstop)**: part 1 only ever controlled what
+`toolDefinitionsForPhase()` *advertises* in the LLM's schema. Nothing stopped
+a call for a suppressed name from still reaching `inv.registry.Execute()`
+and running against the hub if it arrived anyway — schema drift across
+turns, a hallucinated call, or an adversarial prompt. `executeResolved()`
+now runs the same `isFleetSuppressed` check: for a fleet-target
+investigation, a suppressed name with no overlay override is rejected
+(wrapped with the target cluster ID, mirroring the existing not-found
+wrapping) before the local registry is ever consulted.
+
+**Deliberately out of scope**: full RESTMapper-equivalent remote discovery
+for `overlayK8sClient` — `ownerchain.KindToGroup()`'s static table covers
+core/apps/batch kinds only. A resource of an unlisted kind reaching
+`GetSpecHash` with no explicit `apiVersion` gets a clear error rather than a
+guess. Tracked in issue #2308: triage found no discovery tool (an
+equivalent of `kubectl api-resources`) exists anywhere in
+`containers/kubernetes-mcp-server`'s current toolset, so closing this
+requires either an upstream contribution or a bounded expansion of the
+static table -- not a one-line fix. The common workload kinds an RCA
+investigation deals with are already covered.
+
+| Component | Production Entry Point | Wiring Code Location | IT Test ID |
+|---|---|---|---|
+| `fleetSuppressedToolNames` + subtractive filter | `toolDefinitionsForPhase()` | `internal/kubernautagent/investigator/investigator_tools.go` | IT-KA-FLEET-030/031 |
+| `isFleetSuppressed` execution-time check | `executeResolved()` | `internal/kubernautagent/investigator/investigator_tools.go` | IT-KA-FLEET-035 |
+| `pkg/shared/k8s/ownerchain` (moved `K8sOwnerResolver`, `KindResolver` interface) | `cmd/gateway/main.go` (existing), `fleet_resource_context.go` (new) | `pkg/shared/k8s/ownerchain` | Gateway's existing 6-file regression suite + UT-KA-FLEET-031/032 |
+| `overlayClientReader` / `overlayK8sClient` | Constructed per-`Execute()` call in `namespacedResourceContextTool`/`clusterResourceContextTool` | `internal/kubernautagent/tools/custom/fleet_resource_context.go` | UT-KA-FLEET-031/032 |
+| `mcpclient.ParseUnstructuredResponse` / `mcpclient.PopulateObject` (exported) | Called by `overlayClientReader.Get` | `pkg/fleet/mcpclient/parse.go`, `pkg/fleet/mcpclient/client.go` | UT-KA-FLEET-031 (indirect) |
+| K8sClient-selection guard (`resolveK8sClient`) + `remediationHistoryQuery.ClusterID` | `Execute()` on both `resourceContextTools` | `internal/kubernautagent/tools/custom/resource_context.go` | IT-KA-FLEET-032/033 |
+
+## Amendment (2026-08-30, issue #2312 close-out): fail-closed tool-overlay resolution
+
+`prescopeFleetOverlay()` (the "As-Built Wiring" entry above) originally
+**failed open**: if `FleetOverlayResolver` was unconfigured, or a configured
+resolver's `Overlay()` call itself errored (e.g. the MCP gateway or
+`kube-mcp-server` unreachable), the investigation proceeded anyway with
+`ctx` unchanged — silently falling back to the local/hub tool registry for
+what was supposed to be a fleet-target investigation. This was logged and
+audited (`EventTypeFleetOverlayUnavailable`/`EventTypeFleetOverlayFailed`),
+but the investigation itself did not stop.
+
+Reproduced live 2026-08-30 (Issue #2312) on the `fleet-e2e` demo: a real
+investigation targeting a `remote-cluster` pod hit an EAIGW SSE `tools/list`
+failure, fell back to hub-only tools, got a clean "not found" from the hub
+(which correctly has no such namespace), and the LLM confidently reported
+the incident as "resolved/stale" — a fabricated verdict with no signal
+anywhere in the response that the investigation never reached the target
+cluster. The same fail-open path could just as easily have found a
+similarly-named resource that coincidentally exists on the hub, producing a
+confident wrong RCA against real (but wrong-cluster) evidence — a
+materially worse outcome than an explicit failure, since a downstream
+automated remediation could act on it.
+
+**Fix**: `prescopeFleetOverlay()` now returns `(context.Context, error)` and
+fails closed — a `nil` `FleetOverlayResolver`, a resolver error, or an empty
+overlay all short-circuit `Investigate()`/`RunInteractiveTurn()` with a
+non-nil error instead of continuing with an unscoped context. Falling back to local/hub
+tools is never correct for a fleet-target investigation: the hub is never
+the resource the firing signal or interactive operator actually targeted,
+so any tool call the LLM makes without the overlay queries the wrong
+cluster by construction. This supersedes ADR-068 decision #11's original
+fail-open framing for this specific code path — the pod-wide
+`readiness.Gate` (ADR-068, "Fleet Readiness Gate") remains fail-closed for
+*static/sustained* dependency unavailability at the process level; this
+amendment closes the matching gap at the *per-investigation* level, since a
+gateway blip that recovers before the next readiness probe tick could still
+slip an individual investigation through fail-open otherwise.
+
+Audit behavior is unchanged: both event types are still emitted (AU-3)
+before the error is returned, so a degraded fleet investigation remains
+independently queryable regardless of the caller's handling of the error.
+`api/openapi/data-storage-v1.yaml` gained dedicated discriminator schemas
+(`AIAgentFleetOverlayFailedPayload`/`AIAgentFleetOverlayUnavailablePayload`)
+for these two event types in the same change — they previously fell back to
+an outer-fields-only shape with no dedicated payload variant.
+
+Required by OWASP ASVS 4.0.3 **V4.1.5** ("verify that access controls fail
+securely including when an exception occurs"): the tool overlay is the
+access-control boundary that scopes which cluster's resources an
+investigation can read (FedRAMP AC-4), so a resolution exception must deny
+access to that boundary, not silently substitute a different one.
+
+| Component | Production Entry Point | Wiring Code Location | Test ID |
+|---|---|---|---|
+| Fail-closed overlay resolution | `prescopeFleetOverlay()` -> `Investigate()` / `RunInteractiveTurn()` | `internal/kubernautagent/investigator/fleet_overlay.go`, `investigator.go` | UT-KA-FLEET-028, IT-KA-FLEET-020/029 |
+| `AIAgentFleetOverlayFailedPayload` / `AIAgentFleetOverlayUnavailablePayload` discriminator schemas + builders | `buildFleetOverlayFailedPayload` / `buildFleetOverlayUnavailablePayload` registered in `eventDataBuilders` | `internal/kubernautagent/audit/ds_payloads.go`, `ds_store.go`; schema in `api/openapi/data-storage-v1.yaml` | UT-KA-2312-001/002 |
+
+## Authority
+
+Issue #1729, Issue #1732, Issue #2306, Issue #2308, Issue #2312, ADR-068
+(decision #11), BR-INTEGRATION-054, BR-INTEGRATION-1489.

@@ -1,0 +1,115 @@
+package audit
+
+import (
+	"context"
+	"time"
+
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+)
+
+// EventType classifies audit events for L3 forensic analysis.
+type EventType string
+
+// EventType values for SOC2-compatible audit classification.
+const (
+	EventAuthSuccess        EventType = "auth.success"
+	EventAuthFailure        EventType = "auth.failure"
+	EventRateLimitDenied    EventType = "ratelimit.denied"
+	EventCircuitBreakerTrip EventType = "circuitbreaker.trip"
+
+	EventJWTDelegation EventType = "jwt.delegation"
+
+	EventSessionCreated          EventType = "session.created"
+	EventSessionDeleted          EventType = "session.deleted"
+	EventSessionPhaseChanged     EventType = "session.phase_changed"
+	EventSessionAutoCancelled    EventType = "session.auto_cancelled"
+	EventSessionRetentionDeleted EventType = "session.retention_deleted"
+
+	EventA2ATaskStarted   EventType = "a2a.task_started"
+	EventA2ATaskCompleted EventType = "a2a.task_completed"
+	EventA2ATaskFailed    EventType = "a2a.task_failed"
+	EventA2AStreamOpened  EventType = "a2a.stream_opened"
+	EventA2AStreamClosed  EventType = "a2a.stream_closed"
+	EventMCPToolFailed    EventType = "mcp.tool_failed"
+	EventMCPSessionInit   EventType = "mcp.session_init"
+	EventMCPSessionClosed EventType = "mcp.session_closed"
+
+	EventSeverityTriageCompleted EventType = "severity_triage.completed"
+	EventSeverityTriageFailed    EventType = "severity_triage.failed"
+	// EventSeverityTriageAmbiguous fires when Tier 1's only correlating
+	// evidence is a cluster-scoped alert with no verified relationship to
+	// the target resource -- the agent must ask the user to confirm before
+	// a RemediationRequest is created (DD-AF-012, #2027/#2028).
+	EventSeverityTriageAmbiguous EventType = "severity_triage.ambiguous"
+
+	EventWorkflowDiscovery EventType = "workflow.discovery"
+
+	EventConfigReloaded EventType = "config.reloaded"
+	EventConfigRejected EventType = "config.rejected"
+
+	// AU-2: Pre-flight startup diagnostics (SI-10 / AC-6)
+	EventPreflightCRDCheck  EventType = "preflight.crd_check"
+	EventPreflightRBACCheck EventType = "preflight.rbac_check"
+
+	// Consolidated from rbac.denied + mcp.tool_denied (Issue #1156)
+	EventAuthAccessDenied EventType = "auth.access_denied"
+	// Consolidated from tool.invoked + mcp.tool_invoked (Issue #1156)
+	EventToolExecuted EventType = "tool.executed"
+
+	// AU-2/AU-3: Agent card discovery audit (Issue #1259)
+	EventAgentCardAccessed EventType = "discovery.agent_card_accessed"
+
+	// New from Issue #1021 catalog (Issue #1156)
+	EventSessionCompleted EventType = "session.completed"
+	EventTriageStarted    EventType = "triage.started"
+	EventTriageCompleted  EventType = "triage.completed"
+	EventRRCreated        EventType = "rr.created"
+	EventRRDeduplicated   EventType = "rr.deduplicated"
+	// AU-3/AU-12: AF tool-layer scope rejection (Issue #2025/#2022, ADR-053
+	// Addendum "Point 3"). Parallel to RO's orchestrator.routing.blocked,
+	// giving agent-initiated RR-creation rejections the same audit visibility
+	// that signal-initiated ones (deliberately) lack at Gateway (ADR-053
+	// Decision #7).
+	EventRRScopeRejected      EventType = "rr.scope_rejected"
+	EventKADelegated          EventType = "ka.delegated"
+	EventKAResultReceived     EventType = "ka.result_received"
+	EventUserDecision         EventType = "user.decision"
+	EventInvestigationTimeout EventType = "investigation.timeout"
+
+	// EventInteractiveSignalFailed (#2289, AU-2/AU-3) fires when
+	// SignalInteractive (IS CRD creation) still fails after exhausting
+	// bounded retries and the caller fails closed -- neither the new RR
+	// (buildPreCreateISHooks) nor the interactive attach
+	// (signalInteractiveSession) is allowed to proceed without the
+	// consent-gating guarantee IS CRD creation is meant to provide
+	// (DD-INTERACTIVE-002, BR-INTERACTIVE-010).
+	EventInteractiveSignalFailed EventType = "interactive_signal.failed"
+)
+
+// Event represents a SOC2-compatible audit event.
+type Event struct {
+	Timestamp     time.Time                 `json:"timestamp"`
+	Type          EventType                 `json:"type"`
+	CorrelationID string                    `json:"correlation_id,omitempty"`
+	RequestID     string                    `json:"request_id,omitempty"`
+	UserID        string                    `json:"user_id,omitempty"`
+	SourceIP      string                    `json:"source_ip,omitempty"`
+	ClusterID     string                    `json:"cluster_id,omitempty"`
+	Detail        map[string]string         `json:"detail,omitempty"`
+	ErrorDetails  *sharedaudit.ErrorDetails `json:"error_details,omitempty"`
+}
+
+// Emitter is the interface for writing audit events.
+// All callers should treat Emit as non-blocking; implementations must not
+// propagate errors to the caller or block the request path.
+type Emitter interface {
+	Emit(ctx context.Context, event *Event)
+}
+
+// ClosableEmitter extends Emitter with lifecycle management for implementations
+// that buffer events (e.g. StoreAdapter). Callers that only need fire-and-forget
+// should depend on Emitter; shutdown orchestration depends on ClosableEmitter.
+type ClosableEmitter interface {
+	Emitter
+	Close(ctx context.Context) error
+}

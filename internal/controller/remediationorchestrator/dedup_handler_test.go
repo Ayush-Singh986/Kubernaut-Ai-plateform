@@ -1,0 +1,627 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller_test
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	transientErrorWfe019 = "transient-error-wfe-019"
+)
+
+// ========================================
+// Issue #190: WE/RO Deduplicated Phase with Result Inheritance
+// ========================================
+
+var _ = Describe("Issue #190: Deduplication CRD Types", func() {
+
+	Context("CRD Constants and Fields", func() {
+
+		It("UT-WE-190-004: FailureReasonDeduplicated constant exists and equals 'Deduplicated'", func() {
+			Expect(workflowexecutionv1.FailureReasonDeduplicated).To(Equal("Deduplicated"),
+				"Behavior: WE CRD must have a Deduplicated failure reason constant")
+		})
+
+		It("UT-WE-190-004: DeduplicatedBy field is assignable on WFE status", func() {
+			wfe := &workflowexecutionv1.WorkflowExecution{}
+			wfe.Status.DeduplicatedBy = "test-original-wfe"
+			Expect(wfe.Status.DeduplicatedBy).To(Equal("test-original-wfe"),
+				"Behavior: WFE status must have DeduplicatedBy string field")
+		})
+
+		It("FailurePhaseDeduplicated constant exists and equals FailurePhase('Deduplicated')", func() {
+			Expect(remediationv1.FailurePhaseDeduplicated).To(Equal(remediationv1.FailurePhase("Deduplicated")),
+				"Behavior: RR CRD must have a Deduplicated failure phase constant")
+		})
+
+		It("DeduplicatedByWE field is assignable on RR status", func() {
+			rr := &remediationv1.RemediationRequest{}
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "test-original-wfe"
+			Expect(rr.Status.EnsureRoutingStatus().DeduplicatedByWE).To(Equal("test-original-wfe"),
+				"Behavior: RR status must have DeduplicatedByWE string field")
+		})
+	})
+})
+
+// NOTE: UT-RO-190-001 through UT-RO-190-004 (HandleStatus Dedup Branching) were removed
+// as part of Issue #666 (Phase Handler Registry). That handler-level dedup logic is now
+// internalized in ExecutingHandler and covered by UT-EXE-* tests + the reconciler-level
+// tests below (UT-RO-190-005+).
+
+var _ = Describe("Issue #190: Cross-WE Result Propagation", func() {
+	var (
+		ctx    context.Context
+		scheme = setupScheme()
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	Context("C3 short-circuit in handleExecutingPhase", func() {
+
+		It("UT-RO-190-005: original WFE Completed → RR inherits Completed", func() {
+			rr := newRemediationRequest("prop-rr-005", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-005")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "original-wfe-005"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-005", defaultFixture, "prop-rr-005", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "original-wfe-005"
+
+			originalWFE := newWorkflowExecutionCompleted("original-wfe-005", defaultFixture, "other-rr")
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-005", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-005", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseCompleted),
+				"Behavior: RR must inherit Completed from original WFE")
+			Expect(updated.Status.EnsureCompletionStatus().Outcome).To(Equal(remediationv1.OutcomeRemediated),
+				"Behavior: Outcome must be Remediated (lineage tracked via DeduplicatedByWE + K8s events)")
+			Expect(updated.Status.CompletedAt).NotTo(BeNil())
+		})
+
+		It("UT-RO-190-006: original WFE Failed → RR inherits Failed with FailurePhaseDeduplicated", func() {
+			rr := newRemediationRequest("prop-rr-006", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-006")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "original-wfe-006"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-006", defaultFixture, "prop-rr-006", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "original-wfe-006"
+
+			originalWFE := newWorkflowExecutionFailed("original-wfe-006", defaultFixture, "other-rr", "OOM killed")
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-006", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-006", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseFailed),
+				"Behavior: RR must inherit Failed from original WFE")
+			Expect(updated.Status.EnsureCompletionStatus().FailurePhase).NotTo(BeNil())
+			Expect(*updated.Status.EnsureCompletionStatus().FailurePhase).To(Equal(remediationv1.FailurePhaseDeduplicated),
+				"Behavior: FailurePhase must be Deduplicated for inherited failures")
+		})
+
+		It("UT-RO-190-011: original WFE deleted → RR transitions to Failed/Deduplicated", func() {
+			rr := newRemediationRequest("prop-rr-011", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-011")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "deleted-wfe-011"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-011", defaultFixture, "prop-rr-011", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "deleted-wfe-011"
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-011", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-011", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseFailed),
+				"Behavior: RR must fail when original WFE is deleted (dangling reference)")
+			Expect(updated.Status.EnsureCompletionStatus().FailurePhase).NotTo(BeNil())
+			Expect(*updated.Status.EnsureCompletionStatus().FailurePhase).To(Equal(remediationv1.FailurePhaseDeduplicated))
+		})
+
+		It("UT-RO-190-012: original WFE still Running → RR stays Executing, requeue", func() {
+			rr := newRemediationRequest("prop-rr-012", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-012")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "running-wfe-012"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-012", defaultFixture, "prop-rr-012", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "running-wfe-012"
+
+			runningWFE := newWorkflowExecution("running-wfe-012", defaultFixture, "other-rr", workflowexecutionv1.PhaseRunning)
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, runningWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-012", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-012", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseExecuting),
+				"Behavior: RR must stay Executing while original WFE is still Running")
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0),
+				"Behavior: must requeue to check original WFE again")
+		})
+
+		It("UT-RO-190-016: idempotency — 2nd reconcile with DeduplicatedByWE set and Running original → no duplicate events", func() {
+			rr := newRemediationRequest("prop-rr-016", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-016")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "running-wfe-016"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-016", defaultFixture, "prop-rr-016", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "running-wfe-016"
+
+			runningWFE := newWorkflowExecution("running-wfe-016", defaultFixture, "other-rr", workflowexecutionv1.PhaseRunning)
+
+			fakeRecorder := record.NewFakeRecorder(20)
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, runningWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      fakeRecorder,
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			result1, err1 := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-016", Namespace: defaultFixture},
+			})
+			Expect(err1).NotTo(HaveOccurred())
+			Expect(result1.RequeueAfter).To(BeNumerically(">", 0))
+
+			result2, err2 := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-016", Namespace: defaultFixture},
+			})
+			Expect(err2).NotTo(HaveOccurred())
+			Expect(result2.RequeueAfter).To(BeNumerically(">", 0))
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-016", Namespace: defaultFixture}, updated)).To(Succeed())
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseExecuting),
+				"Behavior: multiple reconciles must be idempotent — RR stays Executing")
+		})
+	})
+
+	Context("Phase 6: Notification provenance", func() {
+
+		It("UT-RO-190-015: inherited Completed emits K8s event with original WFE provenance", func() {
+			rr := newRemediationRequest("prop-rr-015", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-015")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "original-wfe-015"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-015", defaultFixture, "prop-rr-015", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "original-wfe-015"
+
+			originalWFE := newWorkflowExecutionCompleted("original-wfe-015", defaultFixture, "other-rr")
+
+			fakeRecorder := record.NewFakeRecorder(20)
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      fakeRecorder,
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-015", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var foundEvent bool
+			for len(fakeRecorder.Events) > 0 {
+				event := <-fakeRecorder.Events
+				if event != "" && (containsSubstring(event, "InheritedCompleted") || containsSubstring(event, "original-wfe-015")) {
+					foundEvent = true
+					break
+				}
+			}
+			Expect(foundEvent).To(BeTrue(),
+				"Behavior: inherited transitions must emit K8s events with original WFE provenance")
+		})
+	})
+
+	Context("Error handling in handleDedupResultPropagation", func() {
+
+		It("UT-RO-190-019: transient Get error on original WFE returns reconcile error (not swallowed)", func() {
+			rr := newRemediationRequest("prop-rr-019", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-019")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = transientErrorWfe019
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-019", defaultFixture, "prop-rr-019", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = transientErrorWfe019
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if key.Name == transientErrorWfe019 {
+							return fmt.Errorf("simulated transient API server error")
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+				}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-019", Namespace: defaultFixture},
+			})
+			Expect(err).To(HaveOccurred(),
+				"Behavior: transient Get error on original WFE must surface as reconcile error, not be swallowed")
+			Expect(err.Error()).To(ContainSubstring(transientErrorWfe019),
+				"Error must contain the original WFE name for debugging")
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-019", Namespace: defaultFixture}, updated)).To(Succeed())
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseExecuting),
+				"Behavior: RR must remain in Executing phase on transient error (reconcile retries)")
+		})
+	})
+
+	Context("Audit and notification provenance", func() {
+
+		It("UT-RO-190-017: inherited Failed emits K8s event with original WFE provenance", func() {
+			rr := newRemediationRequest("prop-rr-017", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-017")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "failed-original-017"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-017", defaultFixture, "prop-rr-017", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "failed-original-017"
+
+			originalWFE := newWorkflowExecutionFailed("failed-original-017", defaultFixture, "other-rr", "OOM killed")
+
+			fakeRecorder := record.NewFakeRecorder(20)
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      fakeRecorder,
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-017", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var foundEvent bool
+			for len(fakeRecorder.Events) > 0 {
+				event := <-fakeRecorder.Events
+				if event != "" && (containsSubstring(event, "InheritedFailed") || containsSubstring(event, "failed-original-017")) {
+					foundEvent = true
+					break
+				}
+			}
+			Expect(foundEvent).To(BeTrue(),
+				"Behavior: inherited failure must emit K8s event with original WFE provenance")
+		})
+
+		It("UT-RO-190-018: inherited Failed sets FailureReason with original WFE name for audit traceability", func() {
+			rr := newRemediationRequest("prop-rr-018", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-018")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "failed-original-018"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-018", defaultFixture, "prop-rr-018", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "failed-original-018"
+
+			originalWFE := newWorkflowExecutionFailed("failed-original-018", defaultFixture, "other-rr", "OOM killed")
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-018", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-018", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.EnsureCompletionStatus().FailureReason).NotTo(BeNil())
+			Expect(*updated.Status.EnsureCompletionStatus().FailureReason).To(ContainSubstring("failed-original-018"),
+				"Behavior: FailureReason must contain original WFE name for audit trail traceability")
+		})
+	})
+
+	Context("Phase 5: Consecutive failure exclusion", func() {
+
+		It("UT-RO-190-013: inherited failure does NOT increment ConsecutiveFailureCount", func() {
+			rr := newRemediationRequest("prop-rr-013", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-013")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "deleted-wfe-013"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-013", defaultFixture, "prop-rr-013", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "deleted-wfe-013"
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-013", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-013", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseFailed))
+			Expect(updated.Status.EnsureRoutingStatus().ConsecutiveFailureCount).To(Equal(int32(0)),
+				"Behavior: inherited failures must NOT increment ConsecutiveFailureCount")
+			Expect(updated.Status.EnsureRoutingStatus().NextAllowedExecution).To(BeNil(),
+				"Behavior: inherited failures must NOT set exponential backoff")
+		})
+
+		It("UT-RO-190-014: inherited failure sets FailurePhaseDeduplicated for countConsecutiveFailures exclusion", func() {
+			rr := newRemediationRequest("prop-rr-014", defaultFixture, remediationv1.PhaseExecuting)
+			rr.Status.ObservedGeneration = rr.Generation
+			rr.Status.StartTime = &metav1.Time{Time: time.Now()}
+			rr.Status.EnsurePhaseProgress().ExecutingStartTime = &metav1.Time{Time: time.Now()}
+			setWERef(rr, "dedup-wfe-014")
+			rr.Status.EnsureRoutingStatus().DeduplicatedByWE = "failed-original-014"
+
+			dedupWFE := newWorkflowExecution("dedup-wfe-014", defaultFixture, "prop-rr-014", workflowexecutionv1.PhaseFailed)
+			dedupWFE.Status.FailureDetails = &workflowexecutionv1.FailureDetails{Reason: workflowexecutionv1.FailureReasonDeduplicated}
+			dedupWFE.Status.DeduplicatedBy = "failed-original-014"
+
+			originalWFE := newWorkflowExecutionFailed("failed-original-014", defaultFixture, "other-rr", "OOM killed")
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(rr, dedupWFE, originalWFE).
+				WithStatusSubresource(&remediationv1.RemediationRequest{}).
+				Build()
+
+			reconciler := prodcontroller.NewReconciler(prodcontroller.ReconcilerDeps{
+				Client:        fakeClient,
+				APIReader:     fakeClient,
+				Scheme:        scheme,
+				AuditStore:    nil,
+				Recorder:      record.NewFakeRecorder(20),
+				Metrics:       rometrics.NewMetricsWithRegistry(prometheus.NewRegistry()),
+				Timeouts:      prodcontroller.TimeoutConfig{Global: 1 * time.Hour},
+				RoutingEngine: &MockRoutingEngine{},
+			})
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "prop-rr-014", Namespace: defaultFixture},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &remediationv1.RemediationRequest{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "prop-rr-014", Namespace: defaultFixture}, updated)).To(Succeed())
+
+			Expect(updated.Status.OverallPhase).To(Equal(remediationv1.PhaseFailed))
+			Expect(updated.Status.EnsureCompletionStatus().FailurePhase).NotTo(BeNil())
+			Expect(*updated.Status.EnsureCompletionStatus().FailurePhase).To(Equal(remediationv1.FailurePhaseDeduplicated),
+				"Invariant: FailurePhase=Deduplicated marks this RR for exclusion from countConsecutiveFailures")
+			Expect(updated.Status.EnsureRoutingStatus().ConsecutiveFailureCount).To(Equal(int32(0)),
+				"Invariant: ConsecutiveFailureCount must be 0 (not incremented by transitionToInheritedFailed)")
+		})
+	})
+})
+
+func setWERef(rr *remediationv1.RemediationRequest, name string) {
+	rr.Status.EnsurePhaseProgress().WorkflowExecutionRef = &corev1.ObjectReference{
+		APIVersion: workflowexecutionv1.GroupVersion.String(),
+		Kind:       "WorkflowExecution",
+		Name:       name,
+		Namespace:  defaultFixture,
+	}
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && strings.Contains(s, substr))
+}

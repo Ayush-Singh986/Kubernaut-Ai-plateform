@@ -1,0 +1,353 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package reconstruction_test
+
+import (
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	reconstructionpkg "github.com/jordigilh/kubernaut/pkg/datastorage/reconstruction"
+)
+
+// BR-AUDIT-006: RemediationRequest Reconstruction from Audit Traces
+// Test Plan: docs/development/SOC2/SOC2_AUDIT_RR_RECONSTRUCTION_TEST_PLAN.md
+// This test validates the parser component that extracts structured data from audit event payloads.
+var _ = Describe("Audit Event Parser", func() {
+	var testTimestamp time.Time
+
+	BeforeEach(func() {
+		testTimestamp = time.Date(2026, 1, 12, 10, 0, 0, 0, time.UTC)
+	})
+
+	Context("PARSER-GW-01: Parse gateway.signal.received events (Gaps #1-3)", func() {
+		It("should extract signal type, labels, annotations, and fingerprint", func() {
+			// Validates extraction of Signal, SignalLabels, SignalAnnotations, Fingerprint from gateway audit events
+			// BR-AUDIT-005: signalFingerprint is required for RR reconstruction (deduplication identity)
+			event := createGatewaySignalReceivedEvent(testTimestamp)
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.SignalName).To(Equal("HighCPU"))
+			Expect(parsedData.SignalType).To(Equal("alert"))
+			Expect(parsedData.SignalName).To(Equal("HighCPU"))
+			Expect(parsedData.SignalLabels).To(HaveKeyWithValue("alertname", "HighCPU"))
+			Expect(parsedData.SignalAnnotations).To(HaveKeyWithValue("summary", "CPU usage is high"))
+			// BR-AUDIT-005: Fingerprint must be extracted for RR.Spec.SignalFingerprint
+			Expect(parsedData.SignalFingerprint).To(Equal("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"),
+				"Parser must extract fingerprint from gateway audit payload")
+		})
+
+		It("should return error for missing signal name", func() {
+			// Validates error handling for invalid gateway events
+			event := createInvalidGatewayEvent(testTimestamp)
+
+			_, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("missing signal_name"))
+		})
+	})
+
+	Context("PARSER-RO-01: Parse orchestrator.lifecycle.created events (Gap #8)", func() {
+		It("should extract TimeoutConfig with all phases", func() {
+			// Validates extraction of TimeoutConfig from orchestrator audit events
+			event := createOrchestratorLifecycleCreatedEvent(testTimestamp)
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.TimeoutConfig.Global).To(Equal("1h0m0s"))
+			Expect(parsedData.TimeoutConfig.Processing).To(Equal("10m0s"))
+			Expect(parsedData.TimeoutConfig.Analyzing).To(Equal("15m0s"))
+		})
+
+		It("should handle missing optional timeout fields", func() {
+			// Validates optional TimeoutConfig fields can be omitted
+			event := createOrchestratorEventWithPartialTimeout(testTimestamp)
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.TimeoutConfig.Global).To(Equal("1h0m0s"))
+			// Optional fields should be empty strings, not errors
+			Expect(parsedData.TimeoutConfig.Processing).To(Equal(""))
+		})
+	})
+
+	// ========================================
+	// PARSER-RO-COMPLETED: Parse orchestrator.lifecycle.completed events [CC8.1]
+	// BR-AUDIT-005 v2.0: RR reconstruction completeness
+	// ========================================
+	Context("PARSER-RO-COMPLETED: Parse orchestrator.lifecycle.completed events (CC8.1)", func() {
+		It("should extract outcome and duration from completion event", func() {
+			event := ogenclient.AuditEvent{
+				EventType:      "orchestrator.lifecycle.completed",
+				EventTimestamp: testTimestamp,
+				CorrelationID:  "test-rr-name",
+				EventData: ogenclient.AuditEventEventData{
+					RemediationOrchestratorAuditPayload: ogenclient.RemediationOrchestratorAuditPayload{
+						Outcome:    ogenclient.NewOptRemediationOrchestratorAuditPayloadOutcome(ogenclient.RemediationOrchestratorAuditPayloadOutcomeSuccess),
+						DurationMs: ogenclient.NewOptInt64(45000),
+					},
+				},
+			}
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.Outcome).To(Equal("Success"),
+				"CC8.1: Parser must extract outcome for RR status reconstruction")
+			Expect(parsedData.DurationMs).To(Equal(int64(45000)),
+				"CC8.1: Parser must extract duration for RR status reconstruction")
+		})
+	})
+
+	// ========================================
+	// PARSER-RO-FAILED: Parse orchestrator.lifecycle.failed events [CC8.1]
+	// BR-AUDIT-005 v2.0 Gap #7: Standardized error_details
+	// ========================================
+	Context("PARSER-RO-FAILED: Parse orchestrator.lifecycle.failed events (CC8.1)", func() {
+		It("should extract error_details from failure event", func() {
+			event := ogenclient.AuditEvent{
+				EventType:      "orchestrator.lifecycle.failed",
+				EventTimestamp: testTimestamp,
+				CorrelationID:  "test-rr-name",
+				EventData: ogenclient.AuditEventEventData{
+					RemediationOrchestratorAuditPayload: ogenclient.RemediationOrchestratorAuditPayload{
+						Outcome:      ogenclient.NewOptRemediationOrchestratorAuditPayloadOutcome(ogenclient.RemediationOrchestratorAuditPayloadOutcomeFailed),
+						FailurePhase: ogenclient.NewOptRemediationOrchestratorAuditPayloadFailurePhase(ogenclient.RemediationOrchestratorAuditPayloadFailurePhaseWorkflowExecution),
+						DurationMs:   ogenclient.NewOptInt64(120000),
+						ErrorDetails: ogenclient.NewOptErrorDetails(ogenclient.ErrorDetails{
+							Message:   "workflow execution timed out",
+							Code:      "ERR_TIMEOUT_WORKFLOW",
+							Component: ogenclient.ErrorDetailsComponentWorkflowexecution,
+						}),
+					},
+				},
+			}
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.Outcome).To(Equal("Failed"),
+				"CC8.1: Failed events must have failure outcome")
+			Expect(parsedData.FailurePhase).To(Equal("WorkflowExecution"),
+				"CC8.1: Parser must extract failure phase")
+			Expect(parsedData.ErrorDetails).ToNot(BeNil(),
+				"CC8.1: Parser must extract error_details for RR reconstruction")
+			Expect(parsedData.ErrorDetails.Message).To(Equal("workflow execution timed out"))
+			Expect(parsedData.ErrorDetails.Code).To(Equal("ERR_TIMEOUT_WORKFLOW"))
+		})
+	})
+
+	// ========================================
+	// PARSER-AF-01: Parse apifrontend.rr.created events (Issue #2043)
+	// BR-AUDIT-005 v2.0 CC8.1: AF-created RRs (via kubernaut_remediate) bypass
+	// Gateway entirely and never emit gateway.signal.received; this is their
+	// sole genesis event for reconstruction.
+	// ========================================
+	Context("PARSER-AF-01: Parse apifrontend.rr.created events (Issue #2043)", func() {
+		It("should extract signal name, signal type, and fingerprint from the AF genesis event", func() {
+			event := createApifrontendRRCreatedEvent(testTimestamp)
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.SignalName).To(Equal("OOMKilled"),
+				"Issue #2043: signal_name must be extracted for genesis-event parity with gateway.signal.received")
+			Expect(parsedData.SignalType).To(Equal("alert"),
+				"AF-created RRs always hardcode SignalType=alert (buildRRObject, af_create_rr.go)")
+			Expect(parsedData.SignalFingerprint).To(Equal("fp-abc123def456"),
+				"BR-AUDIT-005: fingerprint is required for RR.Spec.SignalFingerprint deduplication identity")
+		})
+
+		It("should return error for missing signal name", func() {
+			event := createInvalidApifrontendRRCreatedEvent(testTimestamp)
+
+			_, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("missing signal_name"))
+		})
+
+		It("should extract ClusterID from event envelope [CC8.1]", func() {
+			event := createApifrontendRRCreatedEvent(testTimestamp)
+			event.ClusterID.SetTo("remote-cluster")
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.ClusterID).To(Equal("remote-cluster"),
+				"CC8.1: Parser must extract cluster_id from event envelope for AF-genesis events too")
+		})
+	})
+
+	// ========================================
+	// PARSER-CLUSTER-01: ClusterID extraction from event envelope [AU-2, CC8.1]
+	// BR-AUDIT-005 v2.0 / DD-AUDIT-003 v2.2: Fleet cluster-scoped audit
+	// ========================================
+	Context("PARSER-CLUSTER-01: Extract ClusterID from event envelope (DD-AUDIT-003 v2.2)", func() {
+		It("should extract ClusterID from gateway.signal.received event [CC8.1]", func() {
+			event := createGatewaySignalReceivedEvent(testTimestamp)
+			event.ClusterID.SetTo("prod-east")
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.ClusterID).To(Equal("prod-east"),
+				"CC8.1: Parser must extract cluster_id from event envelope for fleet reconstruction")
+		})
+
+		It("should extract ClusterID from orchestrator.lifecycle.created event [CC8.1]", func() {
+			event := createOrchestratorLifecycleCreatedEvent(testTimestamp)
+			event.ClusterID.SetTo("prod-west")
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.ClusterID).To(Equal("prod-west"),
+				"CC8.1: Parser must extract cluster_id for orchestrator events")
+		})
+
+		It("should return empty ClusterID for single-cluster events (backward compat)", func() {
+			event := createGatewaySignalReceivedEvent(testTimestamp)
+			// ClusterID intentionally NOT set (single-cluster deployment)
+
+			parsedData, err := reconstructionpkg.ParseAuditEvent(event)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(parsedData.ClusterID).To(BeEmpty(),
+				"Single-cluster events must have empty ClusterID for backward compatibility")
+		})
+	})
+})
+
+// Test fixture factories - MINIMAL approach
+// NOTE: These fixtures test OUR parser logic, not ogen's type system.
+// Complex ogen structure validation belongs in integration tests with real DataStorage queries.
+func createGatewaySignalReceivedEvent(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal: only fields OUR parser logic needs
+	labels := ogenclient.GatewayAuditPayloadSignalLabels{"alertname": "HighCPU"}
+	annotations := ogenclient.GatewayAuditPayloadSignalAnnotations{"summary": "CPU usage is high"}
+
+	return ogenclient.AuditEvent{
+		EventType:      "gateway.signal.received",
+		EventTimestamp: timestamp,
+		CorrelationID:  "test-correlation-id",
+		EventData: ogenclient.AuditEventEventData{
+			GatewayAuditPayload: ogenclient.GatewayAuditPayload{
+				SignalType:        ogenclient.GatewayAuditPayloadSignalTypeAlert,
+				SignalName:        "HighCPU",
+				Fingerprint:       "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+				SignalLabels:      ogenclient.NewOptGatewayAuditPayloadSignalLabels(labels),
+				SignalAnnotations: ogenclient.NewOptGatewayAuditPayloadSignalAnnotations(annotations),
+			},
+		},
+	}
+}
+
+func createInvalidGatewayEvent(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal invalid: missing signal_name to test error handling
+	return ogenclient.AuditEvent{
+		EventType:      "gateway.signal.received",
+		EventTimestamp: timestamp,
+		EventData: ogenclient.AuditEventEventData{
+			GatewayAuditPayload: ogenclient.GatewayAuditPayload{
+				SignalType: ogenclient.GatewayAuditPayloadSignalTypeAlert,
+				SignalName: "", // Missing - should cause error in our parser
+			},
+		},
+	}
+}
+
+func createApifrontendRRCreatedEvent(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal: only fields OUR parser logic needs (Issue #2043)
+	return ogenclient.AuditEvent{
+		EventType:      "apifrontend.rr.created",
+		EventTimestamp: timestamp,
+		CorrelationID:  "rr-oom-web",
+		EventData: ogenclient.AuditEventEventData{
+			ApifrontendRRCreatedPayload: ogenclient.ApifrontendRRCreatedPayload{
+				EventType:   ogenclient.ApifrontendRRCreatedPayloadEventTypeApifrontendRrCreated,
+				SessionID:   "sess-1",
+				RrName:      "rr-oom-web",
+				RrNamespace: "kubernaut-system",
+				TargetKind:  "Deployment",
+				TargetName:  "web",
+				Fingerprint: "fp-abc123def456",
+				SignalName:  "OOMKilled",
+			},
+		},
+	}
+}
+
+func createInvalidApifrontendRRCreatedEvent(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal invalid: missing signal_name to test error handling
+	return ogenclient.AuditEvent{
+		EventType:      "apifrontend.rr.created",
+		EventTimestamp: timestamp,
+		EventData: ogenclient.AuditEventEventData{
+			ApifrontendRRCreatedPayload: ogenclient.ApifrontendRRCreatedPayload{
+				EventType:   ogenclient.ApifrontendRRCreatedPayloadEventTypeApifrontendRrCreated,
+				RrName:      "rr-oom-web",
+				Fingerprint: "fp-abc123def456",
+				SignalName:  "", // Missing - should cause error in our parser
+			},
+		},
+	}
+}
+
+func createOrchestratorLifecycleCreatedEvent(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal: only TimeoutConfig fields our parser needs
+	tc := ogenclient.TimeoutConfig{
+		Global:     ogenclient.NewOptString("1h0m0s"),
+		Processing: ogenclient.NewOptString("10m0s"),
+		Analyzing:  ogenclient.NewOptString("15m0s"),
+	}
+
+	return ogenclient.AuditEvent{
+		EventType:      "orchestrator.lifecycle.created",
+		EventTimestamp: timestamp,
+		EventData: ogenclient.AuditEventEventData{
+			RemediationOrchestratorAuditPayload: ogenclient.RemediationOrchestratorAuditPayload{
+				TimeoutConfig: ogenclient.OptTimeoutConfig{Value: tc, Set: true},
+			},
+		},
+	}
+}
+
+func createOrchestratorEventWithPartialTimeout(timestamp time.Time) ogenclient.AuditEvent {
+	// Minimal: partial TimeoutConfig to test optional field handling
+	tc := ogenclient.TimeoutConfig{
+		Global: ogenclient.NewOptString("1h0m0s"),
+		// Other fields intentionally omitted to test parser's optional handling
+	}
+
+	return ogenclient.AuditEvent{
+		EventType:      "orchestrator.lifecycle.created",
+		EventTimestamp: timestamp,
+		EventData: ogenclient.AuditEventEventData{
+			RemediationOrchestratorAuditPayload: ogenclient.RemediationOrchestratorAuditPayload{
+				TimeoutConfig: ogenclient.OptTimeoutConfig{Value: tc, Set: true},
+			},
+		},
+	}
+}

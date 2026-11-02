@@ -1,0 +1,13 @@
+# Local-only build/test artifacts are consumed by host-side helpers, not image builds.
+/.git/
+# Release runtime-image builds consume precompiled arm64 binaries from bin/.
+# Keep those binaries in the context while excluding other host-side artifacts.
+/bin/*
+!/bin/*-arm64
+/ci-images-*/
+/.codanna/
+/.codegraph/
+/.codegraph-colbymchenry/
+/.serena/
+/.zvec-grep/
+coverage_*

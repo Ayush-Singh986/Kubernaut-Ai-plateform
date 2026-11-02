@@ -1,0 +1,615 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/go-logr/logr"
+	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	gwtypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+)
+
+// unknownValue is the generic fallback used when a signal name, phase, or
+// reason cannot be grounded in any available infrastructure signal.
+const unknownValue = "unknown"
+
+// ToolDeps groups infrastructure dependencies shared by tool handler functions.
+// Constructed once at wiring time; per-call data (args, username) remains as
+// separate parameters.
+type ToolDeps struct {
+	Client       crclient.Client
+	DynClient    dynamic.Interface
+	ControllerNS string
+	Triager      *severity.Triager
+	Auditor      audit.Emitter
+	// ScopeChecker rejects RR creation for resources outside Kubernaut's
+	// management scope (ADR-053 Addendum "Point 3", #2025/#2022) before a
+	// Triager call or RR object is wastefully created. A nil checker fails closed
+	// because management scope must be verified before an RR is created.
+	ScopeChecker scope.ScopeChecker
+	// ClusterLister names registered Gateway clusters (#2362). Its presence
+	// also indicates fleet routing is enabled, where the process-local client
+	// must never be used as a signal source for a cluster-attributed RR.
+	ClusterLister ClusterLister
+}
+
+// maxDescriptionLen is the maximum length for RR description (truncated, not rejected).
+const maxDescriptionLen = 2048
+
+// CreateRRArgs defines the input for RR creation (used by kubernaut_remediate and kubernaut_investigate).
+// Namespace is the workload namespace where the target resource lives (LLM-provided).
+// For cluster-scoped resources (e.g., Node), Namespace is empty and ClusterScoped is true.
+// Severity is resolved by AF via the triage pipeline.
+type CreateRRArgs struct {
+	Namespace   string `json:"namespace"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// APIVersion is the Kubernetes API group/version (e.g., "apps/v1", "v1").
+	// Stored in targetResource.apiVersion of the RR CRD (#1372).
+	APIVersion string `json:"api_version"`
+	// ClusterScoped indicates the target resource is cluster-scoped (e.g., Node).
+	// When true, Namespace may be empty. Callers set this after RESTMapper validation.
+	ClusterScoped bool `json:"-"`
+	// SignalNameOverride, when set, bypasses deriveSignalName and uses this value
+	// directly as the RR spec.signalName. Used by kubernaut_investigate_alert
+	// where the alert name is the definitive signal (#1372).
+	SignalNameOverride string `json:"-"`
+	// ClusterID is the MCP Gateway registration name for fleet targets. Fleet
+	// creation requires a non-empty ID and exact Prometheus alert/rule attribution;
+	// standalone single-cluster mode does not use cluster identity.
+	ClusterID string `json:"cluster_id,omitempty"`
+	// ConfirmedAmbiguousSignalName, when non-empty and it exactly matches a
+	// previously-surfaced ambiguous candidate's alert name, indicates the
+	// user has already confirmed that specific weak candidate (DD-AF-012,
+	// #2027/#2028). Populated internally by each tool handler from its own
+	// LLM-visible confirmed_signal_name field, not set by the LLM directly
+	// on this struct.
+	ConfirmedAmbiguousSignalName string `json:"-"`
+}
+
+// CreateRRResult is the output of RR creation.
+type CreateRRResult struct {
+	RRID           string `json:"rr_id"`
+	Message        string `json:"message"`
+	AlreadyExists  bool   `json:"already_exists,omitempty"`
+	Severity       string `json:"severity,omitempty"`
+	SeveritySource string `json:"severity_source,omitempty"`
+	SignalName     string `json:"signal_name,omitempty"`
+	// ClusterID attributes the returned RR to its cluster of origin (#1409,
+	// AU-3). On the create branch this echoes args.ClusterID; on the dedup
+	// branch it is read from the *existing* RR object (not the caller's
+	// args) to avoid misattributing audit provenance under a create race.
+	ClusterID string `json:"cluster_id,omitempty"`
+	// Fingerprint is the dedup fingerprint matched/assigned for this RR
+	// (#2043). Threaded through to emitCreateRRAudit so the
+	// apifrontend.rr.created/rr.deduplicated audit payloads can carry it
+	// without recomputing -- both the create and dedup branches already know
+	// it via req.Fingerprint at construction time.
+	Fingerprint string `json:"-"`
+	// Ambiguous is true when severity triage found only a cluster-scoped
+	// alert with no verified relationship to the target resource -- no RR
+	// is created and the caller must ask the user to confirm
+	// CandidateSignalName before retrying (DD-AF-012, #2027/#2028).
+	Ambiguous bool `json:"ambiguous,omitempty"`
+	// CandidateSignalName/CandidateSeverity carry the unverified candidate
+	// so the calling agent can present it to the user for confirmation.
+	CandidateSignalName string `json:"candidate_signal_name,omitempty"`
+	CandidateSeverity   string `json:"candidate_severity,omitempty"`
+}
+
+// CreateRRHooks lets a caller interleave work strictly between "the new
+// RR's name is known" and "the RR becomes visible to any other component"
+// (#2265, DD-AF-013). Both fields are optional; the zero value preserves
+// HandleCreateRR's original behavior exactly (see HandleCreateRR's
+// delegation to HandleCreateRRWithHooks below) -- neither hook is invoked on
+// the dedup/AlreadyExists branch, since that RR predates this call and no
+// ordering race exists for it.
+type CreateRRHooks struct {
+	// BeforeCreate fires with the about-to-be-created RR's name after dedup
+	// has resolved to "genuinely new", strictly before the RR's Create call
+	// is issued. Returning a non-nil error aborts RR creation entirely --
+	// used by the interactive-investigation callers (ka_investigate_mcp.go,
+	// af_investigate_alert.go) to create the InvestigationSession CRD first,
+	// closing the race where RO/AA/KA could otherwise process the RR before
+	// AF's own, separately-issued InvestigationSession Create call lands.
+	BeforeCreate func(ctx context.Context, rrName string) error
+	// AfterCreate fires once the new RR is actually persisted (a real UID
+	// assigned by the API server) -- used to back-fill the
+	// InvestigationSession's OwnerReference (#1300 cascade-GC), which
+	// couldn't be set at BeforeCreate time since the RR didn't exist yet.
+	// Best-effort by design: unlike BeforeCreate, it has no error return --
+	// the RR is already committed at this point, so a backfill failure must
+	// never unwind a successful creation; callers log/handle their own
+	// errors internally (mirrors setRROwnerReference's existing
+	// best-effort convention).
+	AfterCreate func(ctx context.Context, rr *remediationv1.RemediationRequest)
+}
+
+// OwnerReferenceBackfiller is an optional capability an ISSignaler/
+// AlertISSignaler implementation may support, checked via type assertion
+// (#2265) so signaler implementations that don't need it -- including every
+// existing test double -- are unaffected. Implemented by the production
+// CRDSessionService-backed adapters to back-fill the InvestigationSession's
+// OwnerReference (#1300 cascade-GC) once its target RR (created after the IS
+// under the #2265 ordering) is actually persisted.
+type OwnerReferenceBackfiller interface {
+	// BackfillOwnerReference sets rrNamespace/rrName/rrUID as the
+	// OwnerReference on the InvestigationSession CRD for this RR (named
+	// deterministically as is-<rrName> per CreateInvestigationSession).
+	// Best-effort: implementations log failures internally rather than
+	// returning an error, since the RR is already committed at this point.
+	BackfillOwnerReference(ctx context.Context, rrNamespace, rrName string, rrUID types.UID)
+}
+
+// rrCreateGroup provides singleflight deduplication per fingerprint.
+// Dedup is intentionally user-agnostic: concurrent RR creation for the same
+// target resource is deduplicated regardless of which user initiated it.
+// This is acceptable because RR ownership is tracked via labels (reported-by),
+// and the check_existing_rr safety net prevents duplicate CRDs regardless.
+// Note: parallel tests with the same fingerprint may share flights (by design).
+var rrCreateGroup singleflight.Group
+
+// rrFingerprintWithCluster generates a dedup fingerprint that includes the cluster
+// context. Delegates to gwtypes.CalculateClusterAwareFingerprint to ensure GW and
+// AF produce identical fingerprints for the same resource (CC4.2: audit trail consistency).
+func rrFingerprintWithCluster(clusterID, namespace, kind, name string) string {
+	return gwtypes.CalculateClusterAwareFingerprint(clusterID, gwtypes.ResourceIdentifier{
+		Namespace: namespace,
+		Kind:      kind,
+		Name:      name,
+	})
+}
+
+// checkExistingRRByFingerprint checks for an existing non-terminal RR by fingerprint.
+// This is the internal dedup check used by HandleCreateRR that skips input validation
+// (namespace validation already performed by caller).
+func checkExistingRRByFingerprint(ctx context.Context, client crclient.Client, controllerNS, fingerprint string) (CheckExistingRRResult, error) {
+	var list remediationv1.RemediationRequestList
+	if err := client.List(ctx, &list, crclient.InNamespace(controllerNS)); err != nil {
+		return CheckExistingRRResult{}, ToUserFriendlyError(err)
+	}
+	for i := range list.Items {
+		item := &list.Items[i]
+		if item.Spec.SignalFingerprint != fingerprint {
+			continue
+		}
+		phase := string(item.Status.OverallPhase)
+		if !IsTerminalPhase(phase) {
+			return CheckExistingRRResult{
+				Exists:    true,
+				RRID:      item.Name,
+				Phase:     phase,
+				Severity:  item.Spec.Severity,
+				ClusterID: item.Spec.ClusterID,
+			}, nil
+		}
+	}
+	return CheckExistingRRResult{Exists: false}, nil
+}
+
+// HandleCreateRR creates a RemediationRequest CRD with singleflight deduplication.
+//
+// controllerNS is where the RR CRD is placed (metadata.namespace) — injected at
+// wiring time from AF's deployment context (ADR-057).
+// args.Namespace is the workload namespace where the target resource lives — provided
+// by the LLM. Severity is resolved via the triage pipeline when a triager is
+// available, otherwise defaults to "warning".
+func HandleCreateRR(ctx context.Context, d *ToolDeps, args *CreateRRArgs, username string) (CreateRRResult, error) {
+	return HandleCreateRRWithHooks(ctx, d, args, username, CreateRRHooks{})
+}
+
+// HandleCreateRRWithHooks is HandleCreateRR with the addition of hooks
+// (#2265, DD-AF-013) letting a caller interleave work around the moment a
+// genuinely-new RR is created -- see CreateRRHooks' doc comment. An empty
+// CreateRRHooks{} makes this identical to HandleCreateRR.
+func HandleCreateRRWithHooks(ctx context.Context, d *ToolDeps, args *CreateRRArgs, username string, hooks CreateRRHooks) (CreateRRResult, error) {
+	if d.Client == nil {
+		return CreateRRResult{}, ErrK8sUnavailable
+	}
+	if err := validateCreateRRArgs(d, args); err != nil {
+		return CreateRRResult{}, err
+	}
+
+	if len(args.Description) > maxDescriptionLen {
+		args.Description = args.Description[:maxDescriptionLen]
+	}
+
+	// #2025/#2022: reject out-of-scope resources before the Triager call and
+	// RR object creation that follow — RO's CheckUnmanagedResource would
+	// otherwise catch this downstream, but only after wasting a Prometheus
+	// triage round-trip and an RR CRD create/delete cycle.
+	if managed, msg := checkRRScope(ctx, d.ScopeChecker, d.Auditor, username, scope.ResourceIdentity{
+		ClusterID: args.ClusterID, Namespace: args.Namespace, Kind: args.Kind, Name: args.Name,
+	}, d.ClusterLister); !managed {
+		return CreateRRResult{}, fmt.Errorf("%w: %s", ErrResourceNotManaged, msg)
+	}
+
+	resolvedSeverity, triageResult, err := resolveCreateRRSeverity(ctx, d, args)
+	if err != nil {
+		// DD-AF-012/#2027/#2028: an ambiguous match is a typed signal, not a
+		// generic error -- no RR is created, but the caller gets a normal
+		// result carrying the weak candidate so the agent can ask the user
+		// to confirm before retrying (mirrors #2022's Managed: false shape).
+		var ambErr *severity.AmbiguousSeverityError
+		if errors.As(err, &ambErr) {
+			return CreateRRResult{
+				Ambiguous:           true,
+				CandidateSignalName: ambErr.Candidate.AlertName,
+				CandidateSeverity:   ambErr.Candidate.Severity,
+				Message: fmt.Sprintf("severity/signal correlation is ambiguous for %s/%s: only a cluster-scoped alert (%s) was found, with no verified relationship to this resource",
+					args.Kind, args.Name, ambErr.Candidate.AlertName),
+			}, nil
+		}
+		return CreateRRResult{}, err
+	}
+
+	signalName := args.SignalNameOverride
+	if signalName == "" {
+		signalName = deriveSignalName(ctx, d.DynClient, d.ClusterLister != nil, args.Namespace, args, triageResult)
+	}
+	fingerprint := rrFingerprintWithCluster(args.ClusterID, args.Namespace, args.Kind, args.Name)
+
+	result, err, _ := rrCreateGroup.Do(fingerprint, func() (interface{}, error) {
+		return createOrReuseRR(ctx, d, createRRRequest{
+			Args: args, Username: username, Fingerprint: fingerprint,
+			SignalName: signalName, ResolvedSeverity: resolvedSeverity, TriageResult: triageResult,
+		}, hooks)
+	})
+	if err != nil {
+		return CreateRRResult{}, fmt.Errorf("create RR for %s/%s: %w", args.Kind, args.Name, err)
+	}
+	res, ok := result.(*CreateRRResult)
+	if !ok {
+		return CreateRRResult{}, fmt.Errorf("create RR: unexpected singleflight result type")
+	}
+
+	emitCreateRRAudit(ctx, d, args, username, res, resolvedSeverity)
+	return *res, nil
+}
+
+// validateCreateRRArgs validates all HandleCreateRR inputs, returning a
+// wrapped ErrInvalidInput on the first violation found.
+func validateCreateRRArgs(d *ToolDeps, args *CreateRRArgs) error {
+	if err := validate.Namespace(d.ControllerNS); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	if args.ClusterScoped {
+		if args.Namespace != "" {
+			return fmt.Errorf("%w: cluster-scoped resources must have empty namespace", ErrInvalidInput)
+		}
+	} else if err := validate.Namespace(args.Namespace); err != nil {
+		return fmt.Errorf("%w: workload namespace: %w", ErrInvalidInput, err)
+	}
+	if err := validate.Kind(args.Kind); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	if args.Name == "" {
+		return fmt.Errorf("%w: name must not be empty", ErrInvalidInput)
+	}
+	if args.APIVersion != "" {
+		if err := validate.APIVersion(args.APIVersion); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+		}
+	}
+	if err := validate.ClusterID(args.ClusterID); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	return nil
+}
+
+// resolveCreateRRSeverity runs the severity-triage pipeline, returning the
+// resolved severity and the triage result.
+//
+// #1839/DD-AF-010: a nil Triager (severityTriage.enabled=false, i.e. no
+// Prometheus wired) fails closed with the same ErrSeverityUndetermined used
+// when a configured Triager finds no correlating evidence. A silent
+// hardcoded "warning" default here would be the exact "fabrication" DD-AF-010
+// already rejected as Alternative B when removing Tier 3 -- an ungrounded
+// severity is ungrounded whether it comes from an LLM guess or a constant.
+func resolveCreateRRSeverity(ctx context.Context, d *ToolDeps, args *CreateRRArgs) (string, *severity.TriageResult, error) {
+	if d.Triager == nil {
+		return "", nil, fmt.Errorf("severity triage not configured: %w", severity.ErrSeverityUndetermined)
+	}
+	input := severity.TriageInput{
+		Namespace:           args.Namespace,
+		Kind:                args.Kind,
+		Name:                args.Name,
+		Description:         args.Description,
+		ClusterID:           args.ClusterID,
+		FleetMode:           d.ClusterLister != nil,
+		Labels:              map[string]string{"namespace": args.Namespace, "kind": args.Kind, "name": args.Name},
+		ConfirmedSignalName: args.ConfirmedAmbiguousSignalName,
+	}
+	result, err := d.Triager.Triage(ctx, input)
+	if err != nil {
+		return "", nil, fmt.Errorf("severity triage failed: %w", err)
+	}
+	if result.Severity == "" {
+		// #1839/DD-AF-010: same fail-closed rule as the nil-Triager case above --
+		// an empty severity with no error (e.g. the Triager's own Config.Enabled
+		// is false) is still "no grounded evidence", not a green light to
+		// fabricate "warning".
+		return "", nil, fmt.Errorf("severity triage returned no result: %w", severity.ErrSeverityUndetermined)
+	}
+	return result.Severity, &result, nil
+}
+
+// createRRRequest bundles the resolved signal identity/severity fields
+// createOrReuseRR needs, keeping its parameter count within the argument-limit
+// lint gate.
+type createRRRequest struct {
+	Args             *CreateRRArgs
+	Username         string
+	Fingerprint      string
+	SignalName       string
+	ResolvedSeverity string
+	TriageResult     *severity.TriageResult
+}
+
+// createOrReuseRR is the singleflight-guarded body of HandleCreateRR: it
+// returns the existing RR if one is already active for req's fingerprint,
+// otherwise creates a new RemediationRequest CRD. hooks.BeforeCreate/
+// AfterCreate (#2265) fire only on this "genuinely new" path -- the dedup
+// branch above returns an RR that predates this call, so neither hook
+// applies to it (see CreateRRHooks' doc comment).
+func createOrReuseRR(ctx context.Context, d *ToolDeps, req createRRRequest, hooks CreateRRHooks) (*CreateRRResult, error) {
+	existing, checkErr := checkExistingRRByFingerprint(ctx, d.Client, d.ControllerNS, req.Fingerprint)
+	if checkErr != nil {
+		return nil, checkErr
+	}
+	if existing.Exists {
+		return &CreateRRResult{
+			RRID:          existing.RRID,
+			Message:       fmt.Sprintf("RemediationRequest already exists (%s)", existing.Phase),
+			AlreadyExists: true,
+			Severity:      existing.Severity,
+			ClusterID:     existing.ClusterID,
+			Fingerprint:   req.Fingerprint,
+		}, nil
+	}
+
+	rrObj := buildRRObject(d.ControllerNS, req.Args, req.Fingerprint, req.SignalName, req.ResolvedSeverity, req.TriageResult)
+
+	if hooks.BeforeCreate != nil {
+		if hookErr := hooks.BeforeCreate(ctx, rrObj.Name); hookErr != nil {
+			return nil, hookErr
+		}
+	}
+
+	if createErr := d.Client.Create(ctx, rrObj); createErr != nil {
+		return nil, ToUserFriendlyError(createErr)
+	}
+
+	if hooks.AfterCreate != nil {
+		hooks.AfterCreate(ctx, rrObj)
+	}
+
+	out := &CreateRRResult{
+		RRID:        rrObj.Name,
+		Message:     fmt.Sprintf("RemediationRequest created for %s/%s by %s", req.Args.Kind, req.Args.Name, req.Username),
+		SignalName:  req.SignalName,
+		ClusterID:   req.Args.ClusterID,
+		Fingerprint: req.Fingerprint,
+	}
+	if req.TriageResult != nil {
+		out.Severity = req.TriageResult.Severity
+		out.SeveritySource = string(req.TriageResult.Source)
+	} else {
+		out.Severity = req.ResolvedSeverity
+	}
+	return out, nil
+}
+
+// buildRRObject constructs the RemediationRequest CRD to be created for a new
+// (non-duplicate) signal.
+func buildRRObject(controllerNS string, args *CreateRRArgs, fingerprint, signalName, resolvedSeverity string, triageResult *severity.TriageResult) *remediationv1.RemediationRequest {
+	fpPrefix := fingerprint
+	if len(fpPrefix) > 12 {
+		fpPrefix = fpPrefix[:12]
+	}
+	rrName := fmt.Sprintf("rr-%s-%s", fpPrefix, uuid.New().String()[:8])
+	nowTime := metav1.Now()
+
+	rrObj := &remediationv1.RemediationRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rrName,
+			Namespace: controllerNS,
+		},
+		Spec: remediationv1.RemediationRequestSpec{
+			SignalName:        signalName,
+			SignalSource:      "a2a-agent",
+			SignalType:        "alert",
+			SignalFingerprint: fingerprint,
+			Severity:          resolvedSeverity,
+			FiringTime:        nowTime,
+			ReceivedTime:      nowTime,
+			TargetType:        "kubernetes",
+			TargetResource:    buildTypedTargetResource(args),
+			ClusterID:         args.ClusterID,
+		},
+	}
+
+	if triageResult != nil {
+		rrObj.Spec.SignalLabels = map[string]string{
+			"severity_source": string(triageResult.Source),
+		}
+		if triageResult.AlertName != "" {
+			rrObj.Spec.SignalLabels["severity_alert_name"] = triageResult.AlertName
+		}
+		if triageResult.RuleName != "" {
+			rrObj.Spec.SignalLabels["severity_rule_name"] = triageResult.RuleName
+		}
+	}
+	return rrObj
+}
+
+// emitCreateRRAudit emits the RR-created or RR-deduplicated audit event, when
+// an auditor is configured.
+//
+// #2043: CorrelationID is set to the RR's own name (res.RRID) so DataStorage's
+// reconstruction endpoint can look this event up by correlation_id -- an
+// unset CorrelationID previously fell back to a random UUID
+// (store_adapter.go's correlationID() helper), making this event permanently
+// unqueryable by the RR it describes. Detail keys use the
+// ApifrontendRRCreatedPayload/ApifrontendRRDeduplicatedPayload schema's own
+// field names (rr_name/rr_namespace/target_kind/target_name/fingerprint)
+// rather than ad hoc ones, since buildRRCreatedPayload in
+// pkg/apifrontend/audit/store_adapter.go reads Detail by those exact keys.
+func emitCreateRRAudit(ctx context.Context, d *ToolDeps, args *CreateRRArgs, username string, res *CreateRRResult, resolvedSeverity string) {
+	if d.Auditor == nil {
+		return
+	}
+	if res.AlreadyExists {
+		d.Auditor.Emit(ctx, &audit.Event{
+			Type:          audit.EventRRDeduplicated,
+			CorrelationID: res.RRID,
+			UserID:        username,
+			ClusterID:     res.ClusterID,
+			Detail: map[string]string{
+				"rr_namespace":     d.ControllerNS,
+				"target_kind":      args.Kind,
+				"target_name":      args.Name,
+				"existing_rr":      res.RRID,
+				"existing_rr_name": res.RRID,
+				"cluster_id":       res.ClusterID,
+				"fingerprint":      res.Fingerprint,
+			},
+		})
+		return
+	}
+	d.Auditor.Emit(ctx, &audit.Event{
+		Type:          audit.EventRRCreated,
+		CorrelationID: res.RRID,
+		UserID:        username,
+		ClusterID:     res.ClusterID,
+		Detail: map[string]string{
+			"rr_namespace": d.ControllerNS,
+			"target_kind":  args.Kind,
+			"target_name":  args.Name,
+			"rr_name":      res.RRID,
+			"severity":     resolvedSeverity,
+			"cluster_id":   res.ClusterID,
+			"fingerprint":  res.Fingerprint,
+			"signal_name":  res.SignalName,
+		},
+	})
+}
+
+// buildTypedTargetResource constructs the typed ResourceIdentifier for the RR CRD spec.
+// Includes apiVersion when available (#1372). Omits namespace for cluster-scoped resources.
+func buildTypedTargetResource(args *CreateRRArgs) remediationv1.ResourceIdentifier {
+	ri := remediationv1.ResourceIdentifier{
+		Kind: args.Kind,
+		Name: args.Name,
+	}
+	if args.Namespace != "" {
+		ri.Namespace = args.Namespace
+	}
+	if args.APIVersion != "" {
+		ri.APIVersion = args.APIVersion
+	}
+	return ri
+}
+
+// deriveSignalName selects a grounded signal name using a priority cascade:
+//  1. Triager AlertName (from Prometheus firing/pending alert — most specific)
+//  2. Triager RuleName (from inactive rule match — known rule, not yet firing)
+//     3a. Dominant local K8s event reason on the target resource (e.g., Deployment)
+//     3b. Dominant local K8s event reason on Pods owned by the target (name-prefix match)
+//  4. Fallback: "unknown" (no grounded infrastructure signal found)
+//
+// The signal name is critical: KA uses it to drive investigation behavior.
+// Every tier above the fallback provides a meaningful infrastructure signal.
+//
+// Tier 3a queries events on the target resource kind (e.g., Deployment).
+// Tier 3b cascades to Pod-level events when 3a finds no operationally
+// significant signal. This is necessary because failure events like BackOff,
+// OOMKilled, and CrashLoopBackOff are emitted on Pods, not on the owning
+// Deployment. Pod events are filtered by name prefix (e.g., "memory-eater-")
+// to scope to pods belonging to the specific target resource.
+//
+// Both tiers use DominantEventReason which filters out Normal lifecycle
+// events (F-SIG-08): ScalingReplicaSet, Scheduled, Pulled, Created, etc.
+// are not failure signals and would mislead KA's scenario detection.
+func deriveSignalName(ctx context.Context, client dynamic.Interface, fleetEnabled bool, namespace string, args *CreateRRArgs, triageResult *severity.TriageResult) string {
+	if name := signalNameFromTriage(triageResult); name != "" {
+		return name
+	}
+	// In fleet mode, the target cluster (including the hub) is accessed through
+	// the MCP Gateway, never through AF's process-local dynamic client. The
+	// registered cluster's alert/rule name remains the preferred signal source.
+	if fleetEnabled {
+		return unknownValue
+	}
+	if client == nil {
+		return unknownValue
+	}
+	if name := signalNameFromResourceEvents(ctx, client, namespace, args); name != "" {
+		return name
+	}
+	if name := signalNameFromPodEvents(ctx, client, namespace, args); name != "" {
+		return name
+	}
+	return unknownValue
+}
+
+// signalNameFromTriage returns the alert/rule name from an upstream
+// severity-triage result, if any (highest-priority signal source).
+func signalNameFromTriage(triageResult *severity.TriageResult) string {
+	if triageResult == nil {
+		return ""
+	}
+	if triageResult.AlertName != "" {
+		return triageResult.AlertName
+	}
+	return triageResult.RuleName
+}
+
+// signalNameFromResourceEvents implements Tier 3a: events on the target
+// resource itself (e.g., Deployment). Returns "" if none found.
+func signalNameFromResourceEvents(ctx context.Context, client dynamic.Interface, namespace string, args *CreateRRArgs) string {
+	evResult, err := HandleListEvents(ctx, client, ListEventsArgs{
+		Namespace: namespace,
+		Kind:      args.Kind,
+	})
+	if err != nil {
+		logr.FromContextOrDiscard(ctx).Error(err, "deriveSignalName failed to list events", "kind", args.Kind, "namespace", namespace)
+		return ""
+	}
+	return DominantEventReason(evResult.Events)
+}
+
+// signalNameFromPodEvents implements Tier 3b: Pod-level events for pods
+// owned by the target resource. BackOff, OOMKilled, CrashLoopBackOff are
+// emitted on Pods, not on the owning Deployment/StatefulSet, so this cascade
+// is necessary when Tier 3a finds no operationally significant signal.
+// Filtered by name prefix to scope to pods belonging to this specific owner.
+// Skipped (returns "") when the target resource is already a Pod.
+func signalNameFromPodEvents(ctx context.Context, client dynamic.Interface, namespace string, args *CreateRRArgs) string {
+	if args.Kind == "Pod" {
+		return ""
+	}
+	podResult, err := HandleListEvents(ctx, client, ListEventsArgs{
+		Namespace: namespace,
+		Kind:      "Pod",
+	})
+	if err != nil {
+		logr.FromContextOrDiscard(ctx).Error(err, "deriveSignalName failed to list Pod events", "namespace", namespace)
+		return ""
+	}
+	related := FilterRelatedPodEvents(podResult.Events, args.Name)
+	return DominantEventReason(related)
+}

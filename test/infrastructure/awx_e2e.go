@@ -1,0 +1,1199 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+const (
+	// AWXOperatorVersion is the pinned AWX Operator release (bundles AWX 24.6.1).
+	AWXOperatorVersion = "2.19.1"
+	AWXOperatorImage   = "quay.io/ansible/awx-operator:" + AWXOperatorVersion
+
+	// AWXImageVersion is the pinned AWX container image version.
+	AWXImageVersion = "24.6.1"
+	AWXImage        = "quay.io/ansible/awx:" + AWXImageVersion
+	AWXEEImage      = "quay.io/ansible/awx-ee:" + AWXImageVersion
+
+	// AWXInstanceName is the AWX CR metadata.name; the operator derives service
+	// and deployment names from it (e.g. awx-e2e-service, awx-e2e-web, etc.).
+	AWXInstanceName = "awx-e2e"
+	AWXServiceName  = AWXInstanceName + "-service"
+	AWXServicePort  = 80
+
+	// AWXDatabaseName is the database AWX uses in the shared PostgreSQL instance.
+	AWXDatabaseName = "awx"
+	AWXDatabaseUser = "awx"
+	AWXDatabasePass = "awx_e2e_password"
+
+	// AWXAdminUser is the initial AWX admin user.
+	AWXAdminUser = "admin"
+	AWXAdminPass = "admin_e2e_password"
+
+	// AWXSecretKey is Django's SECRET_KEY for AWX (safe for E2E only).
+	AWXSecretKey = "kubernaut-e2e-awx-secret-key-not-for-production"
+
+	// AWXTokenSecretName is the K8s Secret where the AWX API token is stored.
+	AWXTokenSecretName = "awx-api-token"
+
+	// AWXTestPlaybooksRepo is the GitHub repo containing E2E test playbooks.
+	AWXTestPlaybooksRepo   = "https://github.com/jordigilh/kubernaut-test-playbooks.git"
+	AWXTestPlaybooksCommit = "42eadeba052b13e3ec4e113ebc8165efd5497974"
+
+	// AWXNodePort is the host-accessible port for AWX API in Kind.
+	AWXNodePort = 30095
+)
+
+// DeployAWXInNamespace deploys AWX via the official AWX Operator into the
+// given namespace. It shares the existing PostgreSQL (creates an "awx" database)
+// while the operator manages its own Redis sidecar.
+// Designed to run in parallel with other Phase 4 deployments.
+func DeployAWXInNamespace(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "\n--- Deploying AWX via Operator %s into %s (external PG)...\n", AWXOperatorVersion, namespace)
+
+	// Step 1: Install AWX Operator CRDs + controller via kustomize.
+	if err := installAWXOperator(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	// Step 2: Wait for operator controller to be ready.
+	_, _ = fmt.Fprintf(writer, "  Waiting for AWX Operator controller...\n")
+	waitCmd := exec.CommandContext(ctx, "kubectl", "rollout", "status",
+		"deployment/awx-operator-controller-manager",
+		"-n", namespace,
+		"--kubeconfig", kubeconfigPath,
+		"--timeout=180s",
+	)
+	waitCmd.Stdout = writer
+	waitCmd.Stderr = writer
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("AWX Operator controller did not become ready: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  AWX Operator controller ready\n")
+
+	// Step 3: Apply DB init job (creates AWX database in shared PostgreSQL).
+	if err := applyAWXDBInit(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	// Step 4: Create prerequisite secrets for the AWX CR.
+	if err := createAWXSecrets(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	// Step 5: Apply AWX Custom Resource — the operator handles migrations,
+	// admin user, web, task, Receptor, EE, Redis, instance registration, etc.
+	if err := applyAWXCustomResource(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(writer, "AWX CR applied — operator will reconcile\n")
+	return nil
+}
+
+// installAWXOperator installs the AWX Operator CRDs and controller using the
+// official kustomize-based installation method.
+func installAWXOperator(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "  Installing AWX Operator %s...\n", AWXOperatorVersion)
+
+	tmpDir, err := os.MkdirTemp("", "awx-operator-kustomize-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir for kustomize: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	kustomization := fmt.Sprintf(`apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - github.com/ansible/awx-operator/config/default?ref=%s
+images:
+  - name: quay.io/ansible/awx-operator
+    newTag: %s
+  - name: gcr.io/kubebuilder/kube-rbac-proxy
+    newName: registry.k8s.io/kubebuilder/kube-rbac-proxy
+    newTag: v0.15.0
+namespace: %s
+`, AWXOperatorVersion, AWXOperatorVersion, namespace)
+
+	if writeErr := os.WriteFile(filepath.Join(tmpDir, "kustomization.yaml"), []byte(kustomization), 0600); writeErr != nil {
+		return fmt.Errorf("failed to write kustomization.yaml: %w", writeErr)
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-k", tmpDir)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install AWX Operator: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  AWX Operator CRDs + controller applied\n")
+	return nil
+}
+
+// applyAWXDBInit applies the DB init Job that creates the AWX database and
+// user in the shared PostgreSQL instance.
+func applyAWXDBInit(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "  Applying AWX DB init job...\n")
+
+	dbInitManifest := fmt.Sprintf(`---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: awx-db-init
+  namespace: %[1]s
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: docker.io/library/postgres:16-alpine
+        command: ["sh", "-c"]
+        args:
+        - |
+          until pg_isready -h postgresql -p 5432 -U slm_user; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "Creating AWX database and user..."
+          export PGPASSWORD=test_password
+          psql -h postgresql -p 5432 -U slm_user -d action_history -c "CREATE ROLE %[2]s WITH LOGIN PASSWORD '%[3]s';" 2>&1 || true
+          set -e
+          psql -h postgresql -p 5432 -U slm_user -d action_history -tc "SELECT 1 FROM pg_database WHERE datname = '%[4]s'" | grep -q 1 || psql -h postgresql -p 5432 -U slm_user -d action_history -c "CREATE DATABASE %[4]s OWNER %[2]s;"
+          psql -h postgresql -p 5432 -U slm_user -d action_history -c "GRANT ALL PRIVILEGES ON DATABASE %[4]s TO %[2]s;"
+          echo "AWX database ready."
+`, namespace, AWXDatabaseUser, AWXDatabasePass, AWXDatabaseName)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "--server-side", "--field-manager=e2e-test", "-f", "-")
+	cmd.Stdin = strings.NewReader(dbInitManifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply AWX DB init job: %w", err)
+	}
+	return nil
+}
+
+// createAWXSecrets creates the K8s Secrets the AWX CR references:
+// external PostgreSQL connection, admin password, and Django secret key.
+func createAWXSecrets(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "  Creating AWX prerequisite secrets...\n")
+
+	secretsManifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: awx-postgres-configuration
+  namespace: %[1]s
+stringData:
+  host: postgresql
+  port: "5432"
+  database: "%[2]s"
+  username: "%[3]s"
+  password: "%[4]s"
+  sslmode: prefer
+  type: unmanaged
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %[5]s-admin-password
+  namespace: %[1]s
+stringData:
+  password: "%[6]s"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %[5]s-secret-key
+  namespace: %[1]s
+stringData:
+  secret_key: "%[7]s"
+`, namespace, AWXDatabaseName, AWXDatabaseUser, AWXDatabasePass,
+		AWXInstanceName, AWXAdminPass, AWXSecretKey)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "--server-side", "--field-manager=e2e-test", "-f", "-")
+	cmd.Stdin = strings.NewReader(secretsManifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create AWX prerequisite secrets: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  AWX secrets created (PG config, admin password, secret key)\n")
+	return nil
+}
+
+// applyAWXCustomResource creates the AWX CR that the operator reconciles into
+// a fully functional AWX deployment (web, task, Receptor, EE, Redis, RBAC, etc.).
+func applyAWXCustomResource(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "  Applying AWX Custom Resource (%s)...\n", AWXInstanceName)
+
+	awxCR := fmt.Sprintf(`---
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  service_type: nodeport
+  nodeport_port: %[3]d
+  admin_user: %[4]s
+  admin_password_secret: %[1]s-admin-password
+  secret_key_secret: %[1]s-secret-key
+  postgres_configuration_secret: awx-postgres-configuration
+  image: quay.io/ansible/awx
+  image_version: "%[5]s"
+  ee_images:
+    - name: "AWX EE (latest)"
+      image: "quay.io/ansible/awx-ee:%[5]s"
+  web_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  task_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  ee_resource_requirements:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  redis_resource_requirements:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  init_container_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+`, AWXInstanceName, namespace, AWXNodePort, AWXAdminUser, AWXImageVersion)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "--server-side", "--field-manager=e2e-test", "-f", "-")
+	cmd.Stdin = strings.NewReader(awxCR)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply AWX Custom Resource: %w", err)
+	}
+	return nil
+}
+
+// WaitForAWXReady waits until the operator-managed AWX pod is running and
+// all containers are ready (web, task, EE, redis, rsyslog).
+// Uses manual polling instead of Gomega Eventually because this function
+// is called from goroutines where Gomega panics crash the process.
+func WaitForAWXReady(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "Waiting for AWX (operator-managed) to be ready...\n")
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	deadline := time.Now().Add(12 * time.Minute)
+	for time.Now().Before(deadline) {
+		pods, listErr := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=awx-operator,app.kubernetes.io/part-of=" + AWXInstanceName,
+		})
+		if listErr == nil {
+			allReady, readyCount, podCount := awxPodsReady(pods.Items)
+			if allReady && readyCount >= 2 {
+				_, _ = fmt.Fprintf(writer, "AWX is ready (%d pods running)\n", readyCount)
+				return nil
+			}
+			_, _ = fmt.Fprintf(writer, "  AWX pods: %d/%d ready...\n", readyCount, podCount)
+		}
+		time.Sleep(10 * time.Second)
+	}
+
+	return fmt.Errorf("AWX pod did not become ready within 12 minutes")
+}
+
+func awxPodsReady(pods []corev1.Pod) (allReady bool, readyCount, podCount int) {
+	allReady = true
+	for _, pod := range pods {
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		podCount++
+		if awxPodReady(pod) {
+			readyCount++
+			continue
+		}
+		allReady = false
+	}
+	return allReady && podCount > 0, readyCount, podCount
+}
+
+func awxPodReady(pod corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// EnsureAWXPodsHealthy verifies that both awx-e2e-web and awx-e2e-task pods
+// have ALL containers Ready (not just the minimum for the PodReady condition).
+// If the rsyslog sidecar is in CrashLoopBackOff (a known AWX Operator race on
+// constrained runners), the pod is deleted so the operator recreates it cleanly.
+// This must be called late in the setup—after AWX configuration—because the
+// rsyslog crash can surface minutes after initial readiness.
+
+func waitForAWXAuthentication(ctx context.Context, awxBaseURL string, writer io.Writer) error {
+
+	// 0. Authenticated API gate: ensure basic auth works before making any calls.
+	// AWX pods may report Ready before Django has fully applied the admin secret.
+	_, _ = fmt.Fprintf(writer, "   Waiting for AWX API authentication to be ready...\n")
+	authDeadline := time.Now().Add(2 * time.Minute)
+	authReady := false
+	for attempt := 0; time.Now().Before(authDeadline); attempt++ {
+		_, meStatus, meErr := awxAPIRequest(ctx, "GET", awxBaseURL+"/api/v2/me/", nil)
+		if meErr == nil && meStatus == http.StatusOK {
+			authReady = true
+			break
+		}
+		if attempt%3 == 0 {
+			_, _ = fmt.Fprintf(writer, "   ⏳ AWX auth not ready yet (HTTP %d), retrying...\n", meStatus)
+		}
+		time.Sleep(5 * time.Second)
+	}
+	if !authReady {
+		return fmt.Errorf("AWX API authentication not ready after 2 minutes")
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ AWX API authentication is ready\n")
+
+	// 0.5. Task-instance readiness gate (issue #1700): the web pod can answer
+	// authenticated requests before the separate task pod (awx-e2e-task) has
+	// finished registering itself as a dispatcher Instance. Without this
+	// gate, the org/project bootstrap calls below can race AWX's own
+	// internal check (awx.main.dispatch.get_task_queuename, which requires
+	// an Instance with node_type in {control, hybrid}, node_state=ready,
+	// enabled=true) and fail with "ValueError: No task instances are READY
+	// and Enabled." (surfaced as HTTP 500) or a transient HTTP 400 — burning
+	// through the project-creation retry budget below before AWX is
+	// actually ready.
+	_, _ = fmt.Fprintf(writer, "   Waiting for an AWX task instance to register...\n")
+	if err := waitForAWXTaskInstance(ctx, awxBaseURL, 90*time.Second, 5*time.Second, writer); err != nil {
+		return fmt.Errorf("AWX task instance not ready: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ AWX task instance is ready\n")
+
+	return nil
+}
+
+func createAWXOrganization(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 1. Get default organization (always exists as ID 1)
+	// Retry on 401: the AWX operator may not have finished creating the admin
+	// superuser even after pods report Ready (initialize_django.yml race).
+	_, _ = fmt.Fprintf(writer, "   Creating organization...\n")
+	orgBody := map[string]interface{}{"name": "Kubernaut E2E", "description": "E2E test organization"}
+	var orgResult map[string]interface{}
+	var orgStatus int
+	orgCreated := false
+	for attempt := 0; attempt < 12; attempt++ {
+		var orgErr error
+		orgResult, orgStatus, orgErr = awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/organizations/", orgBody)
+		if orgErr != nil {
+			return fmt.Errorf("failed to create organization: %w", orgErr)
+		}
+		if orgStatus == http.StatusCreated {
+			orgCreated = true
+			break
+		}
+		if orgStatus == http.StatusUnauthorized {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  AWX returned HTTP 401 (attempt %d/12) — admin user may not exist yet, retrying in 10s...\n", attempt+1)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		break
+	}
+	switch {
+	case orgCreated:
+		cfg.OrganizationID = int(orgResult["id"].(float64))
+	case orgStatus == http.StatusUnauthorized:
+		return fmt.Errorf("AWX authentication failed after 12 attempts (HTTP 401) — admin superuser was never created by the operator")
+	case orgStatus == http.StatusBadRequest || orgStatus == http.StatusConflict:
+		cfg.OrganizationID = 1
+	default:
+		return fmt.Errorf("failed to create organization: HTTP %d (expected 201 or 400/409)", orgStatus)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Organization ID: %d\n", cfg.OrganizationID)
+
+	return nil
+}
+
+func createAWXProject(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 2. Create project (Git SCM pointing to test playbooks repo)
+	// Retry on 500 errors: AWX task queue may not be fully initialized right after pod readiness.
+	_, _ = fmt.Fprintf(writer, "   Creating project (Git: %s)...\n", AWXTestPlaybooksRepo)
+	projectBody := map[string]interface{}{
+		"name":                 "kubernaut-test-playbooks",
+		"description":          "E2E test playbooks for Kubernaut Ansible engine",
+		"organization":         cfg.OrganizationID,
+		"scm_type":             "git",
+		"scm_url":              AWXTestPlaybooksRepo,
+		"scm_branch":           AWXTestPlaybooksCommit,
+		"scm_update_on_launch": true,
+	}
+	var projectResult map[string]interface{}
+	var projectStatus int
+	projectCreated := false
+	for attempt := 0; attempt < 6; attempt++ {
+		var projErr error
+		projectResult, projectStatus, projErr = awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/projects/", projectBody)
+		if projErr != nil {
+			return fmt.Errorf("failed to create project: %w", projErr)
+		}
+		if projectStatus == http.StatusCreated {
+			projectCreated = true
+			break
+		}
+		if projectStatus == http.StatusBadRequest || projectStatus == http.StatusConflict {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Project may already exist (HTTP %d), looking up by name...\n", projectStatus)
+			if proj, ok := findExistingAWXProject(ctx, awxBaseURL); ok {
+				projectResult = proj
+				projectCreated = true
+				_, _ = fmt.Fprintf(writer, "   ✅ Found existing project ID: %.0f\n", proj["id"].(float64))
+				break
+			}
+			// The "already exists" write may not yet be visible to a subsequent
+			// read (AWX task-queue/DB replication lag right after pod readiness,
+			// same class of race as the admin-401 issue above). Retry instead of
+			// failing hard on the first lookup miss.
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Project lookup by name did not find it yet (attempt %d/6), retrying in 10s...\n", attempt+1)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		if projectStatus >= 500 || projectStatus == http.StatusUnauthorized || projectStatus == http.StatusForbidden {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Project creation returned HTTP %d (attempt %d/6), retrying in 10s...\n", projectStatus, attempt+1)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		return fmt.Errorf("failed to create project: HTTP %d", projectStatus)
+	}
+	if !projectCreated {
+		return fmt.Errorf("failed to create project after 6 attempts: HTTP %d (and could not find existing)", projectStatus)
+	}
+	cfg.ProjectID = int(projectResult["id"].(float64))
+	_, _ = fmt.Fprintf(writer, "   ✅ Project ID: %d\n", cfg.ProjectID)
+
+	if err := waitForAWXProjectSync(ctx, awxBaseURL, cfg, writer); err != nil {
+		return err
+	}
+	return nil
+}
+
+func findExistingAWXProject(ctx context.Context, awxBaseURL string) (map[string]interface{}, bool) {
+	result, status, err := awxAPIRequest(ctx, "GET", fmt.Sprintf("%s/api/v2/projects/?name=%s", awxBaseURL, "kubernaut-test-playbooks"), nil)
+	if err != nil || status != http.StatusOK {
+		return nil, false
+	}
+	results, ok := result["results"].([]interface{})
+	if !ok || len(results) == 0 {
+		return nil, false
+	}
+	project, ok := results[0].(map[string]interface{})
+	return project, ok
+}
+
+func waitForAWXProjectSync(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 3. Wait for project sync to complete (manual polling — called from goroutine)
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for project sync...\n")
+	syncDeadline := time.Now().Add(5 * time.Minute)
+	projectSynced := false
+	for time.Now().Before(syncDeadline) {
+		result, _, _ := awxAPIRequest(ctx, "GET", fmt.Sprintf("%s/api/v2/projects/%d/", awxBaseURL, cfg.ProjectID), nil)
+		if result != nil {
+			if status, _ := result["status"].(string); status == "successful" {
+				projectSynced = true
+				break
+			} else if status == "failed" || status == "error" {
+				return fmt.Errorf("project sync failed with status: %s", status)
+			}
+		}
+		time.Sleep(5 * time.Second)
+	}
+	if !projectSynced {
+		return fmt.Errorf("project sync did not complete within 5 minutes")
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Project synced\n")
+
+	return nil
+}
+
+func prepareAWXAuthenticationAndProject(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	if err := waitForAWXAuthentication(ctx, awxBaseURL, writer); err != nil {
+		return err
+	}
+	if err := createAWXOrganization(ctx, awxBaseURL, cfg, writer); err != nil {
+		return err
+	}
+	return createAWXProject(ctx, awxBaseURL, cfg, writer)
+}
+
+func EnsureAWXPodsHealthy(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "\n🔍 Verifying AWX pod container health (web + task)...")
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	for _, podType := range []string{"web", "task"} {
+		if err := ensureAWXPodTypeHealthy(ctx, clientset, namespace, podType, writer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureAWXPodTypeHealthy(ctx context.Context, clientset kubernetes.Interface, namespace, podType string, writer io.Writer) error {
+	const (
+		maxRetries   = 3
+		healTimeout  = 4 * time.Minute
+		pollInterval = 10 * time.Second
+	)
+	deploymentPrefix := AWXInstanceName + "-" + podType
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		pod, healthy, healErr := checkAWXPodHealth(ctx, clientset, namespace, deploymentPrefix, writer)
+		if healErr != nil {
+			return healErr
+		}
+		if healthy {
+			_, _ = fmt.Fprintf(writer, "  ✅ AWX %s pod — all containers Ready\n", podType)
+			return nil
+		}
+
+		_, _ = fmt.Fprintf(writer, "  ⚠️  AWX %s pod unhealthy (attempt %d/%d) — deleting for operator recreation\n", podType, attempt, maxRetries)
+		if delErr := clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); delErr != nil {
+			return fmt.Errorf("failed to delete unhealthy AWX %s pod %s: %w", podType, pod.Name, delErr)
+		}
+
+		if waitErr := waitForAllContainersReady(ctx, clientset, namespace, deploymentPrefix, healTimeout, pollInterval, writer); waitErr != nil {
+			if attempt == maxRetries {
+				return fmt.Errorf("AWX %s pod did not recover after %d restarts: %w", podType, maxRetries, waitErr)
+			}
+			_, _ = fmt.Fprintf(writer, "  ⚠️  %s pod still unhealthy after recreation, retrying...\n", podType)
+			continue
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ AWX %s pod recovered — all containers Ready\n", podType)
+		return nil
+	}
+
+	return fmt.Errorf("AWX %s pod did not become fully healthy after %d attempts", podType, maxRetries)
+}
+
+// checkAWXPodHealth returns the pod matching deploymentPrefix, whether all its
+// containers are ready, and an error if the pod cannot be found.
+func checkAWXPodHealth(ctx context.Context, clientset kubernetes.Interface, namespace, deploymentPrefix string, writer io.Writer) (*corev1.Pod, bool, error) {
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=awx-operator,app.kubernetes.io/name=" + deploymentPrefix,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to list AWX web pods: %w", err)
+	}
+
+	// Fall back to name prefix if label selector returns nothing (older operator versions).
+	if len(pods.Items) == 0 {
+		allPods, listErr := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+		if listErr != nil {
+			return nil, false, fmt.Errorf("failed to list pods: %w", listErr)
+		}
+		for i := range allPods.Items {
+			if strings.HasPrefix(allPods.Items[i].Name, deploymentPrefix) {
+				pods.Items = append(pods.Items, allPods.Items[i])
+			}
+		}
+	}
+
+	if len(pods.Items) == 0 {
+		return nil, false, fmt.Errorf("no AWX web pod found with prefix %s", deploymentPrefix)
+	}
+
+	pod := &pods.Items[0]
+	if pod.Status.Phase != corev1.PodRunning {
+		_, _ = fmt.Fprintf(writer, "  AWX web pod %s phase: %s\n", pod.Name, pod.Status.Phase)
+		return pod, false, nil
+	}
+
+	totalContainers := len(pod.Status.ContainerStatuses)
+	readyContainers := 0
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Ready {
+			readyContainers++
+		} else {
+			state := "not-ready"
+			if cs.State.Waiting != nil {
+				state = cs.State.Waiting.Reason
+			}
+			_, _ = fmt.Fprintf(writer, "  Container %s: %s (restarts: %d)\n", cs.Name, state, cs.RestartCount)
+		}
+	}
+
+	_, _ = fmt.Fprintf(writer, "  AWX web pod %s: %d/%d containers ready\n", pod.Name, readyContainers, totalContainers)
+	return pod, readyContainers == totalContainers && totalContainers > 0, nil
+}
+
+// waitForAllContainersReady polls until a new pod matching the deployment prefix
+// has all containers in Ready state, or the timeout expires.
+func waitForAllContainersReady(ctx context.Context, clientset kubernetes.Interface, namespace, deploymentPrefix string, timeout, interval time.Duration, writer io.Writer) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+		_, healthy, err := checkAWXPodHealth(ctx, clientset, namespace, deploymentPrefix, writer)
+		if err != nil {
+			_, _ = fmt.Fprintf(writer, "  Waiting for new web pod: %v\n", err)
+			continue
+		}
+		if healthy {
+			return nil
+		}
+	}
+	return fmt.Errorf("timeout waiting for AWX web pod containers to become ready")
+}
+
+// awxAPIRequest makes a request to the AWX API authenticated via HTTP basic auth.
+func awxAPIRequest(ctx context.Context, method, url string, body interface{}) (map[string]interface{}, int, error) {
+	var reqBody io.Reader
+	if body != nil {
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to marshal body: %w", err)
+		}
+		reqBody = bytes.NewReader(jsonBody)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(AWXAdminUser, AWXAdminPass)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, resp.StatusCode, nil
+	}
+	return result, resp.StatusCode, nil
+}
+
+// awxTaskInstanceReady inspects a decoded /api/v2/instances/ response body
+// and reports whether at least one instance satisfies the same precondition
+// AWX itself requires before it can queue a background job (see
+// awx.main.dispatch.get_task_queuename): node_type in {control, hybrid},
+// node_state == "ready", and enabled == true.
+func awxTaskInstanceReady(instancesResponse map[string]interface{}) bool {
+	if instancesResponse == nil {
+		return false
+	}
+	results, ok := instancesResponse["results"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, r := range results {
+		inst, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		enabled, _ := inst["enabled"].(bool)
+		nodeState, _ := inst["node_state"].(string)
+		nodeType, _ := inst["node_type"].(string)
+		if enabled && nodeState == "ready" && (nodeType == "control" || nodeType == "hybrid") {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForAWXTaskInstance polls AWX's /api/v2/instances/ endpoint until at
+// least one instance is READY and Enabled (per awxTaskInstanceReady), or the
+// timeout elapses. See issue #1700 for the readiness race this closes.
+func waitForAWXTaskInstance(ctx context.Context, awxBaseURL string, timeout, pollInterval time.Duration, writer io.Writer) error {
+	deadline := time.Now().Add(timeout)
+	for attempt := 0; time.Now().Before(deadline); attempt++ {
+		result, status, err := awxAPIRequest(ctx, "GET", awxBaseURL+"/api/v2/instances/", nil)
+		if err == nil && status == http.StatusOK && awxTaskInstanceReady(result) {
+			return nil
+		}
+		if attempt%3 == 0 {
+			_, _ = fmt.Fprintf(writer, "   ⏳ AWX task instance not ready yet (attempt %d), retrying...\n", attempt+1)
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("no AWX instance became READY and Enabled within %s", timeout)
+}
+
+// AWXConfig holds the IDs created during AWX configuration.
+type AWXConfig struct {
+	APIURL            string
+	OrganizationID    int
+	ProjectID         int
+	InventoryID       int
+	SuccessTemplateID int
+	FailureTemplateID int
+	Token             string
+}
+
+// ConfigureAWX creates the project, inventory, job templates, and API token in AWX.
+// Must be called after AWX is ready. Returns the configuration needed by the WE controller.
+func ConfigureAWX(ctx context.Context, awxBaseURL string, writer io.Writer) (*AWXConfig, error) {
+	_, _ = fmt.Fprintf(writer, "\n🔧 Configuring AWX at %s...\n", awxBaseURL)
+
+	cfg := &AWXConfig{APIURL: awxBaseURL}
+
+	if err := prepareAWXAuthenticationAndProject(ctx, awxBaseURL, cfg, writer); err != nil {
+		return nil, err
+	}
+
+	if err := completeAWXConfiguration(ctx, awxBaseURL, cfg, writer); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+
+}
+
+// CreateAWXTokenSecret creates a K8s Secret containing the AWX API token
+// for the WE controller to read via tokenSecretRef.
+
+func completeAWXConfiguration(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 4. Create inventory
+	_, _ = fmt.Fprintf(writer, "   Creating inventory...\n")
+	invBody := map[string]interface{}{
+		"name":         "localhost",
+		"description":  "Local execution for E2E tests",
+		"organization": cfg.OrganizationID,
+	}
+	invResult, invStatus, err := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/inventories/", invBody)
+	if err != nil {
+		return fmt.Errorf("failed to create inventory: %w", err)
+	}
+	if invStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create inventory: HTTP %d", invStatus)
+	}
+	cfg.InventoryID = int(invResult["id"].(float64))
+	_, _ = fmt.Fprintf(writer, "   ✅ Inventory ID: %d\n", cfg.InventoryID)
+
+	// Add localhost host to inventory
+	hostBody := map[string]interface{}{
+		"name":      "localhost",
+		"variables": "ansible_connection: local\nansible_python_interpreter: /usr/bin/python3",
+	}
+	_, hostStatus, err := awxAPIRequest(ctx, "POST", fmt.Sprintf("%s/api/v2/inventories/%d/hosts/", awxBaseURL, cfg.InventoryID), hostBody)
+	if err != nil {
+		return fmt.Errorf("failed to add host to inventory: %w", err)
+	}
+	if hostStatus != http.StatusCreated && hostStatus != http.StatusBadRequest {
+		return fmt.Errorf("failed to add host to inventory: HTTP %d", hostStatus)
+	}
+
+	if err := completeAWXJobTemplates(ctx, awxBaseURL, cfg, writer); err != nil {
+		return err
+	}
+
+	// 9. Create API token for WE controller
+	_, _ = fmt.Fprintf(writer, "   Creating API token...\n")
+	tokenBody := map[string]interface{}{
+		"description": "Kubernaut WE controller E2E token",
+		"scope":       "write",
+	}
+	tokenResult, tokenStatus, err := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/users/1/personal_tokens/", tokenBody)
+	if err != nil {
+		return fmt.Errorf("failed to create API token: %w", err)
+	}
+	if tokenStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create API token: HTTP %d", tokenStatus)
+	}
+	cfg.Token = tokenResult["token"].(string)
+	_, _ = fmt.Fprintf(writer, "   ✅ API token created\n")
+
+	_, _ = fmt.Fprintf(writer, "✅ AWX configuration complete\n")
+	return nil
+}
+
+func completeAWXJobTemplates(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 5. Create success job template
+	_, _ = fmt.Fprintf(writer, "   Creating success job template...\n")
+	successBody := map[string]interface{}{
+		"name":                    "kubernaut-test-success",
+		"description":             "E2E test: successful remediation playbook",
+		"project":                 cfg.ProjectID,
+		"playbook":                "playbooks/test-success.yml",
+		"inventory":               cfg.InventoryID,
+		"ask_variables_on_launch": true,
+	}
+	successResult, successStatus, err := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/job_templates/", successBody)
+	if err != nil {
+		return fmt.Errorf("failed to create success template: %w", err)
+	}
+	if successStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create success template: HTTP %d", successStatus)
+	}
+	cfg.SuccessTemplateID = int(successResult["id"].(float64))
+	_, _ = fmt.Fprintf(writer, "   ✅ Success Job Template ID: %d\n", cfg.SuccessTemplateID)
+
+	// 6. Create failure job template
+	_, _ = fmt.Fprintf(writer, "   Creating failure job template...\n")
+	failureBody := map[string]interface{}{
+		"name":                    "kubernaut-test-failure",
+		"description":             "E2E test: intentionally failing remediation playbook",
+		"project":                 cfg.ProjectID,
+		"playbook":                "playbooks/test-failure.yml",
+		"inventory":               cfg.InventoryID,
+		"ask_variables_on_launch": true,
+	}
+	failureResult, failureStatus, err := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/job_templates/", failureBody)
+	if err != nil {
+		return fmt.Errorf("failed to create failure template: %w", err)
+	}
+	if failureStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create failure template: HTTP %d", failureStatus)
+	}
+	cfg.FailureTemplateID = int(failureResult["id"].(float64))
+	_, _ = fmt.Fprintf(writer, "   ✅ Failure Job Template ID: %d\n", cfg.FailureTemplateID)
+
+	// 7. Create dependency injection test templates (DD-WE-006 / BR-WE-015)
+	depTemplates := []struct {
+		name     string
+		playbook string
+		desc     string
+	}{
+		{"kubernaut-test-dep-secret", "playbooks/test-dep-secret.yml", "E2E test: secret dependency injection"},
+		{"kubernaut-test-dep-configmap", "playbooks/test-dep-configmap.yml", "E2E test: configmap dependency injection"},
+	}
+	for _, dt := range depTemplates {
+		_, _ = fmt.Fprintf(writer, "   Creating dep-injection template: %s...\n", dt.name)
+		dtBody := map[string]interface{}{
+			"name":                     dt.name,
+			"description":              dt.desc,
+			"project":                  cfg.ProjectID,
+			"playbook":                 dt.playbook,
+			"inventory":                cfg.InventoryID,
+			"ask_variables_on_launch":  true,
+			"ask_credential_on_launch": true,
+		}
+		dtResult, dtStatus, dtErr := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/job_templates/", dtBody)
+		switch {
+		case dtErr != nil:
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to create template %s (non-fatal): %v\n", dt.name, dtErr)
+		case dtStatus != http.StatusCreated:
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Template %s returned HTTP %d (non-fatal)\n", dt.name, dtStatus)
+		default:
+			templateID := int(dtResult["id"].(float64))
+			_, _ = fmt.Fprintf(writer, "   ✅ %s Template ID: %d\n", dt.name, templateID)
+		}
+	}
+
+	if err := createAWXCredentialMergeInfrastructure(ctx, awxBaseURL, cfg, writer); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createAWXCredentialMergeInfrastructure(ctx context.Context, awxBaseURL string, cfg *AWXConfig, writer io.Writer) error {
+	// 8. Create credential-merge test template (#365)
+	// This template has a pre-configured Machine credential to reproduce the bug where
+	// LaunchJobTemplateWithCreds drops template credentials when sending ephemeral ones.
+	_, _ = fmt.Fprintf(writer, "   Creating credential-merge test infrastructure (#365)...\n")
+	machineCredBody := map[string]interface{}{
+		"name":            "e2e-machine-cred-365",
+		"description":     "E2E Machine credential for #365 credential merge test",
+		"credential_type": 1, // Machine credential type (built-in, always ID 1)
+		"organization":    cfg.OrganizationID,
+		"inputs": map[string]interface{}{
+			"username": "e2e-test-user",
+		},
+	}
+	machineCredResult, machineCredStatus, machineCredErr := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/credentials/", machineCredBody)
+	if machineCredErr != nil || machineCredStatus != http.StatusCreated {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to create machine credential for #365 (non-fatal): HTTP %d, err: %v\n", machineCredStatus, machineCredErr)
+	} else {
+		machineCredID := int(machineCredResult["id"].(float64))
+		_, _ = fmt.Fprintf(writer, "   ✅ Machine Credential ID: %d\n", machineCredID)
+
+		credMergeBody := map[string]interface{}{
+			"name":                     "kubernaut-test-dep-secret-with-creds",
+			"description":              "E2E #365: template with pre-configured credential for merge testing",
+			"project":                  cfg.ProjectID,
+			"playbook":                 "playbooks/test-dep-secret.yml",
+			"inventory":                cfg.InventoryID,
+			"ask_variables_on_launch":  true,
+			"ask_credential_on_launch": true,
+		}
+		credMergeResult, credMergeStatus, credMergeErr := awxAPIRequest(ctx, "POST", awxBaseURL+"/api/v2/job_templates/", credMergeBody)
+		if credMergeErr != nil || credMergeStatus != http.StatusCreated {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to create cred-merge template (non-fatal): HTTP %d, err: %v\n", credMergeStatus, credMergeErr)
+		} else {
+			credMergeTemplateID := int(credMergeResult["id"].(float64))
+			_, _ = fmt.Fprintf(writer, "   ✅ Cred-Merge Template ID: %d\n", credMergeTemplateID)
+
+			// Attach the machine credential to the template (POST to credentials sub-resource)
+			attachBody := map[string]interface{}{"id": machineCredID}
+			_, attachStatus, attachErr := awxAPIRequest(ctx, "POST",
+				fmt.Sprintf("%s/api/v2/job_templates/%d/credentials/", awxBaseURL, credMergeTemplateID),
+				attachBody)
+			if attachErr != nil || (attachStatus != http.StatusNoContent && attachStatus != http.StatusOK && attachStatus != http.StatusCreated) {
+				_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to attach credential to template (non-fatal): HTTP %d, err: %v\n", attachStatus, attachErr)
+			} else {
+				_, _ = fmt.Fprintf(writer, "   ✅ Attached Machine Credential %d to Template %d\n", machineCredID, credMergeTemplateID)
+			}
+		}
+	}
+
+	return nil
+}
+
+func CreateAWXTokenSecret(ctx context.Context, namespace, kubeconfigPath, token string, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "🔑 Creating AWX token Secret (%s)...\n", AWXTokenSecretName)
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      AWXTokenSecretName,
+			Namespace: namespace,
+		},
+		StringData: map[string]string{
+			"token": token,
+		},
+	}
+
+	_, err = clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create AWX token Secret: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "✅ AWX token Secret created\n")
+	return nil
+}
+
+// PatchWEControllerWithAnsibleConfig patches the WE controller ConfigMap to add
+// the ansible configuration and restarts the controller to pick it up.
+func PatchWEControllerWithAnsibleConfig(ctx context.Context, namespace, kubeconfigPath string, awxCfg *AWXConfig, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "🔧 Patching WE controller config with ansible settings...\n")
+
+	// Read current ConfigMap, append ansible section, and replace
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	cm, err := clientset.CoreV1().ConfigMaps(namespace).Get(ctx, "workflowexecution-config", metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get WE ConfigMap: %w", err)
+	}
+
+	currentConfig := cm.Data["workflowexecution.yaml"]
+	// #2040: organizationID must be threaded through explicitly. Without it,
+	// the controller parses Ansible.OrganizationID as the Go zero-value and
+	// main.go falls back to a hardcoded default of 1, which does not
+	// correspond to the dynamically-created E2E organization (awxCfg.OrganizationID)
+	// and AWX rejects ephemeral credential creation with "Invalid pk \"1\"".
+	ansibleSection := fmt.Sprintf(`
+ansible:
+  apiURL: "http://%s.%s:%d"
+  organizationID: %d
+  tokenSecretRef:
+    name: "%s"
+    namespace: "%s"
+    key: "token"`, AWXServiceName, namespace, AWXServicePort, awxCfg.OrganizationID, AWXTokenSecretName, namespace)
+
+	cm.Data["workflowexecution.yaml"] = currentConfig + ansibleSection
+
+	_, err = clientset.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update WE ConfigMap: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ ConfigMap updated with ansible config\n")
+
+	// Rollout restart the WE controller to pick up the new config
+	_, _ = fmt.Fprintf(writer, "   🔄 Restarting WE controller...\n")
+	restartCmd := exec.CommandContext(ctx, "kubectl", "rollout", "restart",
+		"deployment/workflowexecution-controller",
+		"-n", namespace,
+		"--kubeconfig", kubeconfigPath,
+	)
+	restartCmd.Stdout = writer
+	restartCmd.Stderr = writer
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restart WE controller: %w", err)
+	}
+
+	// Wait for rollout to complete
+	waitCmd := exec.CommandContext(ctx, "kubectl", "rollout", "status",
+		"deployment/workflowexecution-controller",
+		"-n", namespace,
+		"--kubeconfig", kubeconfigPath,
+		"--timeout=120s",
+	)
+	waitCmd.Stdout = writer
+	waitCmd.Stderr = writer
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("WE controller rollout did not complete: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "✅ WE controller restarted with ansible executor enabled\n")
+	return nil
+}
+
+// SetupAWXPostDeployment waits for AWX to be ready, configures it (project,
+// inventory, job templates), and creates the API token Secret in K8s.
+// Designed to run in parallel with workflow seeding since they share no dependencies.
+// The caller is responsible for calling PatchWEControllerWithAnsibleConfig afterwards.
+func SetupAWXPostDeployment(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) (*AWXConfig, error) {
+	_, _ = fmt.Fprintln(writer, "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🤖 AWX Post-Deployment Configuration (BR-WE-015)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// Step 1: Wait for AWX pods to be ready
+	if err := WaitForAWXReady(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return nil, fmt.Errorf("AWX not ready: %w", err)
+	}
+
+	// Step 1b: Wait for AWX API to accept authenticated requests.
+	// Pod readiness does not guarantee the admin superuser exists — the AWX
+	// operator's initialize_django.yml may still be running or may need a
+	// re-reconciliation loop to create it.
+	if err := WaitForAWXAPIReady(ctx, writer); err != nil {
+		return nil, fmt.Errorf("AWX API not responsive to auth: %w", err)
+	}
+
+	// Step 2: Configure AWX (project, inventory, job templates, token)
+	awxBaseURL := fmt.Sprintf("http://localhost:%d", AWXNodePort)
+	awxCfg, err := ConfigureAWX(ctx, awxBaseURL, writer)
+	if err != nil {
+		return nil, fmt.Errorf("AWX configuration failed: %w", err)
+	}
+
+	// Step 3: Create token Secret in K8s
+	if err := CreateAWXTokenSecret(ctx, namespace, kubeconfigPath, awxCfg.Token, writer); err != nil {
+		return nil, fmt.Errorf("failed to create AWX token Secret: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "✅ AWX configured + token Secret created")
+	_, _ = fmt.Fprintf(writer, "   AWX API: %s\n", awxCfg.APIURL)
+	_, _ = fmt.Fprintf(writer, "   Success Template: kubernaut-test-success (ID: %d)\n", awxCfg.SuccessTemplateID)
+	_, _ = fmt.Fprintf(writer, "   Failure Template: kubernaut-test-failure (ID: %d)\n", awxCfg.FailureTemplateID)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	return awxCfg, nil
+}
+
+// WaitForAWXAPIReady polls the AWX REST API until it responds to authenticated
+// requests. Container readiness probes pass before AWX's internal job dispatcher
+// (Celery workers, Django WSGI) is fully initialized — especially after a pod
+// recreation triggered by rsyslog CrashLoopBackOff healing. Without this probe,
+// the first AWX job launch can fail with a 500 or connection error.
+func WaitForAWXAPIReady(ctx context.Context, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "🔄 Waiting for AWX API to be fully responsive...")
+
+	awxURL := fmt.Sprintf("http://localhost:%d/api/v2/ping/", AWXNodePort)
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	attempt := 0
+	for time.Now().Before(deadline) {
+		attempt++
+		req, err := http.NewRequestWithContext(ctx, "GET", awxURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create AWX ping request: %w", err)
+		}
+		req.SetBasicAuth(AWXAdminUser, AWXAdminPass)
+
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				_, _ = fmt.Fprintf(writer, "✅ AWX API ready (attempt %d)\n", attempt)
+				return nil
+			}
+			_, _ = fmt.Fprintf(writer, "   AWX ping returned HTTP %d (attempt %d), retrying...\n", resp.StatusCode, attempt)
+		} else {
+			_, _ = fmt.Fprintf(writer, "   AWX ping failed (attempt %d): %v\n", attempt, err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("AWX API did not become responsive within 2 minutes")
+}

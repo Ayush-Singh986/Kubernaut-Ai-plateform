@@ -1,0 +1,222 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package processing
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+)
+
+// ========================================
+// DD-GATEWAY-011 v1.3: Phase-Based Deduplication Checker
+// 📋 Design Decision: DD-GATEWAY-011 | ✅ Approved Design | Confidence: 95%
+// See: docs/architecture/decisions/DD-GATEWAY-011-shared-status-deduplication.md
+// ========================================
+//
+// PhaseBasedDeduplicationChecker determines if a signal should be deduplicated
+// based on the phase of existing RemediationRequest CRDs.
+//
+// v1.3 CHANGES (2025-12-10):
+// - Gateway does NOT count consecutive failures (moved to RO per BR-ORCH-042)
+// - Gateway does NOT create RR with phase=Blocked
+// - Blocked is non-terminal (RO owns blocking logic with cooldown)
+//
+// TERMINAL PHASES (allow new RR creation):
+// - Completed: Remediation succeeded
+// - Failed: Remediation failed (including after cooldown)
+// - Timeout: Remediation timed out
+//
+// NON-TERMINAL PHASES (deduplicate → update status):
+// - Pending, Processing, Analyzing, Approving, Executing, Recovering
+// - Blocked: RO holds signal for cooldown, Gateway updates dedup status
+// ========================================
+
+// PhaseBasedDeduplicationChecker checks for existing in-progress RRs by fingerprint
+type PhaseBasedDeduplicationChecker struct {
+	client client.Reader // Changed to Reader (can be apiReader or ctrlClient)
+}
+
+// NewPhaseBasedDeduplicationChecker creates a new phase-based checker.
+// DD-GATEWAY-011: Accepts client.Reader to allow apiReader (cache-bypassed) for race-free deduplication.
+// #280: cooldownPeriod removed — Verifying phase replaces post-completion cooldown.
+// The cooldownPeriod parameter is retained for backward compatibility but ignored.
+func NewPhaseBasedDeduplicationChecker(k8sClient client.Reader, cooldownPeriod time.Duration) *PhaseBasedDeduplicationChecker {
+	return &PhaseBasedDeduplicationChecker{
+		client: k8sClient,
+	}
+}
+
+// ShouldDeduplicate checks if a signal should be deduplicated based on existing RR phase
+//
+// DD-GATEWAY-011 v1.3: Phase-Based Deduplication Decision
+// This method:
+// 1. Lists RRs matching the fingerprint via field selector (BR-GATEWAY-185 v1.1)
+// 2. Checks if any RR is in a non-terminal phase (including Blocked)
+// 3. Returns true (deduplicate) if active RR exists
+// 4. Returns false (allow new RR) if no active RR exists
+//
+// v1.3 SIMPLIFICATION:
+// - Gateway does NOT count consecutive failures
+// - Gateway does NOT create Blocked RRs
+// - Gateway simply checks: "Is there an active RR?" → update dedup, else create new
+// - #719: ManualReviewRequired outcome on terminal RRs acts as suppression state
+//
+// BR-GATEWAY-185 v1.1: Use spec.signalFingerprint field selector instead of labels
+// - Labels are mutable and truncated to 63 chars (data loss risk)
+// - spec.signalFingerprint is immutable and supports full 64-char SHA256
+//
+// Business Requirements:
+// - BR-GATEWAY-181: Move deduplication tracking to status
+// - BR-GATEWAY-185: Field selector for fingerprint lookup (v1.1)
+// - BR-ORCH-042: Consecutive failure blocking (RO responsibility, NOT Gateway)
+//
+// Parameters:
+// - ctx: Context for cancellation and timeout
+// - namespace: Namespace to search in
+// - fingerprint: Signal fingerprint to match (full 64-char SHA256)
+//
+// Returns:
+// - bool: true if should deduplicate (in-progress RR exists)
+// - *RemediationRequest: existing in-progress RR (nil if none)
+// - error: K8s API errors
+// listRemediationRequestsByFingerprint lists RemediationRequests matching the
+// given fingerprint via the field selector (BR-GATEWAY-185 v1.1), falling
+// back to an in-memory filter over all namespace RRs when the field selector
+// is unsupported (e.g., test clients without the field index configured).
+// Extracted from ShouldDeduplicate to keep its cognitive complexity low.
+func (c *PhaseBasedDeduplicationChecker) listRemediationRequestsByFingerprint(ctx context.Context, namespace, fingerprint string) ([]remediationv1alpha1.RemediationRequest, error) {
+	// NO truncation - uses full 64-char SHA256 fingerprint
+	rrList := &remediationv1alpha1.RemediationRequestList{}
+
+	err := c.client.List(ctx, rrList,
+		client.InNamespace(namespace),
+		client.MatchingFields{"spec.signalFingerprint": fingerprint},
+	)
+	if err == nil {
+		return rrList.Items, nil
+	}
+
+	// FALLBACK: If field selector not supported, list all RRs in namespace
+	// and filter in-memory. Less efficient but ensures tests work without
+	// cached client field-index setup.
+	if !strings.Contains(err.Error(), "field label not supported") && !strings.Contains(err.Error(), "field selector") {
+		return nil, fmt.Errorf("deduplication check failed: %w", err)
+	}
+
+	if err := c.client.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("deduplication check failed: %w", err)
+	}
+
+	filteredItems := make([]remediationv1alpha1.RemediationRequest, 0, len(rrList.Items))
+	for i := range rrList.Items {
+		if rrList.Items[i].Spec.SignalFingerprint == fingerprint {
+			filteredItems = append(filteredItems, rrList.Items[i])
+		}
+	}
+	return filteredItems, nil
+}
+
+func (c *PhaseBasedDeduplicationChecker) ShouldDeduplicate(ctx context.Context, namespace, fingerprint string) (bool, *remediationv1alpha1.RemediationRequest, error) {
+	items, err := c.listRemediationRequestsByFingerprint(ctx, namespace, fingerprint)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// Check each RR: non-terminal phases (including Verifying) always deduplicate.
+	// #280: Post-completion cooldown removed — Verifying phase covers the dedup gap.
+	// Failed/TimedOut RRs with active exponential backoff also deduplicate (#242, DD-WE-004).
+	// #719: Terminal RRs with Outcome=ManualReviewRequired suppress new RR creation
+	// because human intervention is required — automatic retry adds noise.
+	var mostRecentBackoffRR *remediationv1alpha1.RemediationRequest
+
+	for i := range items {
+		rr := &items[i]
+
+		if !IsTerminalPhase(rr.Status.OverallPhase) {
+			return true, rr, nil
+		}
+
+		// #719: ManualReviewRequired is a terminal suppression state. A human must
+		// act before the system retries — creating new RRs would only produce
+		// immediately-Blocked noise. Suppresses until the RR is acknowledged.
+		if rr.Status.GetCompletionStatus().Outcome == "ManualReviewRequired" {
+			return true, rr, nil
+		}
+
+		// Exponential backoff cooldown (#242, DD-WE-004): Failed/TimedOut RRs with
+		// NextAllowedExecution in the future suppress new RR creation.
+		if rr.Status.GetRoutingStatus().NextAllowedExecution != nil &&
+			time.Now().Before(rr.Status.GetRoutingStatus().NextAllowedExecution.Time) {
+			if mostRecentBackoffRR == nil ||
+				rr.Status.GetRoutingStatus().NextAllowedExecution.After(mostRecentBackoffRR.Status.GetRoutingStatus().NextAllowedExecution.Time) {
+				mostRecentBackoffRR = rr
+			}
+		}
+	}
+
+	if mostRecentBackoffRR != nil {
+		return true, mostRecentBackoffRR, nil
+	}
+
+	return false, nil, nil
+}
+
+// IsTerminalPhase checks if a RemediationRequest phase is terminal.
+// Terminal phases allow new RR creation for the same signal fingerprint.
+//
+// DD-GATEWAY-011 v1.3: Terminal phase classification
+// DD-GATEWAY-009: Cancelled state handling (allows retry)
+//
+// TERMINAL (allow new RR creation):
+// - Completed: Remediation succeeded
+// - Failed: Remediation failed (including after Blocked→Failed transition)
+// - TimedOut: Remediation timed out
+// - Skipped: Remediation was not needed (per BR-ORCH-032)
+// - Cancelled: Remediation was manually cancelled (per DD-GATEWAY-009, allows retry)
+//
+// NON-TERMINAL (deduplicate → update status):
+// - Pending, Processing, Analyzing, AwaitingApproval, Executing, Verifying
+// - Blocked: RO holds for cooldown, Gateway updates dedup status (prevents RR flood)
+// - Verifying: EA assessment in progress (#280), Gateway deduplicates
+//
+// WHITELIST approach (safer than blacklist):
+// - Only explicitly terminal phases allow new RR
+// - ALL other phases (including Blocked, Verifying, and unknown future phases) are non-terminal
+//
+// Phase values per api/remediation/v1alpha1/remediationrequest_types.go:
+// - Terminal: Completed, Failed, TimedOut, Skipped, Cancelled
+// - Non-Terminal: Pending, Processing, Analyzing, AwaitingApproval, Executing, Verifying, Blocked
+//
+// 🏛️ Compliance: BR-COMMON-001 (Phase Format), Viceversa Pattern (Cross-Service Consumption)
+func IsTerminalPhase(phase remediationv1alpha1.RemediationPhase) bool {
+	switch phase {
+	case remediationv1alpha1.PhaseCompleted,
+		remediationv1alpha1.PhaseFailed,
+		remediationv1alpha1.PhaseTimedOut,
+		remediationv1alpha1.PhaseSkipped,
+		remediationv1alpha1.PhaseCancelled:
+		return true
+	default:
+		return false
+	}
+}

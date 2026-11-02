@@ -1,0 +1,1424 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package notification
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/audit"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	kubernautnotif "github.com/jordigilh/kubernaut/pkg/notification"
+	notificationaudit "github.com/jordigilh/kubernaut/pkg/notification/audit"
+	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
+	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
+	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
+	notificationphase "github.com/jordigilh/kubernaut/pkg/notification/phase"
+	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	notificationstatus "github.com/jordigilh/kubernaut/pkg/notification/status"
+	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker"
+	"github.com/jordigilh/kubernaut/pkg/shared/events"
+	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+)
+
+// NotificationRequestReconciler reconciles a NotificationRequest object
+type NotificationRequestReconciler struct {
+	client.Client
+	APIReader client.Reader // DD-STATUS-001: Cache-bypassed reader for critical status checks
+	Scheme    *runtime.Scheme
+
+	// Delivery services
+	ConsoleService *delivery.ConsoleDeliveryService
+	FileService    *delivery.FileDeliveryService // E2E testing only (DD-NOT-002)
+
+	// BR-NOT-104: Per-receiver credential resolution for delivery channels
+	CredentialResolver      *credentials.Resolver
+	registeredSlackKeys     []string
+	registeredPagerDutyKeys []string      // #60: Per-receiver PagerDuty delivery keys
+	registeredTeamsKeys     []string      // #593: Per-receiver Teams delivery keys
+	deliveryKeysMu          sync.Mutex    // #244: Protects registered*Keys during concurrent routing reloads
+	DeliveryTimeout         time.Duration // HTTP timeout for webhook-based delivery channels (Slack, PagerDuty, Teams)
+
+	// ========================================
+	// DELIVERY ORCHESTRATOR (Pattern 3 - P0)
+	// See: docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §3
+	// ========================================
+	//
+	// DeliveryOrchestrator manages notification delivery across channels
+	// Extracted from controller to improve testability and maintainability
+	//
+	// BENEFITS:
+	// - ~217 lines extracted from controller
+	// - Delivery logic isolated and testable
+	// - Single responsibility principle
+	//
+	// WIRED IN: cmd/notification/main.go
+	// USAGE: r.DeliveryOrchestrator.DeliverToChannels(...)
+	//
+	// ========================================
+	// INTERFACE-BASED SERVICES PATTERN (P2)
+	// ========================================
+	// The orchestrator implements the Interface-Based Services pattern:
+	//   - Interface: delivery.DeliveryService (pkg/notification/delivery/interface.go)
+	//   - Registry: map[string]DeliveryService (orchestrator.channels)
+	//   - Registration: orchestrator.RegisterChannel(name, service)
+	//
+	// All delivery channels (Slack, Console, File, Log, etc.) implement DeliveryService
+	// and register dynamically via RegisterChannel() for pluggable architecture.
+	//
+	// See: docs/architecture/decisions/DD-NOT-007-DELIVERY-ORCHESTRATOR-REGISTRATION-PATTERN.md
+	// ========================================
+	DeliveryOrchestrator *delivery.Orchestrator
+
+	// Data sanitization
+	Sanitizer *sanitization.Sanitizer
+
+	// v3.1: Circuit breaker for graceful degradation (Category B)
+	// Migrated to github.com/sony/gobreaker via shared Manager wrapper
+	// Provides per-channel isolation (Slack, console, webhooks)
+	CircuitBreaker *circuitbreaker.Manager
+
+	// v1.1: Audit integration for unified audit table (ADR-034)
+	// BR-NOT-062: Unified Audit Table Integration
+	// BR-NOT-063: Graceful Audit Degradation
+	// See: DD-NOT-001-ADR034-AUDIT-INTEGRATION-v2.0-FULL.md
+	AuditStore   audit.AuditStore           // Buffered store for async audit writes (fire-and-forget)
+	AuditManager *notificationaudit.Manager // Audit event manager (DD-AUDIT-002)
+
+	// BR-NOT-065: Channel Routing Based on Spec Fields
+	// BR-NOT-067: Routing Configuration Hot-Reload
+	// Thread-safe router with hot-reload support via FileWatcher (#244)
+	// See: DD-WE-004 (skip-reason routing)
+	Router *routing.Router
+
+	// ========================================
+	// METRICS RECORDER (DD-METRICS-001)
+	// 📋 Design Decision: DD-METRICS-001 | ✅ Dependency Injection Pattern
+	// See: docs/architecture/decisions/DD-METRICS-001-controller-metrics-wiring-pattern.md
+	// ========================================
+	//
+	// Metrics recorder for observability (DD-005 compliant)
+	// Dependency-injected to enable testing and isolation
+	//
+	// MANDATORY: DD-METRICS-001 requires metrics to be dependency-injected
+	// RATIONALE: Enables test isolation, prevents global state pollution
+	//
+	// WIRED IN: cmd/notification/main.go
+	// USED IN: All reconciliation methods that emit metrics
+	Metrics *notificationmetrics.Metrics
+
+	// ========================================
+	// EVENT RECORDER (K8s Events for Debugging)
+	// See: SERVICE_MATURITY_REQUIREMENTS.md v1.1.0 (P1 - Should Have)
+	// See: docs/development/business-requirements/TESTING_GUIDELINES.md §1312-1357
+	// ========================================
+	//
+	// EventRecorder for emitting Kubernetes Events
+	// Used for operational debugging and troubleshooting
+	//
+	// WIRED IN: cmd/notification/main.go
+	// EVENTS EMITTED: ReconcileStarted, PhaseTransition, ReconcileComplete, ReconcileFailed
+	Recorder record.EventRecorder
+
+	// ========================================
+	// STATUS MANAGER (Pattern 2 - P1 Quick Win)
+	// See: docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §4
+	// ========================================
+	//
+	// StatusManager handles all status updates with retry logic
+	// Replaces controller's custom updateStatusWithRetry() method
+	//
+	// BENEFITS:
+	// - Centralized status update logic (~100 lines saved)
+	// - Consistent retry patterns across all status updates
+	// - Better testability and separation of concerns
+	//
+	// WIRED IN: cmd/notification/main.go
+	// USAGE: r.StatusManager.UpdatePhase(), r.StatusManager.RecordDeliveryAttempt()
+	StatusManager *notificationstatus.Manager
+
+	// NT-BUG-001 Fix: Idempotency tracking for audit events
+	// Prevents duplicate audit event emission across multiple reconciles
+	// Key: notification UID, Value: map[eventType]bool
+	// Cleaned up on notification deletion
+	emittedAuditEvents sync.Map
+}
+
+//+kubebuilder:rbac:groups=kubernaut.ai,resources=notificationrequests,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=kubernaut.ai,resources=notificationrequests/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=kubernaut.ai,resources=notificationrequests/finalizers,verbs=update
+
+// fetchAndCheckDuplicateReconcile fetches the NotificationRequest CRD,
+// emits the ReconcileStarted event and debug snapshot logging, and applies
+// the NT-BUG-008 duplicate-reconcile guard: status updates (Pending→Sending)
+// trigger immediate reconciles that would otherwise race with the original
+// reconcile and double-emit audit events (E2E test
+// 02_audit_correlation_test.go), so a generation already processed (has
+// delivery attempts) AND in a terminal phase is skipped. Returns done=true
+// when the caller must return (result, err) immediately — either due to a
+// fetch error/not-found, or the duplicate-reconcile guard triggering.
+// Extracted from Reconcile (Wave 6 6b GREEN: funlen remediation) — pure
+// code motion, no behavior change.
+func (r *NotificationRequestReconciler) fetchAndCheckDuplicateReconcile(ctx context.Context, req ctrl.Request, log logr.Logger) (*notificationv1alpha1.NotificationRequest, ctrl.Result, bool, error) {
+	notification := &notificationv1alpha1.NotificationRequest{}
+	if err := r.Get(ctx, req.NamespacedName, notification); err != nil {
+		if errors.IsNotFound(err) {
+			// Category A: NotificationRequest Not Found (normal cleanup)
+			result, notFoundErr := r.handleNotFound(ctx, req.String())
+			return nil, result, true, notFoundErr
+		}
+		log.Error(err, "Failed to fetch NotificationRequest")
+		return nil, ctrl.Result{}, true, err
+	}
+
+	// Emit ReconcileStarted event (P1: EventRecorder)
+	r.Recorder.Event(notification, corev1.EventTypeNormal, events.EventReasonReconcileStarted,
+		fmt.Sprintf("Started reconciling notification %s", notification.Name))
+
+	// DEBUG: Log reconcile start with current state
+	log.Info("🔍 RECONCILE START DEBUG",
+		"name", notification.Name,
+		"generation", notification.Generation,
+		"observedGeneration", notification.Status.ObservedGeneration,
+		"phase", notification.Status.Phase,
+		"successfulDeliveries", notification.Status.SuccessfulDeliveries,
+		"failedDeliveries", notification.Status.FailedDeliveries,
+		"totalAttempts", notification.Status.TotalAttempts,
+		"deliveryAttemptCount", len(notification.Status.DeliveryAttempts))
+
+	// NT-BUG-008: Prevent duplicate reconciliations from processing same generation twice
+	// Bug: Status updates (Pending→Sending) trigger immediate reconciles that race with original reconcile
+	// Symptom: 2x audit events per notification (discovered in E2E test 02_audit_correlation_test.go)
+	// Fix: Skip reconcile if this generation was already processed (has delivery attempts) AND in terminal phase
+	// CRITICAL: Must allow reconciliation for non-terminal phases (e.g., Sending → Failed transition)
+	if notification.Generation == notification.Status.ObservedGeneration &&
+		len(notification.Status.DeliveryAttempts) > 0 &&
+		notificationphase.IsTerminal(notification.Status.Phase) {
+		log.Info("✅ DUPLICATE RECONCILE PREVENTED: Generation already processed",
+			"generation", notification.Generation,
+			"observedGeneration", notification.Status.ObservedGeneration,
+			"deliveryAttempts", len(notification.Status.DeliveryAttempts),
+			"phase", notification.Status.Phase)
+		return notification, ctrl.Result{}, true, nil
+	}
+
+	return notification, ctrl.Result{}, false, nil
+}
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
+//
+// BR-NOT-050: Data Loss Prevention (CRD persistence)
+// BR-NOT-051: Complete Audit Trail (delivery attempts)
+// BR-NOT-052: Automatic Retry (exponential backoff)
+// BR-NOT-053: At-Least-Once Delivery (reconciliation loop)
+// BR-NOT-056: CRD Lifecycle Management (phase state machine)
+func (r *NotificationRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	notification, guardResult, done, err := r.fetchAndCheckDuplicateReconcile(ctx, req, log)
+	if done {
+		return guardResult, err
+	}
+
+	// Phase 1: Initialize status if first reconciliation
+	initialized, err := r.handleInitialization(ctx, notification)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if initialized {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	// Phase 2: Check if already in terminal state
+	// ========================================
+	// TERMINAL STATE LOGIC (P1 PATTERN)
+	// 📋 Refactoring: Controller Refactoring Pattern Library §2
+	// Using: pkg/notification/phase.IsTerminal()
+	// ========================================
+	log.Info("🔍 TERMINAL CHECK #1 DEBUG",
+		"phase", notification.Status.Phase,
+		"isTerminal", notificationphase.IsTerminal(notification.Status.Phase),
+		"successfulDeliveries", notification.Status.SuccessfulDeliveries,
+		"failedDeliveries", notification.Status.FailedDeliveries)
+	if notificationphase.IsTerminal(notification.Status.Phase) {
+		log.Info("❌ EXITING: NotificationRequest in terminal state, skipping reconciliation",
+			"phase", notification.Status.Phase)
+		return ctrl.Result{}, nil
+	}
+
+	// NT-BUG-007: Backoff enforcement for Retrying phase
+	if requeue, requeueAfter := r.checkRetryBackoff(notification, log); requeue {
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	}
+
+	// Phase 3: Transition from Pending to Sending
+	if err := r.handlePendingToSendingTransition(ctx, notification); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// BR-NOT-053: Re-read before delivery (twice) to prevent duplicate delivery
+	// from a concurrent reconcile completing the notification in the meantime.
+	skip, err := r.refreshAndGuardBeforeDelivery(ctx, req, notification, log)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if skip {
+		return ctrl.Result{}, nil
+	}
+
+	// Phase 4: Process delivery loop
+	result, err := r.handleDeliveryLoop(ctx, notification)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Phase 5: Determine phase transition based on delivery results
+	// NOTE: Delivery attempts are recorded atomically during phase transitions
+	// (DD-PERF-001: Atomic Status Updates - prevents double-counting bug)
+	return r.determinePhaseTransition(ctx, notification, result)
+}
+
+// checkRetryBackoff enforces NT-BUG-007 backoff for the Retrying phase:
+// status updates trigger immediate reconciles that would otherwise bypass
+// RequeueAfter backoff, so this checks whether enough time has elapsed
+// since the most recent failed delivery attempt before allowing a retry.
+// Returns requeue=true with the remaining backoff duration when the caller
+// must requeue instead of proceeding. Extracted from Reconcile (Wave 6 6b
+// GREEN: funlen remediation) — pure code motion, no behavior change.
+func (r *NotificationRequestReconciler) checkRetryBackoff(notification *notificationv1alpha1.NotificationRequest, log logr.Logger) (bool, time.Duration) {
+	if notification.Status.Phase != notificationv1alpha1.NotificationPhaseRetrying ||
+		len(notification.Status.DeliveryAttempts) == 0 {
+		return false, 0
+	}
+
+	// Find the most recent failed delivery attempt
+	var lastFailedAttempt *notificationv1alpha1.DeliveryAttempt
+	for i := len(notification.Status.DeliveryAttempts) - 1; i >= 0; i-- {
+		attempt := &notification.Status.DeliveryAttempts[i]
+		if attempt.Status == notificationv1alpha1.DeliveryAttemptStatusFailed {
+			lastFailedAttempt = attempt
+			break
+		}
+	}
+	if lastFailedAttempt == nil {
+		return false, 0
+	}
+
+	// Calculate expected next retry time
+	attemptCount := lastFailedAttempt.Attempt
+	nextBackoff := r.calculateBackoffWithPolicy(notification, attemptCount)
+	nextRetryTime := lastFailedAttempt.Timestamp.Add(nextBackoff)
+	now := time.Now()
+
+	if now.Before(nextRetryTime) {
+		remainingBackoff := nextRetryTime.Sub(now)
+		log.Info("⏸️ BACKOFF ENFORCEMENT: Too early to retry, requeueing",
+			"attemptNumber", attemptCount,
+			"lastAttemptTime", lastFailedAttempt.Timestamp.Format(time.RFC3339),
+			"nextRetryTime", nextRetryTime.Format(time.RFC3339),
+			"remainingBackoff", remainingBackoff,
+			"channel", lastFailedAttempt.Channel)
+		return true, remainingBackoff
+	}
+
+	log.Info("✅ BACKOFF ELAPSED: Ready to retry",
+		"attemptNumber", attemptCount,
+		"lastAttemptTime", lastFailedAttempt.Timestamp.Format(time.RFC3339),
+		"elapsedSinceLastAttempt", now.Sub(lastFailedAttempt.Timestamp.Time),
+		"expectedBackoff", nextBackoff)
+	return false, 0
+}
+
+// refreshAndGuardBeforeDelivery implements BR-NOT-053's double re-read guard
+// against duplicate delivery: refreshes notification via the cached client
+// (outside the Pending check) and then again via the cache-bypassed
+// APIReader (DD-STATUS-001) right before the delivery loop, returning
+// skip=true if a concurrent reconcile already drove the notification to a
+// terminal phase in the interim. Extracted from Reconcile (Wave 6 6b GREEN:
+// funlen remediation) — pure code motion, no behavior change.
+func (r *NotificationRequestReconciler) refreshAndGuardBeforeDelivery(ctx context.Context, req ctrl.Request, notification *notificationv1alpha1.NotificationRequest, log logr.Logger) (bool, error) {
+	// CRITICAL: Prevents duplicate delivery - must be OUTSIDE the Pending check
+	if err := r.Get(ctx, req.NamespacedName, notification); err != nil {
+		log.Error(err, "Failed to refresh notification before delivery")
+		return false, err
+	}
+
+	// Check if another reconcile completed while we were updating phase
+	// Using phase.IsTerminal() - replaces duplicate terminal state check (P1 pattern)
+	if notificationphase.IsTerminal(notification.Status.Phase) {
+		log.Info("NotificationRequest completed by concurrent reconcile, skipping duplicate delivery",
+			"phase", notification.Status.Phase)
+		return true, nil
+	}
+
+	// BR-NOT-053: CRITICAL - Re-read notification RIGHT BEFORE delivery loop
+	// DD-STATUS-001: Use APIReader (cache-bypassed) to prevent duplicate deliveries
+	// during rapid reconciles from stale cached status reads
+	if err := r.APIReader.Get(ctx, req.NamespacedName, notification); err != nil {
+		log.Error(err, "Failed to refresh notification before channel delivery loop")
+		return false, err
+	}
+
+	// Double-check phase after re-read
+	// Using phase.IsTerminal() - replaces duplicate terminal state check (P1 pattern)
+	if notificationphase.IsTerminal(notification.Status.Phase) {
+		log.Info("NotificationRequest just completed, skipping duplicate delivery after re-read",
+			"phase", notification.Status.Phase)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// handleNotFound handles Category A: NotificationRequest Not Found
+// When: CRD deleted during reconciliation
+// Action: Log deletion, remove from retry queue
+// Recovery: Normal (no action needed)
+//
+//nolint:unparam // ctrl.Result is always the zero value here; signature matches Reconcile's (ctrl.Result, error) return contract for its sole call site (Issue #1546 Tier 4)
+func (r *NotificationRequestReconciler) handleNotFound(ctx context.Context, name string) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+	log.Info("NotificationRequest not found, likely deleted", "name", name)
+
+	// NT-BUG-001 Fix: Cleanup audit event tracking to prevent memory leaks
+	r.cleanupAuditEventTracking(name)
+	log.V(1).Info("Cleaned up audit event tracking for deleted notification", "name", name)
+
+	// Remove from retry queue if applicable (controller-runtime handles this automatically)
+	return ctrl.Result{}, nil
+}
+
+// ========================================
+// REMOVED: updateStatusWithRetry() (Pattern 2 Migration)
+// See: docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §4
+// ========================================
+//
+// This method has been REPLACED by pkg/notification/status/Manager
+//
+// BEFORE (custom controller method):
+// - func (r *Reconciler) updateStatusWithRetry(...) error { ... }
+// - 26 lines of retry logic
+// - Scattered across 7 locations in controller
+//
+// AFTER (centralized Status Manager):
+// - r.StatusManager.UpdatePhase(ctx, notification, phase, reason, message)
+// - r.StatusManager.RecordDeliveryAttempt(ctx, notification, attempt)
+// - r.StatusManager.UpdateObservedGeneration(ctx, notification)
+//
+// BENEFITS:
+// - ~100 lines saved in controller
+// - Consistent retry patterns
+// - Better testability
+// - Single source of truth for status updates
+//
+// See Pattern 2 commit for full migration details.
+// ========================================
+
+// ========================================
+// AUDIT INTEGRATION HELPERS (v1.1)
+// BR-NOT-062: Unified Audit Table Integration
+// BR-NOT-063: Graceful Audit Degradation (fire-and-forget, non-blocking)
+// See: DD-NOT-001-ADR034-AUDIT-INTEGRATION-v2.0-FULL.md
+// ========================================
+
+// auditMessageSent audits successful message delivery
+//
+// BR-NOT-062: Unified audit table integration
+// ADR-032 §1: Audit is MANDATORY - no graceful degradation allowed
+//
+// This method returns error per ADR-032 §1. Audit write failures (StoreAudit errors)
+// are still fire-and-forget per BR-NOT-063, but nil store is a CRITICAL error.
+func (r *NotificationRequestReconciler) auditMessageSent(ctx context.Context, notification *notificationv1alpha1.NotificationRequest, channel string) error {
+	// ADR-032 §1: Audit is MANDATORY - no graceful degradation allowed
+	// If audit store is nil, this indicates misconfiguration and MUST fail
+	if r.AuditStore == nil || r.AuditManager == nil {
+		err := fmt.Errorf("audit store or helpers nil - audit is MANDATORY per ADR-032 §1")
+		log := log.FromContext(ctx)
+		log.Error(err, "CRITICAL: Cannot record audit event", "event_type", "message.sent", "channel", channel)
+		return err
+	}
+
+	log := log.FromContext(ctx)
+
+	// NT-BUG-001 Fix: Check if this audit event was already emitted
+	notificationKey := fmt.Sprintf("%s/%s", notification.Namespace, notification.Name)
+	eventKey := fmt.Sprintf("message.sent:%s", channel)
+	if !r.shouldEmitAuditEvent(notificationKey, eventKey) {
+		log.V(1).Info("Audit event already emitted, skipping duplicate", "event_type", "message.sent", "channel", channel)
+		return nil
+	}
+
+	// Create audit event (DD-AUDIT-003 v2.2: ClusterID from NR spec)
+	event, err := r.AuditManager.CreateMessageSentEvent(notification, channel, notification.Spec.ClusterID)
+	if err != nil {
+		log.Error(err, "Failed to create audit event - audit creation is MANDATORY per ADR-032 §1", "event_type", "message.sent", "channel", channel)
+		return fmt.Errorf("failed to create audit event (ADR-032 §1): %w", err)
+	}
+
+	// Fire-and-forget: Audit write failures don't block reconciliation (BR-NOT-063)
+	// ADR-032 §1: Store is available (checked above), write failure is acceptable (async buffered write)
+	// This does NOT violate ADR-032 because store is initialized, just the write failed
+	if err := r.AuditStore.StoreAudit(ctx, event); err != nil {
+		log.Error(err, "Failed to buffer audit event", "event_type", "message.sent", "channel", channel)
+		// Continue reconciliation - audit failure is not critical to notification delivery (BR-NOT-063)
+	} else {
+		// NT-BUG-001 Fix: Mark event as emitted only if store succeeded
+		r.markAuditEventEmitted(notificationKey, eventKey)
+	}
+
+	// DD-EVENT-001 v1.1: Emit NotificationSent when delivery succeeds (K8s Event Observability)
+	if r.Recorder != nil {
+		r.Recorder.Event(notification, corev1.EventTypeNormal, events.EventReasonNotificationSent,
+			fmt.Sprintf("Successfully delivered to channel %s", channel))
+	}
+
+	return nil
+}
+
+// auditMessageFailed audits failed message delivery
+//
+// BR-NOT-062: Unified audit table integration
+// ADR-032 §1: Audit is MANDATORY - no graceful degradation allowed
+//
+// This method returns error per ADR-032 §1. Audit write failures (StoreAudit errors)
+// are still fire-and-forget per BR-NOT-063, but nil store is a CRITICAL error.
+func (r *NotificationRequestReconciler) auditMessageFailed(ctx context.Context, notification *notificationv1alpha1.NotificationRequest, channel string, deliveryErr error) error {
+	// ADR-032 §1: Audit is MANDATORY - no graceful degradation allowed
+	// If audit store is nil, this indicates misconfiguration and MUST fail
+	if r.AuditStore == nil || r.AuditManager == nil {
+		err := fmt.Errorf("audit store or helpers nil - audit is MANDATORY per ADR-032 §1")
+		log := log.FromContext(ctx)
+		log.Error(err, "CRITICAL: Cannot record audit event", "event_type", "message.failed", "channel", channel)
+		return err
+	}
+
+	log := log.FromContext(ctx)
+
+	// NT-BUG-001 Fix: Check if this audit event was already emitted
+	notificationKey := fmt.Sprintf("%s/%s", notification.Namespace, notification.Name)
+	// Note: We include attempt count in key to allow multiple failure events during retries
+	eventKey := fmt.Sprintf("message.failed:%s:attempt%d", channel, notification.Status.TotalAttempts)
+	if !r.shouldEmitAuditEvent(notificationKey, eventKey) {
+		log.V(1).Info("Audit event already emitted, skipping duplicate", "event_type", "message.failed", "channel", channel)
+		return nil
+	}
+
+	// Create audit event with error details (DD-AUDIT-003 v2.2: ClusterID from NR spec)
+	event, err := r.AuditManager.CreateMessageFailedEvent(notification, channel, deliveryErr, notification.Spec.ClusterID)
+	if err != nil {
+		log.Error(err, "Failed to create audit event - audit creation is MANDATORY per ADR-032 §1", "event_type", "message.failed", "channel", channel)
+		return fmt.Errorf("failed to create audit event (ADR-032 §1): %w", err)
+	}
+
+	// Fire-and-forget: Audit write failures don't block reconciliation (BR-NOT-063)
+	// ADR-032 §1: Store is available (checked above), write failure is acceptable (async buffered write)
+	if err := r.AuditStore.StoreAudit(ctx, event); err != nil {
+		log.Error(err, "Failed to buffer audit event", "event_type", "message.failed", "channel", channel)
+		// Continue reconciliation - audit failure is not critical to notification delivery (BR-NOT-063)
+	} else {
+		// NT-BUG-001 Fix: Mark event as emitted only if store succeeded
+		r.markAuditEventEmitted(notificationKey, eventKey)
+	}
+
+	return nil
+}
+
+// auditSimpleEvent is the shared non-blocking audit-emission path for event
+// types that need no extra context beyond the notification itself (dupl:
+// extracted from auditMessageAcknowledged/auditMessageEscalated, which were
+// identical apart from the event type string and the factory call).
+func (r *NotificationRequestReconciler) auditSimpleEvent(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	eventType string,
+	createEvent func() (*ogenclient.AuditEventRequest, error),
+) error {
+	if r.AuditStore == nil || r.AuditManager == nil {
+		err := fmt.Errorf("audit store or helpers nil - audit is MANDATORY per ADR-032 §1")
+		log := log.FromContext(ctx)
+		log.Error(err, "CRITICAL: Cannot record audit event", "event_type", eventType)
+		return err
+	}
+
+	log := log.FromContext(ctx)
+
+	notificationKey := fmt.Sprintf("%s/%s", notification.Namespace, notification.Name)
+	if !r.shouldEmitAuditEvent(notificationKey, eventType) {
+		log.V(1).Info("Audit event already emitted, skipping duplicate", "event_type", eventType)
+		return nil
+	}
+
+	// DD-AUDIT-003 v2.2: ClusterID from NR spec (baked into createEvent by the caller)
+	event, err := createEvent()
+	if err != nil {
+		log.Error(err, "Failed to create audit event - audit creation is MANDATORY per ADR-032 §1", "event_type", eventType)
+		return fmt.Errorf("failed to create audit event (ADR-032 §1): %w", err)
+	}
+
+	if err := r.AuditStore.StoreAudit(ctx, event); err != nil {
+		log.Error(err, "Failed to buffer audit event", "event_type", eventType)
+	} else {
+		r.markAuditEventEmitted(notificationKey, eventType)
+	}
+
+	return nil
+}
+
+// auditMessageAcknowledged audits notification acknowledgment (non-blocking).
+// Emitted when a notification transitions to Sent (all deliveries succeeded).
+func (r *NotificationRequestReconciler) auditMessageAcknowledged(ctx context.Context, notification *notificationv1alpha1.NotificationRequest) error {
+	return r.auditSimpleEvent(ctx, notification, "message.acknowledged", func() (*ogenclient.AuditEventRequest, error) {
+		return r.AuditManager.CreateMessageAcknowledgedEvent(notification, notification.Spec.ClusterID)
+	})
+}
+
+// auditMessageEscalated audits notification escalation (non-blocking).
+// Emitted when a notification transitions to Failed (all retries exhausted).
+func (r *NotificationRequestReconciler) auditMessageEscalated(ctx context.Context, notification *notificationv1alpha1.NotificationRequest) error {
+	return r.auditSimpleEvent(ctx, notification, "message.escalated", func() (*ogenclient.AuditEventRequest, error) {
+		return r.AuditManager.CreateMessageEscalatedEvent(notification, notification.Spec.ClusterID)
+	})
+}
+
+// =============================================================================
+// Exported Methods for Testing (ADR-032 Compliance Tests)
+// =============================================================================
+// These methods expose private audit functions for unit testing ADR-032 §1 compliance.
+// They should ONLY be used in test files (test/unit/notification/audit_adr032_compliance_test.go).
+
+// ExportedAuditMessageSent exposes auditMessageSent for ADR-032 compliance testing
+func (r *NotificationRequestReconciler) ExportedAuditMessageSent(ctx context.Context, notification *notificationv1alpha1.NotificationRequest, channel string) error {
+	return r.auditMessageSent(ctx, notification, channel)
+}
+
+// ExportedAuditMessageFailed exposes auditMessageFailed for ADR-032 compliance testing
+func (r *NotificationRequestReconciler) ExportedAuditMessageFailed(ctx context.Context, notification *notificationv1alpha1.NotificationRequest, channel string, deliveryErr error) error {
+	return r.auditMessageFailed(ctx, notification, channel, deliveryErr)
+}
+
+// ExportedAuditMessageAcknowledged exposes auditMessageAcknowledged for ADR-032 compliance testing
+func (r *NotificationRequestReconciler) ExportedAuditMessageAcknowledged(ctx context.Context, notification *notificationv1alpha1.NotificationRequest) error {
+	return r.auditMessageAcknowledged(ctx, notification)
+}
+
+// ExportedAuditMessageEscalated exposes auditMessageEscalated for ADR-032 compliance testing
+func (r *NotificationRequestReconciler) ExportedAuditMessageEscalated(ctx context.Context, notification *notificationv1alpha1.NotificationRequest) error {
+	return r.auditMessageEscalated(ctx, notification)
+}
+
+// ========================================
+// AUDIT EVENT IDEMPOTENCY (NT-BUG-001 Fix)
+// ========================================
+//
+// Prevents duplicate audit event emission across multiple reconciles.
+// Each notification can emit each event type exactly once.
+//
+// WHY IDEMPOTENCY?
+// - ✅ Accurate audit trail (no 3x duplication)
+// - ✅ Correct compliance reporting
+// - ✅ Reduced database bloat
+//
+// NOTE: Uses namespace/name as key (not UID) since UID is unavailable after deletion.
+// ========================================
+
+// shouldEmitAuditEvent checks if audit event should be emitted for this notification.
+// Returns true if event has NOT been emitted yet for this notification+eventType combination.
+func (r *NotificationRequestReconciler) shouldEmitAuditEvent(notificationKey string, eventType string) bool {
+	events, exists := r.emittedAuditEvents.Load(notificationKey)
+	if !exists {
+		return true
+	}
+	innerMap, ok := events.(*sync.Map)
+	if !ok {
+		return true
+	}
+	_, alreadyEmitted := innerMap.Load(eventType)
+	return !alreadyEmitted
+}
+
+// markAuditEventEmitted records that audit event was emitted for this notification.
+// Uses nested sync.Map to avoid data races on concurrent reconcile goroutines.
+func (r *NotificationRequestReconciler) markAuditEventEmitted(notificationKey string, eventType string) {
+	actual, _ := r.emittedAuditEvents.LoadOrStore(notificationKey, &sync.Map{})
+	if innerMap, ok := actual.(*sync.Map); ok {
+		innerMap.Store(eventType, true)
+	}
+}
+
+// cleanupAuditEventTracking removes tracking for deleted notification.
+// Called when notification is confirmed deleted to prevent memory leaks.
+func (r *NotificationRequestReconciler) cleanupAuditEventTracking(notificationKey string) {
+	r.emittedAuditEvents.Delete(notificationKey)
+}
+
+// countSuccessfulAttempts counts how many successful delivery attempts are in the list.
+// Used for calculating accurate success counts when using atomic status updates.
+func countSuccessfulAttempts(attempts []notificationv1alpha1.DeliveryAttempt) int {
+	count := 0
+	for _, attempt := range attempts {
+		if attempt.Status == notificationv1alpha1.DeliveryAttemptStatusSuccess {
+			count++
+		}
+	}
+	return count
+}
+
+// SetupWithManager sets up the controller with the Manager.
+// #244: Routing config hot-reload is now handled by FileWatcher (wired in main.go),
+// not by a ConfigMap informer in the controller.
+//
+// Optional opts parameter allows configuring controller behavior:
+//   - MaxConcurrentReconciles: Number of concurrent workers (default: 1)
+//
+// Example (integration tests with high concurrency):
+//
+//	reconciler.SetupWithManager(mgr, controller.Options{
+//	    MaxConcurrentReconciles: 5,  // 5 workers for 100 concurrent notifications
+//	})
+func (r *NotificationRequestReconciler) SetupWithManager(mgr ctrl.Manager, opts ...controller.Options) error {
+	if r.Router == nil {
+		r.Router = routing.NewRouter(ctrl.Log.WithName("routing"))
+	}
+
+	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
+		For(&notificationv1alpha1.NotificationRequest{})
+
+	if len(opts) > 0 {
+		ctrlBuilder = ctrlBuilder.WithOptions(opts[0])
+	}
+
+	return ctrlBuilder.Complete(r)
+}
+
+// ========================================
+// PHASE HANDLERS (P2 Refactoring - Complexity Reduction)
+// ========================================
+//
+// These methods extract phase-specific logic from Reconcile to reduce
+// cyclomatic complexity from 39 to ~10.
+//
+// Phase Transitions:
+//   "" → Pending → Sending → (Sent | Failed)
+//
+// Each handler is responsible for a specific phase and returns
+// the next action for the controller.
+// ========================================
+
+// handleInitialization initializes the NotificationRequest status if this is the first reconciliation.
+// Returns true if initialization was performed (caller should requeue), false if already initialized.
+//
+// Concurrency safety: multiple reconciles can fire for the same NotificationRequest
+// before the first status update is persisted (each sees Phase="" from the informer
+// cache). UpdatePhase refetches the latest state from the API server before validating
+// the transition. If a concurrent reconcile already set Phase=Pending, the refetch
+// turns the attempted "" → Pending into Pending → Pending, which the state machine
+// rejects. We detect this by inspecting the refetched Phase after the error and treat
+// it as a no-op.
+func (r *NotificationRequestReconciler) handleInitialization(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+) (bool, error) {
+	if notification.Status.Phase != "" {
+		return false, nil // Already initialized
+	}
+
+	log := log.FromContext(ctx)
+
+	// Initialize status fields
+	notification.Status.DeliveryAttempts = []notificationv1alpha1.DeliveryAttempt{}
+	notification.Status.TotalAttempts = 0
+	notification.Status.SuccessfulDeliveries = 0
+	notification.Status.FailedDeliveries = 0
+
+	// Use Status Manager to update phase (Pattern 2)
+	if err := r.StatusManager.UpdatePhase(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhasePending,
+		"Initialized",
+		"Notification request received",
+		nil,
+	); err != nil {
+		// Concurrent initialization race: UpdatePhase refetches from the API server.
+		// If another reconcile already set Pending, the refetched notification reflects
+		// that and the transition is rejected as Pending → Pending. This is benign.
+		if notification.Status.Phase == notificationv1alpha1.NotificationPhasePending {
+			log.V(1).Info("Initialization already completed by concurrent reconcile",
+				"name", notification.Name)
+			return false, nil
+		}
+		log.Error(err, "Failed to initialize status")
+		return false, err
+	}
+
+	// Record metric for notification request creation (BR-NOT-054: Observability)
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhasePending), 1)
+
+	log.Info("NotificationRequest status initialized", "name", notification.Name)
+	return true, nil // Requeue to process the initialized notification
+}
+
+// ========================================
+// REMOVED: handleTerminalStateCheck() method (32 lines)
+// 📋 Refactoring: Controller Refactoring Pattern Library §2 - Terminal State Logic (P1)
+// Replaced with: pkg/notification/phase.IsTerminal()
+// ========================================
+//
+// This method was removed as part of the Terminal State Logic refactoring pattern.
+// All terminal state checks now use the centralized phase.IsTerminal() function.
+//
+// Benefits:
+// - ✅ Single source of truth for terminal states
+// - ✅ Consistent terminal state definition (Sent, PartiallySent, Failed)
+// - ✅ Reduced code duplication (removed 4 duplicate checks)
+// - ✅ Easier to maintain (add terminal phase once, applies everywhere)
+//
+// Migration:
+// - Old: if r.handleTerminalStateCheck(ctx, notification) { ... }
+// - New: if notificationphase.IsTerminal(notification.Status.Phase) { ... }
+//
+// See:
+// - pkg/notification/phase/types.go - IsTerminal() implementation
+// - test/unit/notification/phase/types_test.go - Unit tests
+// - docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §2
+// ========================================
+
+// handlePendingToSendingTransition transitions notification from Pending to Sending phase.
+func (r *NotificationRequestReconciler) handlePendingToSendingTransition(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+) error {
+	if notification.Status.Phase != notificationv1alpha1.NotificationPhasePending {
+		return nil // Not in Pending phase
+	}
+
+	log := log.FromContext(ctx)
+
+	// Use Status Manager to update phase to Sending (Pattern 2)
+	if err := r.StatusManager.UpdatePhase(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhaseSending,
+		"ProcessingDeliveries",
+		"Processing delivery channels",
+		nil,
+	); err != nil {
+		log.Error(err, "Failed to update phase to Sending")
+		return err
+	}
+
+	// Emit PhaseTransition event (P1: EventRecorder)
+	r.Recorder.Event(notification, corev1.EventTypeNormal, events.EventReasonPhaseTransition,
+		fmt.Sprintf("Transitioned to %s phase", notificationv1alpha1.NotificationPhaseSending))
+
+	// Record metric for phase transition to Sending (BR-NOT-054: Observability)
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhaseSending), 1)
+
+	return nil
+}
+
+// deliveryLoopResult contains the results of the delivery loop.
+type deliveryLoopResult struct {
+	deliveryResults  map[string]error
+	failureCount     int
+	deliveryAttempts []notificationv1alpha1.DeliveryAttempt // Collected attempts for batch update
+	channels         []notificationv1alpha1.Channel         // #263: Resolved channels used for delivery
+}
+
+// handleDeliveryLoop processes delivery attempts for all channels.
+// This is the core delivery logic extracted from Reconcile.
+func (r *NotificationRequestReconciler) handleDeliveryLoop(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+) (*deliveryLoopResult, error) {
+	log := log.FromContext(ctx)
+
+	// Get retry policy to check max attempts
+	policy := r.getRetryPolicy(notification)
+
+	// BR-NOT-065: Resolve channels from routing rules (#261: routing is sole authority)
+	// BR-NOT-069: Set RoutingResolved condition for visibility
+	channels, routingReason, routingMessage := r.resolveChannelsFromRoutingWithDetails(ctx, notification)
+	log.Info("Resolved channels from routing rules",
+		"notification", notification.Name,
+		"channels", channels)
+
+	kubernautnotif.SetRoutingResolved(
+		notification,
+		metav1.ConditionTrue,
+		routingReason,
+		routingMessage,
+	)
+
+	// ========================================
+	// DELEGATE TO ORCHESTRATOR (Pattern 3 - P0)
+	// ========================================
+	// Delivery orchestration extracted to pkg/notification/delivery/orchestrator.go
+	// Controller provides callbacks for audit and helper methods
+	orchestratorResult, err := r.DeliveryOrchestrator.DeliverToChannels(
+		ctx,
+		notification,
+		channels,
+		policy,
+		delivery.DeliveryCallbacks{
+			ChannelAlreadySucceeded:  r.channelAlreadySucceeded,
+			HasChannelPermanentError: r.hasChannelPermanentError,
+			GetChannelAttemptCount:   r.getChannelAttemptCount,
+			AuditMessageSent:         r.auditMessageSent,
+			AuditMessageFailed:       r.auditMessageFailed,
+			CheckBeforeDelivery:      r.checkBeforeDelivery, // DD-EVENT-001 v1.1: Circuit breaker check + CircuitBreakerOpen event
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert orchestrator result to controller result format
+	// 🔍 DEBUG: Track attempt count before status update
+	log.Info("🔍 POST-DELIVERY DEBUG (handleDeliveryLoop)",
+		"deliveryAttemptsFromOrchestrator", len(orchestratorResult.DeliveryAttempts),
+		"statusDeliveryAttemptsBeforeUpdate", len(notification.Status.DeliveryAttempts),
+		"channels", len(channels))
+
+	return &deliveryLoopResult{
+		deliveryResults:  orchestratorResult.DeliveryResults,
+		failureCount:     orchestratorResult.FailureCount,
+		deliveryAttempts: orchestratorResult.DeliveryAttempts, // Pass through for batch recording
+		channels:         channels,                            // #263: Propagate resolved channels for phase transition
+	}, nil
+}
+
+// ========================================
+// REMOVED: attemptChannelDelivery() (Pattern 3 Migration)
+// See: docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §3
+// ========================================
+//
+// This method has been REPLACED by pkg/notification/delivery/Orchestrator.DeliverToChannel()
+//
+// BEFORE (controller method):
+// - func (r *Reconciler) attemptChannelDelivery(...) error { ... }
+// - 14 lines switching on channel type
+//
+// AFTER (orchestrator method):
+// - r.DeliveryOrchestrator.DeliverToChannel(ctx, notification, channel)
+//
+// See Pattern 3 commit for full migration details.
+// ========================================
+
+// ========================================
+// REMOVED: recordDeliveryAttempt() (Pattern 3 Migration)
+// See: docs/architecture/patterns/CONTROLLER_REFACTORING_PATTERN_LIBRARY.md §3
+// ========================================
+//
+// This method has been REPLACED by pkg/notification/delivery/Orchestrator.RecordDeliveryAttempt()
+//
+// BEFORE (controller method):
+// - func (r *Reconciler) recordDeliveryAttempt(...) error { ... }
+// - 124 lines of attempt recording, audit, metrics
+//
+// AFTER (orchestrator method):
+// - Called internally by Orchestrator.DeliverToChannels()
+//
+// See Pattern 3 commit for full migration details.
+// ========================================
+
+// recoverPendingRaceCondition handles NT-BUG-008/NT-BUG-013: if
+// handlePendingToSendingTransition ran but the subsequent re-read returned a
+// stale (still-Pending) notification, this persists the Sending transition
+// to the K8s API first — preventing an invalid "Pending → Sent" transition
+// that would violate the phase state machine — then re-reads
+// (NT-BUG-014) so the caller's next AtomicStatusUpdate uses a fresh
+// resourceVersion. Extracted from determinePhaseTransition (Wave 6 6b
+// GREEN: funlen remediation) — pure code motion, no behavior change.
+func (r *NotificationRequestReconciler) recoverPendingRaceCondition(ctx context.Context, notification *notificationv1alpha1.NotificationRequest, preservedConditions []metav1.Condition, log logr.Logger) error {
+	if notification.Status.Phase != notificationv1alpha1.NotificationPhasePending {
+		return nil
+	}
+
+	log.Info("⚠️  RACE CONDITION DETECTED: Phase is still Pending after delivery loop",
+		"expectedPhase", "Sending",
+		"actualPhase", notification.Status.Phase,
+		"fix", "Persisting transition to Sending before determining final state")
+
+	// NT-BUG-013 Fix: Persist the Sending phase transition to K8s API
+	// The local in-memory update is not enough - we must persist to K8s API
+	// Otherwise AtomicStatusUpdate will try to transition from Pending (K8s state) to Sent (new state)
+	if err := r.StatusManager.AtomicStatusUpdate(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhaseSending,
+		"ProcessingDeliveries",
+		"Processing delivery channels",
+		nil,
+		preservedConditions,
+	); err != nil {
+		log.Error(err, "Failed to persist Sending phase transition during race condition recovery")
+		return err
+	}
+
+	log.Info("✅ Phase transition to Sending persisted successfully (race condition resolved)")
+
+	// NT-BUG-014 Fix: Re-read notification from K8s to get latest resourceVersion
+	// After persisting Sending phase, we must re-read to ensure we have the latest state
+	// Otherwise, the next AtomicStatusUpdate will use stale resourceVersion and fail
+	if err := r.Get(ctx, client.ObjectKeyFromObject(notification), notification); err != nil {
+		log.Error(err, "Failed to re-read notification after Sending phase persistence")
+		return err
+	}
+
+	log.Info("✅ Notification re-read after Sending phase persistence",
+		"phase", notification.Status.Phase,
+		"resourceVersion", notification.ResourceVersion)
+	return nil
+}
+
+// buildPhaseTransitionDecision builds channel states from controller helper
+// methods (#263/#261: derived from routing-resolved channels returned by
+// the delivery loop) and delegates the pure business-logic decision to
+// pkg/notification/phase.DetermineTransition. Extracted from
+// determinePhaseTransition (Wave 6 6b GREEN: funlen remediation) — pure
+// code motion, no behavior change.
+func (r *NotificationRequestReconciler) buildPhaseTransitionDecision(notification *notificationv1alpha1.NotificationRequest, result *deliveryLoopResult, log logr.Logger) *notificationphase.TransitionDecision {
+	policy := r.getRetryPolicy(notification)
+	channelStates := make(map[string]notificationphase.ChannelState, len(result.channels))
+	for _, channel := range result.channels {
+		ch := string(channel)
+		channelStates[ch] = notificationphase.ChannelState{
+			AlreadySucceeded:  r.channelAlreadySucceeded(notification, ch),
+			AttemptCount:      r.getChannelAttemptCount(notification, ch),
+			HasPermanentError: r.hasChannelPermanentError(notification, ch),
+		}
+	}
+
+	decision := notificationphase.DetermineTransition(
+		notification,
+		result.channels,
+		&notificationphase.DeliveryResult{
+			ChannelResults:   result.deliveryResults,
+			FailureCount:     result.failureCount,
+			DeliveryAttempts: result.deliveryAttempts,
+		},
+		channelStates,
+		policy.MaxAttempts,
+	)
+
+	log.Info("🔍 PHASE TRANSITION DECISION",
+		"currentPhase", notification.Status.Phase,
+		"nextPhase", decision.NextPhase,
+		"reason", decision.Reason,
+		"isTerminal", decision.IsTerminal,
+		"shouldRequeue", decision.ShouldRequeue,
+		"phaseUnchanged", decision.PhaseUnchanged,
+		"isPermanentFailure", decision.IsPermanentFailure,
+		"maxFailedAttemptCount", decision.MaxFailedAttemptCount)
+
+	return decision
+}
+
+// determinePhaseTransition determines the next phase based on delivery results.
+func (r *NotificationRequestReconciler) determinePhaseTransition(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	result *deliveryLoopResult,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Snapshot in-memory conditions (e.g., RoutingResolved) before any refetch wipes them.
+	// AtomicStatusUpdate refetches the object, overwriting in-memory conditions.
+	// The conditions parameter re-applies them after refetch, ensuring persistence.
+	var preservedConditions []metav1.Condition
+	if rc := kubernautnotif.GetRoutingResolved(notification); rc != nil {
+		preservedConditions = append(preservedConditions, *rc)
+	}
+
+	// NT-BUG-008 & NT-BUG-013: Handle race condition where phase is still Pending
+	if err := r.recoverPendingRaceCondition(ctx, notification, preservedConditions, log); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// ========================================
+	// DELEGATE PHASE TRANSITION DECISION TO pkg/notification/phase
+	// ========================================
+	decision := r.buildPhaseTransitionDecision(notification, result, log)
+
+	// Execute the transition based on the decision
+	switch {
+	case decision.NextPhase == notificationphase.Sent:
+		log.Info("✅ ALL CHANNELS SUCCEEDED → transitioning to Sent")
+		return r.transitionToSent(ctx, notification, result.deliveryAttempts, preservedConditions)
+
+	case decision.NextPhase == notificationphase.PartiallySent:
+		log.Info("Partial delivery success with exhausted retries, transitioning to PartiallySent")
+		return r.transitionToPartiallySent(ctx, notification, result.deliveryAttempts, preservedConditions, result.channels)
+
+	case decision.NextPhase == notificationphase.Failed && decision.IsPermanentFailure:
+		log.Info("All retries exhausted → transitioning to Failed (permanent)",
+			"reason", decision.Reason)
+		return r.transitionToFailed(ctx, notification, true, decision.Reason, result.deliveryAttempts, preservedConditions, result.channels)
+
+	case decision.NextPhase == notificationphase.Retrying:
+		backoff := r.calculateBackoffWithPolicy(notification, decision.MaxFailedAttemptCount)
+		log.Info("⏰ PARTIAL SUCCESS WITH FAILURES → TRANSITIONING TO RETRYING",
+			"backoff", backoff,
+			"maxAttemptCount", decision.MaxFailedAttemptCount)
+		return r.transitionToRetrying(ctx, notification, backoff, result.deliveryAttempts, preservedConditions, result.channels)
+
+	case decision.PhaseUnchanged && decision.ShouldRequeue && result.failureCount > 0:
+		log.Info("All channels failed, retries remaining — temporary failure with backoff",
+			"reason", decision.Reason)
+		return r.transitionToFailed(ctx, notification, false, decision.Reason, result.deliveryAttempts, preservedConditions, result.channels)
+
+	default:
+		log.Info("Partial delivery success, continuing",
+			"nextPhase", decision.NextPhase)
+		return ctrl.Result{Requeue: true}, nil
+	}
+}
+
+// transitionToSent transitions notification to Sent (terminal success state).
+func (r *NotificationRequestReconciler) transitionToSent(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// NT-BUG-009: Calculate correct successful count for message
+	// The notification.Status.SuccessfulDeliveries hasn't been updated yet,
+	// so we need to calculate from current batch + existing status
+	totalSuccessful := notification.Status.SuccessfulDeliveries + countSuccessfulAttempts(attempts)
+
+	// ATOMIC UPDATE: Record delivery attempts AND update phase to Sent in a single API call
+	// DD-PERF-001: Atomic Status Updates
+	if err := r.StatusManager.AtomicStatusUpdate(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhaseSent,
+		string(notificationv1alpha1.StatusReasonAllDeliveriesSucceeded),
+		fmt.Sprintf("Successfully delivered to %d channel(s)", totalSuccessful),
+		attempts,
+		append(preservedConditions, metav1.Condition{
+			Type:               kubernautnotif.ConditionReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             kubernautnotif.ReasonReady,
+			Message:            "Notification delivered",
+			ObservedGeneration: notification.Generation,
+		}),
+	); err != nil {
+		log.Error(err, "Failed to atomically update status to Sent")
+		return ctrl.Result{}, err
+	}
+
+	// DD-NOT-008: Clear in-memory tracking after successful status persistence
+	// Critical for test isolation and to prevent stale state
+	r.DeliveryOrchestrator.ClearInMemoryState(string(notification.UID))
+
+	// Record metric
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhaseSent), 1)
+
+	// AUDIT: Message acknowledged (ADR-032 §1: MANDATORY)
+	if auditErr := r.auditMessageAcknowledged(ctx, notification); auditErr != nil {
+		log.Error(auditErr, "CRITICAL: Failed to audit message.acknowledged (ADR-032 §1)")
+		return ctrl.Result{}, fmt.Errorf("audit failure (ADR-032 §1): %w", auditErr)
+	}
+
+	log.Info("NotificationRequest completed successfully (atomic update)",
+		"name", notification.Name,
+		"successfulDeliveries", notification.Status.SuccessfulDeliveries,
+		"attemptsRecorded", len(attempts))
+
+	return ctrl.Result{}, nil
+}
+
+// transitionToRetrying transitions notification to Retrying (non-terminal retry state).
+// Used when some channels succeeded, some failed, but retries remain available.
+// This is a non-terminal phase that allows the controller to continue retrying failed channels.
+func (r *NotificationRequestReconciler) transitionToRetrying(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	backoff time.Duration,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+	resolvedChannels []notificationv1alpha1.Channel,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// ATOMIC UPDATE: Record delivery attempts AND update phase to Retrying in a single API call
+	// DD-PERF-001: Atomic Status Updates
+	// 🔍 DEBUG: Track attempts before atomic update
+	log.Info("🔍 BEFORE ATOMIC UPDATE (transitionToRetrying)",
+		"newAttempts", len(attempts),
+		"existingAttempts", len(notification.Status.DeliveryAttempts),
+		"totalAttemptsShouldBe", len(attempts)+len(notification.Status.DeliveryAttempts))
+
+	if err := r.StatusManager.AtomicStatusUpdate(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhaseRetrying,
+		string(notificationv1alpha1.StatusReasonPartialFailureRetrying),
+		fmt.Sprintf("Delivered to %d/%d channel(s), retrying failed channels with backoff %v",
+			notification.Status.SuccessfulDeliveries,
+			len(resolvedChannels),
+			backoff),
+		attempts,
+		preservedConditions,
+	); err != nil {
+		log.Error(err, "Failed to atomically update status to Retrying")
+		return ctrl.Result{}, err
+	}
+
+	// DD-NOT-008: Clear in-memory tracking after successful status persistence
+	// Critical for test isolation and to prevent stale state
+	r.DeliveryOrchestrator.ClearInMemoryState(string(notification.UID))
+
+	// Record metric
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhaseRetrying), 1)
+
+	// DD-EVENT-001 v1.1: Emit NotificationRetrying when retrying after transient failure
+	r.Recorder.Event(notification, corev1.EventTypeNormal, events.EventReasonNotificationRetrying,
+		fmt.Sprintf("Retrying failed channels with backoff %v", backoff))
+
+	log.Info("NotificationRequest entering retry phase (atomic update)",
+		"name", notification.Name,
+		"successfulDeliveries", notification.Status.SuccessfulDeliveries,
+		"failedDeliveries", notification.Status.FailedDeliveries,
+		"backoff", backoff,
+		"attemptsRecorded", len(attempts))
+
+	// Schedule next retry with exponential backoff
+	return ctrl.Result{RequeueAfter: backoff}, nil
+}
+
+// transitionToPartiallySent transitions notification to PartiallySent (terminal partial success state).
+// NT-BUG-003 Fix: When some channels succeed but others permanently fail (max retries exhausted).
+func (r *NotificationRequestReconciler) transitionToPartiallySent(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+	resolvedChannels []notificationv1alpha1.Channel,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// NT-BUG-009: Calculate correct successful count for message
+	// The notification.Status.SuccessfulDeliveries hasn't been updated yet,
+	// so we need to calculate from current batch + existing status
+	totalSuccessful := notification.Status.SuccessfulDeliveries + countSuccessfulAttempts(attempts)
+
+	// ATOMIC UPDATE: Record delivery attempts AND update phase to PartiallySent in a single API call
+	// DD-PERF-001: Atomic Status Updates
+	// 🔍 DEBUG: Track attempts before atomic update
+	log.Info("🔍 BEFORE ATOMIC UPDATE (transitionToPartiallySent)",
+		"newAttempts", len(attempts),
+		"existingAttempts", len(notification.Status.DeliveryAttempts),
+		"totalAttemptsShouldBe", len(attempts)+len(notification.Status.DeliveryAttempts))
+
+	if err := r.StatusManager.AtomicStatusUpdate(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhasePartiallySent,
+		string(notificationv1alpha1.StatusReasonPartialDeliverySuccess),
+		fmt.Sprintf("Delivered to %d/%d channel(s), others failed",
+			totalSuccessful,
+			len(resolvedChannels)),
+		attempts,
+		append(preservedConditions, metav1.Condition{
+			Type:               kubernautnotif.ConditionReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             kubernautnotif.ReasonReady,
+			Message:            "Notification partially delivered",
+			ObservedGeneration: notification.Generation,
+		}),
+	); err != nil {
+		log.Error(err, "Failed to atomically update status to PartiallySent")
+		return ctrl.Result{}, err
+	}
+
+	// DD-NOT-008: Clear in-memory tracking after successful status persistence
+	r.DeliveryOrchestrator.ClearInMemoryState(string(notification.UID))
+
+	// Record metric
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhasePartiallySent), 1)
+
+	// DD-EVENT-001 v1.1: Emit NotificationPartiallySent when some channels succeed but others fail
+	r.Recorder.Event(notification, corev1.EventTypeNormal, events.EventReasonNotificationPartiallySent,
+		fmt.Sprintf("Delivered to %d/%d channel(s), others failed", totalSuccessful, len(resolvedChannels)))
+
+	log.Info("NotificationRequest partially completed (atomic update)",
+		"name", notification.Name,
+		"successfulDeliveries", notification.Status.SuccessfulDeliveries,
+		"failedDeliveries", notification.Status.FailedDeliveries,
+		"attemptsRecorded", len(attempts))
+
+	return ctrl.Result{}, nil
+}
+
+// transitionToFailed transitions notification to Failed state.
+// If permanent is true, sets CompletionTime (terminal state).
+func (r *NotificationRequestReconciler) transitionToFailed(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	permanent bool,
+	reason string,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+	resolvedChannels []notificationv1alpha1.Channel,
+) (ctrl.Result, error) {
+	if permanent {
+		return r.transitionToFailedPermanent(ctx, notification, reason, attempts, preservedConditions)
+	}
+	return r.transitionToFailedTemporary(ctx, notification, reason, attempts, preservedConditions, resolvedChannels)
+}
+
+// transitionToFailedPermanent handles the terminal-failure branch of
+// transitionToFailed: atomically records delivery attempts and transitions
+// to Failed, clears in-memory delivery-orchestrator tracking (DD-NOT-008),
+// records the phase-count metric, emits the NotificationFailed Warning
+// event, and records the message.escalated audit event (ADR-032 §1
+// MANDATORY). Extracted from transitionToFailed (Wave 6 6b GREEN: funlen
+// remediation) — pure code motion, no behavior change.
+func (r *NotificationRequestReconciler) transitionToFailedPermanent(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	reason string,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// ATOMIC UPDATE: Record delivery attempts AND update phase to Failed in a single API call
+	if err := r.StatusManager.AtomicStatusUpdate(
+		ctx,
+		notification,
+		notificationv1alpha1.NotificationPhaseFailed,
+		reason,
+		"All delivery attempts failed or exhausted retries",
+		attempts,
+		append(preservedConditions, metav1.Condition{
+			Type:               kubernautnotif.ConditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             kubernautnotif.ReasonNotReady,
+			Message:            "Notification delivery failed",
+			ObservedGeneration: notification.Generation,
+		}),
+	); err != nil {
+		log.Error(err, "Failed to atomically update status to Failed (permanent)")
+		return ctrl.Result{}, err
+	}
+
+	// DD-NOT-008: Clear in-memory tracking after successful status persistence
+	r.DeliveryOrchestrator.ClearInMemoryState(string(notification.UID))
+
+	// Record metric
+	// DD-METRICS-001: Use injected metrics recorder
+	r.Metrics.UpdatePhaseCount(notification.Namespace, string(notificationv1alpha1.NotificationPhaseFailed), 1)
+
+	// DD-EVENT-001 v1.1: Emit NotificationFailed Warning when delivery fails terminally
+	r.Recorder.Event(notification, corev1.EventTypeWarning, events.EventReasonNotificationFailed,
+		"All delivery attempts failed or exhausted retries")
+
+	// AUDIT: Message escalated (ADR-032 §1: MANDATORY)
+	if auditErr := r.auditMessageEscalated(ctx, notification); auditErr != nil {
+		log.Error(auditErr, "CRITICAL: Failed to audit message.escalated (ADR-032 §1)")
+		return ctrl.Result{}, fmt.Errorf("audit failure (ADR-032 §1): %w", auditErr)
+	}
+
+	log.Info("NotificationRequest permanently failed (atomic update)",
+		"name", notification.Name,
+		"failedDeliveries", notification.Status.FailedDeliveries,
+		"attemptsRecorded", len(attempts))
+
+	return ctrl.Result{}, nil
+}
+
+// transitionToFailedTemporary handles the retryable-failure branch of
+// transitionToFailed: records delivery attempts without changing phase,
+// then computes the backoff duration from the highest per-channel attempt
+// count across resolvedChannels. Extracted from transitionToFailed (Wave 6
+// 6b GREEN: funlen remediation) — pure code motion, no behavior change.
+func (r *NotificationRequestReconciler) transitionToFailedTemporary(
+	ctx context.Context,
+	notification *notificationv1alpha1.NotificationRequest,
+	reason string,
+	attempts []notificationv1alpha1.DeliveryAttempt,
+	preservedConditions []metav1.Condition,
+	resolvedChannels []notificationv1alpha1.Channel,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Temporary failure - will retry with backoff
+	// For temporary failures, we still need to record attempts but stay in current phase
+	// Use atomic update with current phase (no phase change)
+	if len(attempts) > 0 {
+		// Record attempts without changing phase (atomic operation)
+		if err := r.StatusManager.AtomicStatusUpdate(
+			ctx,
+			notification,
+			notification.Status.Phase, // Stay in current phase
+			reason,
+			"Delivery failed, will retry with backoff",
+			attempts,
+			preservedConditions,
+		); err != nil {
+			log.Error(err, "Failed to atomically record attempts for temporary failure")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Calculate backoff for retry
+	maxAttemptCount := 0
+	for _, channel := range resolvedChannels {
+		attemptCount := r.getChannelAttemptCount(notification, string(channel))
+		if attemptCount > maxAttemptCount {
+			maxAttemptCount = attemptCount
+		}
+	}
+
+	backoff := r.calculateBackoffWithPolicy(notification, maxAttemptCount)
+
+	log.Info("NotificationRequest failed, will retry with backoff (atomic update)",
+		"name", notification.Name,
+		"backoff", backoff,
+		"attemptCount", maxAttemptCount,
+		"attemptsRecorded", len(attempts))
+
+	return ctrl.Result{RequeueAfter: backoff}, nil
+}

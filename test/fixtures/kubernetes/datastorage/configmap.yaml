@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-storage-config
+  namespace: kubernaut-system
+data:
+  config.yaml: |
+    server:
+      port: 8080  # DD-AUTH-014: Direct access (no proxy)
+      healthPort: 8081
+      metricsPort: 9090
+      host: "0.0.0.0"
+      readTimeout: "30s"
+      writeTimeout: "30s"
+      # #1048 Phase 4 / SC-5: Maximum request body size in bytes (default: 5242880 = 5 MiB)
+      # Clamped to [1048576, 52428800] (1–50 MiB). Plain integer only.
+      maxBodySize: "5242880"
+      # #1048 Phase 4 / AC-4: CORS allowed origins. Use ["*"] only in dev.
+      # Production should list explicit origins, e.g. ["https://dashboard.kubernaut.ai"]
+      corsAllowedOrigins: []
+      # #1048 Phase 5 / AU-9: Directory containing signing certificate (tls.crt, tls.key)
+      # Default: /etc/certs. Override for Helm environments where cert-manager mounts differ.
+      # signerCertDir: "/etc/certs"
+
+    logging:
+      level: "info"
+
+    database:
+      host: "postgresql.kubernaut-system.svc.cluster.local"
+      port: 5432
+      name: "action_history"
+      user: "db_user"
+      sslMode: "disable"
+      maxOpenConns: 100
+      maxIdleConns: 25
+      connMaxLifetime: "15m"
+      connMaxIdleTime: "10m"
+      secretsFile: "/etc/datastorage/secrets/db-secrets.yaml"
+      usernameKey: "username"
+      passwordKey: "password"
+
+    redis:
+      addr: "redis.kubernaut-system.svc.cluster.local:6379"
+      dlqMaxLen: 10000
+      secretsFile: "/etc/datastorage/secrets/redis-secrets.yaml"
+      passwordKey: "password"
+
+    # #1048 Phase 5 / AU-11: Retention worker configuration
+    # Purges audit events past their retention period while respecting legal holds.
+    # Default: enabled in production (2555 days per ADR-034 SOC 2 / ISO 27001).
+    retention:
+      enabled: true
+      interval: "24h"
+      batchSize: 1000
+      defaultDays: 2555
+

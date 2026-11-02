@@ -1,0 +1,1282 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	trueFixture = "true"
+)
+
+// SetupAuthWebhookInfrastructureParallel creates the full AuthWebhook E2E infrastructure with hybrid pattern.
+// This optimizes setup time by building images before cluster creation.
+//
+// Hybrid Execution Strategy:
+//
+//	Phase 1 (PARALLEL):   Build DataStorage + AuthWebhook images (BEFORE cluster) (~90s)
+//	Phase 2 (Sequential): Create Kind cluster + namespace (~65s)
+//	Phase 3 (PARALLEL):   Load images + Deploy PostgreSQL + Deploy Redis (~60s)
+//	Phase 4 (Sequential): Run migrations (~30s)
+//	Phase 5 (Sequential): Deploy DataStorage + AuthWebhook services (~45s)
+//	Phase 6 (Sequential): Wait for services ready (~30s)
+//
+// Total time: ~4.3 minutes (eliminates cluster idle time during builds)
+//
+// PostgreSQL-only architecture (SOC2 audit storage)
+// Authority: Gateway/DataStorage hybrid pattern migration (Jan 7, 2026)
+func SetupAuthWebhookInfrastructureParallel(ctx context.Context, clusterName, kubeconfigPath, namespace string, writer io.Writer) (awImage, dsImage string, err error) {
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🚀 AuthWebhook E2E Infrastructure (HYBRID PATTERN)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "  Strategy: Build images → Create cluster → Load → Deploy")
+	_, _ = fmt.Fprintln(writer, "  Optimization: Eliminates cluster idle time during image builds")
+	_, _ = fmt.Fprintln(writer, "  Authority: Gateway/DataStorage hybrid pattern migration (Jan 7, 2026)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 1: Building images in parallel (NO CLUSTER YET)...")
+	dsImageName, awImageName, err := buildAuthWebhookImages(ctx, writer)
+	if err != nil {
+		return "", "", err
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n✅ All images built successfully!")
+
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 2: Creating Kind cluster + namespace...")
+	if err := prepareAuthWebhookCluster(ctx, clusterName, kubeconfigPath, namespace, writer); err != nil {
+		return "", "", err
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n⚡ PHASE 3: Loading images + Deploying infrastructure in parallel...")
+	if err := loadAndDeployAuthWebhookDependencies(ctx, clusterName, kubeconfigPath, namespace, dsImageName, awImageName, writer); err != nil {
+		return "", "", err
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 4: Run database migrations (Sequential - depends on PostgreSQL)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n🗄️  PHASE 4: Running database migrations...")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~20-30 seconds")
+	if err := runDatabaseMigrations(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return "", "", fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 4.5: Deploy DataStorage client RBAC (DD-AUTH-014)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n🔐 PHASE 4.5: Deploying DataStorage client RBAC (DD-AUTH-014)...")
+	if err := deployDataStorageClientClusterRole(ctx, kubeconfigPath, writer); err != nil {
+		return "", "", fmt.Errorf("failed to deploy data-storage-client ClusterRole: %w", err)
+	}
+	if err := CreateDataStorageAccessRoleBinding(ctx, namespace, kubeconfigPath, "authwebhook", writer); err != nil {
+		return "", "", fmt.Errorf("failed to create AuthWebhook DataStorage client RoleBinding: %w", err)
+	}
+
+	// Issue #785: Inter-service TLS must exist before DataStorage serves HTTPS.
+	_, _ = fmt.Fprintln(writer, "\n🔐 Issue #785: Generating inter-service TLS certificates...")
+	if _, err := GenerateInterServiceTLS(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return "", "", fmt.Errorf("failed to generate inter-service TLS: %w", err)
+	}
+
+	// AU-9: Generate RSA signing certificate for audit exports
+	if err := GenerateSigningCertSecret(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return "", "", fmt.Errorf("failed to generate signing certificate: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 5: Deploy services (Sequential - depends on migrations)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n🚀 PHASE 5: Deploying services...")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~30-45 seconds")
+
+	// Issue #1661 (DD-WORKFLOW-018): DataStorage's workflow cache indexes
+	// RemediationWorkflow by .spec.actionType at startup -- the CRDs must
+	// already be registered with the apiserver or DS's informer cache setup
+	// fails hard ("no matches for kind"), crash-looping the pod. Must run
+	// BEFORE DataStorage is deployed below -- deployAuthWebhookToKind's own
+	// "Apply CRDs" step (STEP 2) runs too late, after DataStorage's readiness
+	// wait already started.
+	_, _ = fmt.Fprintln(writer, "  📋 Applying RemediationWorkflow/ActionType CRDs (DD-WORKFLOW-018)...")
+	if err := applyRemediationWorkflowCRDs(ctx, kubeconfigPath, writer); err != nil {
+		return "", "", fmt.Errorf("failed to apply RemediationWorkflow/ActionType CRDs: %w", err)
+	}
+
+	// Deploy DataStorage service (E2E ports per DD-TEST-001)
+	_, _ = fmt.Fprintln(writer, "  📦 Deploying DataStorage service...")
+	if err := deployDataStorageToKind(ctx, kubeconfigPath, namespace, dsImageName, "30081", writer); err != nil {
+		return "", "", fmt.Errorf("failed to deploy DataStorage: %w", err)
+	}
+
+	// Deploy AuthWebhook service with webhook configurations
+	_, _ = fmt.Fprintln(writer, "  🔐 Deploying AuthWebhook service...")
+	// Deploy AuthWebhook service using pre-built image from Phase 1
+	if err := deployAuthWebhookToKind(ctx, kubeconfigPath, namespace, awImageName, writer); err != nil {
+		return "", "", fmt.Errorf("failed to deploy AuthWebhook: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 6: Wait for services to be ready (Sequential - verification)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n⏳ PHASE 6: Waiting for services to be ready...")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~20-30 seconds")
+	if err := waitForServicesReady(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return "", "", fmt.Errorf("services failed to become ready: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n✅ AuthWebhook E2E infrastructure ready!")
+	_, _ = fmt.Fprintf(writer, "  🖼️  AuthWebhook image: %s\n", awImageName)
+	_, _ = fmt.Fprintf(writer, "  🖼️  DataStorage image: %s\n", dsImageName)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	return awImageName, dsImageName, nil
+}
+
+func prepareAuthWebhookCluster(ctx context.Context, clusterName, kubeconfigPath, namespace string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~10-15 seconds")
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find workspace root: %w", err)
+	}
+	coverdataPath := filepath.Join(workspaceRoot, "test", "e2e", "authwebhook", "coverdata")
+	if err := os.MkdirAll(coverdataPath, 0777); err != nil {
+		return fmt.Errorf("failed to create coverdata directory: %w", err)
+	}
+	if err := os.Chmod(coverdataPath, 0777); err != nil {
+		_, _ = fmt.Fprintf(writer, "  ⚠️  Failed to chmod coverdata directory: %v\n", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ Created %s for coverage collection (mode=0777)\n", coverdataPath)
+	if err := createKindClusterWithConfig(ctx, clusterName, kubeconfigPath, "test/e2e/authwebhook/kind-config.yaml", writer); err != nil {
+		return fmt.Errorf("failed to create Kind cluster: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "📁 Creating namespace %s...\n", namespace)
+	if err := CreateTestNamespace(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+	return nil
+}
+
+func loadAndDeployAuthWebhookDependencies(ctx context.Context, clusterName, kubeconfigPath, namespace, dsImageName, awImageName string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "  ├── Loading DataStorage image to Kind")
+	_, _ = fmt.Fprintln(writer, "  ├── Loading AuthWebhook image to Kind")
+	_, _ = fmt.Fprintln(writer, "  ├── Deploying PostgreSQL")
+	_, _ = fmt.Fprintln(writer, "  └── Deploying Redis")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~30-60 seconds")
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, 4)
+	go func() {
+		results <- result{"DS image load", LoadImageToKind(ctx, dsImageName, "datastorage", clusterName, writer)}
+	}()
+	go func() {
+		results <- result{"AuthWebhook image load", loadAuthWebhookImageOnly(ctx, awImageName, clusterName, writer)}
+	}()
+	go func() {
+		results <- result{"PostgreSQL", deployPostgreSQLToKind(ctx, kubeconfigPath, namespace, "30442", writer)}
+	}()
+	go func() { results <- result{"Redis", deployRedisToKind(ctx, kubeconfigPath, namespace, "30386", writer)} }()
+
+	_, _ = fmt.Fprintln(writer, "  ⏳ Waiting for parallel tasks to complete...")
+	var taskErrors []string
+	for range 4 {
+		res := <-results
+		if res.err != nil {
+			taskErrors = append(taskErrors, fmt.Sprintf("%s: %v", res.name, res.err))
+			_, _ = fmt.Fprintf(writer, "  ❌ %s failed: %v\n", res.name, res.err)
+			continue
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ %s complete\n", res.name)
+	}
+	if len(taskErrors) > 0 {
+		return fmt.Errorf("parallel load/deploy failed: %v", taskErrors)
+	}
+	_, _ = fmt.Fprintln(writer, "✅ Phase 3 complete - images loaded + infrastructure deployed")
+	return nil
+}
+
+func buildAuthWebhookImages(ctx context.Context, writer io.Writer) (string, string, error) {
+	_, _ = fmt.Fprintln(writer, "  ├── DataStorage image")
+	_, _ = fmt.Fprintln(writer, "  └── AuthWebhook image")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~1-2 minutes")
+
+	type buildResult struct {
+		name      string
+		imageName string
+		err       error
+	}
+	buildResults := make(chan buildResult, 2)
+	go func() {
+		cfg := E2EImageConfig{ServiceName: "datastorage", ImageName: "kubernaut/datastorage", DockerfilePath: "docker/data-storage.Dockerfile", EnableCoverage: os.Getenv("E2E_COVERAGE") == trueFixture}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		if err != nil {
+			err = fmt.Errorf("DS image build failed: %w", err)
+		}
+		buildResults <- buildResult{name: "DataStorage", imageName: imageName, err: err}
+	}()
+	go func() {
+		cfg := E2EImageConfig{ServiceName: "authwebhook", ImageName: "authwebhook", DockerfilePath: "docker/authwebhook.Dockerfile", EnableCoverage: os.Getenv("E2E_COVERAGE") == trueFixture}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		if err != nil {
+			err = fmt.Errorf("AuthWebhook image build failed: %w", err)
+		}
+		buildResults <- buildResult{name: "AuthWebhook", imageName: imageName, err: err}
+	}()
+
+	images := make(map[string]string, 2)
+	var buildErrors []string
+	for range 2 {
+		result := <-buildResults
+		if result.err != nil {
+			buildErrors = append(buildErrors, fmt.Sprintf("%s: %v", result.name, result.err))
+			_, _ = fmt.Fprintf(writer, "  ❌ %s build failed: %v\n", result.name, result.err)
+			continue
+		}
+		images[result.name] = result.imageName
+		_, _ = fmt.Fprintf(writer, "  ✅ %s build completed\n", result.name)
+	}
+	if len(buildErrors) > 0 {
+		return "", "", fmt.Errorf("image builds failed: %v", buildErrors)
+	}
+	_, _ = fmt.Fprintln(writer, "\n✅ All images built successfully!")
+	return images["DataStorage"], images["AuthWebhook"], nil
+}
+
+// loadAuthWebhookImageOnly loads a pre-built AuthWebhook image to Kind cluster.
+// This is Phase 3 of the hybrid E2E pattern (load after cluster creation).
+func loadAuthWebhookImageOnly(ctx context.Context, imageName, clusterName string, writer io.Writer) error {
+	return LoadImageToKind(ctx, imageName, "authwebhook", clusterName, writer)
+}
+
+// authWebhookManifest generates the complete AuthWebhook multi-document YAML manifest.
+// This is the single source of truth for all AuthWebhook E2E deployments.
+// Includes: ServiceAccount, ClusterRole, ClusterRoleBinding, Service, ConfigMap,
+// Deployment, MutatingWebhookConfiguration, ValidatingWebhookConfiguration.
+func authWebhookManifest(namespace, imageTag, dataStorageURL, dataStorageHealthURL string) string {
+	pullPolicy := GetImagePullPolicy()
+
+	return fmt.Sprintf(`---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: authwebhook
+  namespace: %[1]s
+  labels:
+    app.kubernetes.io/name: authwebhook
+    app.kubernetes.io/component: admission-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: authwebhook
+  labels:
+    app.kubernetes.io/name: authwebhook
+    app.kubernetes.io/component: admission-webhook
+rules:
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions", "remediationapprovalrequests", "notificationrequests", "remediationrequests", "actiontypes"]
+  verbs: ["get", "list", "watch"]
+# Issue #418: RW reconciler needs update/patch to add/remove the catalog-cleanup finalizer
+- apiGroups: ["kubernaut.ai"]
+  resources: ["remediationworkflows"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["remediationworkflows/finalizers"]
+  verbs: ["update"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions/status", "remediationapprovalrequests/status", "remediationrequests/status", "remediationworkflows/status", "actiontypes/status"]
+  verbs: ["update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: authwebhook
+  labels:
+    app.kubernetes.io/name: authwebhook
+    app.kubernetes.io/component: admission-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: authwebhook
+subjects:
+- kind: ServiceAccount
+  name: authwebhook
+  namespace: %[1]s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authwebhook
+  namespace: %[1]s
+  labels:
+    app.kubernetes.io/name: authwebhook
+    app.kubernetes.io/component: admission-webhook
+spec:
+  selector:
+    app.kubernetes.io/name: authwebhook
+  ports:
+  - name: https
+    port: 443
+    targetPort: webhook
+    protocol: TCP
+    nodePort: 30099
+  type: NodePort
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authwebhook-config
+  namespace: %[1]s
+data:
+  authwebhook.yaml: |
+    webhook:
+      port: 9443
+      certDir: /tmp/k8s-webhook-server/serving-certs
+      healthProbeAddr: ":8081"
+    datastorage:
+      url: "%[4]s"
+      healthUrl: "%[5]s"
+      timeout: 30s
+      buffer:
+        bufferSize: 1000
+        batchSize: 100
+        flushInterval: 5s
+        maxRetries: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authwebhook
+  namespace: %[1]s
+  labels:
+    app.kubernetes.io/name: authwebhook
+    app.kubernetes.io/component: admission-webhook
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: authwebhook
+  template:
+    metadata:
+      labels:
+        app: authwebhook
+        app.kubernetes.io/name: authwebhook
+        app.kubernetes.io/component: admission-webhook
+    spec:
+      serviceAccountName: authwebhook
+      containers:
+      - name: authwebhook
+        image: %[2]s
+        imagePullPolicy: %[3]s
+        args:
+        - -config=/etc/authwebhook/authwebhook.yaml
+        ports:
+        - name: webhook
+          containerPort: 9443
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          value: "debug"
+        - name: GOCOVERDIR
+          value: "/coverdata"
+        - name: TLS_CA_FILE
+          value: "/etc/tls-ca/ca.crt"
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+        - name: config
+          mountPath: /etc/authwebhook
+          readOnly: true
+        - name: coverdata
+          mountPath: /coverdata
+        - name: tls-ca
+          mountPath: /etc/tls-ca
+          readOnly: true
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: authwebhook-tls
+      - name: config
+        configMap:
+          name: authwebhook-config
+      - name: coverdata
+        hostPath:
+          path: /coverdata
+          type: DirectoryOrCreate
+      - name: tls-ca
+        configMap:
+          name: inter-service-ca
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: authwebhook-mutating
+webhooks:
+- name: workflowexecution.mutate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /mutate-workflowexecution
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["UPDATE"]
+    resources: ["workflowexecutions/status"]
+    scope: "Namespaced"
+  sideEffects: None
+  timeoutSeconds: 10
+- name: remediationapprovalrequest.mutate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /mutate-remediationapprovalrequest
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["UPDATE"]
+    resources: ["remediationapprovalrequests/status"]
+    scope: "Namespaced"
+  sideEffects: None
+  timeoutSeconds: 10
+- name: remediationrequest.mutate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /mutate-remediationrequest
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["UPDATE"]
+    resources: ["remediationrequests/status"]
+    scope: "Namespaced"
+  sideEffects: None
+  timeoutSeconds: 10
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: authwebhook-validating
+webhooks:
+- name: notificationrequest.validate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /validate-notificationrequest-delete
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["DELETE"]
+    resources: ["notificationrequests"]
+    scope: "Namespaced"
+  sideEffects: None
+  timeoutSeconds: 10
+- name: remediationworkflow.validate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /validate-remediationworkflow
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: %[1]s
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["CREATE", "UPDATE", "DELETE"]
+    resources: ["remediationworkflows"]
+    scope: "Namespaced"
+  sideEffects: NoneOnDryRun
+  timeoutSeconds: 15
+- name: actiontype.validate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /validate-actiontype
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: %[1]s
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["CREATE", "UPDATE", "DELETE"]
+    resources: ["actiontypes"]
+    scope: "Namespaced"
+  sideEffects: NoneOnDryRun
+  timeoutSeconds: 15
+- name: agentsession.validate.kubernaut.ai
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: authwebhook
+      namespace: %[1]s
+      path: /validate-agentsession
+    caBundle: ""
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: %[1]s
+  rules:
+  - apiGroups: ["kubernaut.ai"]
+    apiVersions: ["v1alpha1"]
+    operations: ["CREATE"]
+    resources: ["agentsessions"]
+    scope: "Namespaced"
+  sideEffects: NoneOnDryRun
+  timeoutSeconds: 15
+`, namespace, imageTag, pullPolicy, dataStorageURL, dataStorageHealthURL)
+}
+
+// deployAuthWebhookToKind deploys the AuthWebhook service to Kind cluster.
+// Standardized: uses authWebhookManifest() inline YAML template.
+func deployAuthWebhookToKind(ctx context.Context, kubeconfigPath, namespace, imageTag string, writer io.Writer) error {
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find workspace root: %w", err)
+	}
+
+	// STEP 1: Generate webhook TLS certificates
+	_, _ = fmt.Fprintln(writer, "🔐 Generating webhook TLS certificates...")
+	if err := generateWebhookCertsOnly(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to generate webhook certs: %w", err)
+	}
+
+	// STEP 2: Apply CRDs first
+	_, _ = fmt.Fprintln(writer, "📋 Applying CRDs...")
+	cmd := exec.CommandContext(ctx, "kubectl", "apply",
+		"--kubeconfig", kubeconfigPath,
+		"-f", "config/crd/bases/")
+	cmd.Dir = workspaceRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(writer, "❌ CRD apply failed: %s\n", output)
+		return fmt.Errorf("kubectl apply crds failed: %w", err)
+	}
+
+	// STEP 3: Apply AuthWebhook manifest (all resources including webhook configs)
+	_, _ = fmt.Fprintln(writer, "🚀 Applying AuthWebhook deployment...")
+	dsURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8080", namespace)
+	dsHealthURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8080/readyz", namespace)
+	manifest := authWebhookManifest(namespace, imageTag, dsURL, dsHealthURL)
+	cmd = exec.CommandContext(ctx, "kubectl", "apply",
+		"--kubeconfig", kubeconfigPath,
+		"-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to deploy AuthWebhook: %w", err)
+	}
+
+	// STEP 4: Patch webhook configurations with CA bundle
+	_, _ = fmt.Fprintln(writer, "🔐 Patching webhook configurations with CA bundle...")
+	if err := patchWebhookConfigurations(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to patch webhook configurations: %w", err)
+	}
+
+	return nil
+}
+
+// generateWebhookCertsOnly generates TLS certificates for webhook admission WITHOUT patching
+// This must be called BEFORE the deployment (which creates the webhook configurations)
+func generateWebhookCertsOnly(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) error {
+	// Use openssl to generate self-signed certificates for testing
+	// In production, use cert-manager
+
+	// Generate private key
+	cmd := exec.CommandContext(ctx, "openssl", "genrsa", "-out", "/tmp/webhook-key.pem", "2048")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(writer, "❌ Key generation failed: %s\n", output)
+		return fmt.Errorf("openssl genrsa failed: %w", err)
+	}
+
+	// Generate certificate with SAN (Subject Alternative Names) for webhook service
+	// This is required for Kubernetes to trust the webhook certificate
+	cmd = exec.CommandContext(ctx, "openssl", "req", "-new", "-x509",
+		"-key", "/tmp/webhook-key.pem",
+		"-out", "/tmp/webhook-cert.pem",
+		"-days", "365",
+		"-subj", fmt.Sprintf("/CN=authwebhook.%s.svc", namespace),
+		"-addext", fmt.Sprintf("subjectAltName=DNS:authwebhook.%s.svc,DNS:authwebhook.%s.svc.cluster.local", namespace, namespace))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(writer, "❌ Cert generation failed: %s\n", output)
+		return fmt.Errorf("openssl req failed: %w", err)
+	}
+
+	// Create and apply secret with certificates using a single command
+	cmd = exec.CommandContext(ctx, "kubectl", "create", "secret", "tls", "authwebhook-tls",
+		"--kubeconfig", kubeconfigPath,
+		"-n", namespace,
+		"--cert=/tmp/webhook-cert.pem",
+		"--key=/tmp/webhook-key.pem")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(writer, "❌ Secret creation failed: %s\n", output)
+		return fmt.Errorf("kubectl create secret failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "   ✅ Webhook TLS secret created")
+	return nil
+}
+
+// patchWebhookConfigurations patches webhook configurations with CA bundle
+// This must be called AFTER the deployment is applied (webhook configurations must exist)
+func patchWebhookConfigurations(ctx context.Context, kubeconfigPath string, writer io.Writer) error {
+	// Base64 encode the certificate for CA bundle
+	caBundleOutput, err := exec.CommandContext(ctx, "bash", "-c", "cat /tmp/webhook-cert.pem | base64 | tr -d '\\n'").Output()
+	if err != nil {
+		return fmt.Errorf("failed to base64 encode CA bundle: %w", err)
+	}
+	caBundleB64 := string(caBundleOutput)
+
+	// Patch each webhook in MutatingWebhookConfiguration
+	_, _ = fmt.Fprintln(writer, "   🔧 Patching MutatingWebhookConfiguration webhooks...")
+	webhookNames := []string{"workflowexecution.mutate.kubernaut.ai", "remediationapprovalrequest.mutate.kubernaut.ai", "remediationrequest.mutate.kubernaut.ai"}
+	for i, webhookName := range webhookNames {
+		patchCmd := exec.CommandContext(ctx, "kubectl", "patch", "mutatingwebhookconfiguration", "authwebhook-mutating",
+			"--kubeconfig", kubeconfigPath,
+			"--type=json",
+			"-p", fmt.Sprintf(`[{"op":"replace","path":"/webhooks/%d/clientConfig/caBundle","value":"%s"}]`, i, caBundleB64))
+		if output, err := patchCmd.CombinedOutput(); err != nil {
+			_, _ = fmt.Fprintf(writer, "   ❌ Failed to patch %s: %s\n", webhookName, output)
+			return fmt.Errorf("failed to patch mutating webhook %s: %w", webhookName, err)
+		}
+		_, _ = fmt.Fprintf(writer, "   ✅ Patched %s\n", webhookName)
+	}
+
+	// Patch ValidatingWebhookConfiguration (4 webhooks: notificationrequest + remediationworkflow + actiontype + agentsession, #2244)
+	_, _ = fmt.Fprintln(writer, "   🔧 Patching ValidatingWebhookConfiguration webhooks...")
+	validatingWebhookNames := []string{"notificationrequest.validate.kubernaut.ai", "remediationworkflow.validate.kubernaut.ai", "actiontype.validate.kubernaut.ai", "agentsession.validate.kubernaut.ai"}
+	for i, vwName := range validatingWebhookNames {
+		patchCmd := exec.CommandContext(ctx, "kubectl", "patch", "validatingwebhookconfiguration", "authwebhook-validating",
+			"--kubeconfig", kubeconfigPath,
+			"--type=json",
+			"-p", fmt.Sprintf(`[{"op":"replace","path":"/webhooks/%d/clientConfig/caBundle","value":"%s"}]`, i, caBundleB64))
+		if output, err := patchCmd.CombinedOutput(); err != nil {
+			_, _ = fmt.Fprintf(writer, "   ❌ Failed to patch %s: %s\n", vwName, output)
+			return fmt.Errorf("failed to patch validating webhook %s: %w", vwName, err)
+		}
+		_, _ = fmt.Fprintf(writer, "   ✅ Patched %s\n", vwName)
+	}
+
+	_, _ = fmt.Fprintln(writer, "✅ All webhook configurations patched with CA bundle")
+	return nil
+}
+
+// createKindClusterWithConfig creates a Kind cluster with a specific config file
+// REFACTORED: Now uses shared CreateKindClusterWithConfig(ctx) helper
+func createKindClusterWithConfig(ctx context.Context, clusterName, kubeconfigPath, configPath string, writer io.Writer) error {
+	opts := KindClusterOptions{
+		ClusterName:               clusterName,
+		KubeconfigPath:            kubeconfigPath,
+		ConfigPath:                configPath,
+		WaitTimeout:               "60s",
+		DeleteExisting:            true, // Original behavior: delete if exists
+		ReuseExisting:             false,
+		CleanupOrphanedContainers: true, // Podman cleanup on macOS
+		UsePodman:                 true, // CRITICAL: Sets KIND_EXPERIMENTAL_PROVIDER=podman
+	}
+	return CreateKindClusterWithConfig(ctx, opts, writer)
+}
+
+// LoadKubeconfig loads a kubeconfig file and returns a rest.Config
+func LoadKubeconfig(kubeconfigPath string) (*rest.Config, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig from %s: %w", kubeconfigPath, err)
+	}
+	return config, nil
+}
+
+// Note: createTestNamespace and findWorkspaceRoot are defined in datastorage.go
+// and shared across the infrastructure package
+
+// deployPostgreSQLToKind deploys PostgreSQL to Kind cluster with custom NodePort.
+// Standardized: inline YAML template pattern.
+func deployPostgreSQLToKind(ctx context.Context, kubeconfigPath, namespace, nodePort string, writer io.Writer) error {
+	manifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-init
+data:
+  init.sql: |
+    -- AuthWebhook E2E PostgreSQL init script
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'slm_user') THEN
+            CREATE ROLE slm_user WITH LOGIN PASSWORD 'test_password';
+        END IF;
+    END
+    $$;
+
+    GRANT ALL PRIVILEGES ON DATABASE action_history TO slm_user;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO slm_user;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO slm_user;
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO slm_user;
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secret
+stringData:
+  POSTGRES_USER: slm_user
+  POSTGRES_PASSWORD: test_password
+  POSTGRES_DB: action_history
+  db-secrets.yaml: |
+    username: slm_user
+    password: test_password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  labels:
+    app: postgresql
+spec:
+  type: NodePort
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: 5432
+    nodePort: %[1]s
+    protocol: TCP
+  selector:
+    app: postgresql
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  labels:
+    app: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:16-alpine
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_DB
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgresql-init
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 250m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "slm_user"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "slm_user"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: postgresql-data
+        emptyDir: {}
+      - name: postgresql-init
+        configMap:
+          name: postgresql-init
+`, nodePort)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-n", namespace, "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to deploy PostgreSQL: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "   ✅ PostgreSQL deployed (NodePort %s)\n", nodePort)
+	return nil
+}
+
+// deployRedisToKind deploys Redis to Kind cluster with custom NodePort.
+// Standardized: inline YAML template pattern.
+func deployRedisToKind(ctx context.Context, kubeconfigPath, namespace, nodePort string, writer io.Writer) error {
+	manifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  type: NodePort
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    nodePort: %[1]s
+    protocol: TCP
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - name: redis
+          containerPort: 6379
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+`, nodePort)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-n", namespace, "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to deploy Redis: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "   ✅ Redis deployed (NodePort %s)\n", nodePort)
+	return nil
+}
+
+// runDatabaseMigrations runs database migrations using ApplyMigrations
+func runDatabaseMigrations(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) error {
+	return ApplyMigrations(ctx, namespace, kubeconfigPath, writer)
+}
+
+// deployDataStorageToKind deploys Data Storage service to Kind cluster with custom NodePort and image tag.
+// Standardized: inline YAML template pattern.
+func deployDataStorageToKind(ctx context.Context, kubeconfigPath, namespace, imageTag, nodePort string, writer io.Writer) error {
+	pullPolicy := GetImagePullPolicy()
+
+	manifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: datastorage-config
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      host: "0.0.0.0"
+      metricsPort: 9090
+      healthPort: 8081
+      readTimeout: 30s
+      writeTimeout: 30s
+      signerCertDir: /etc/signing-certs
+      tls:
+        certDir: /etc/tls
+    database:
+      host: postgresql.%[1]s.svc.cluster.local
+      port: 5432
+      name: action_history
+      user: slm_user
+      sslMode: disable
+      maxOpenConns: 25
+      maxIdleConns: 5
+      connMaxLifetime: 5m
+      connMaxIdleTime: 10m
+      secretsFile: "/etc/datastorage/secrets/db-secrets.yaml"
+      usernameKey: "username"
+      passwordKey: "password"
+    redis:
+      addr: redis.%[1]s.svc.cluster.local:6379
+      db: 0
+      dlqStreamName: dlq-stream
+      dlqMaxLen: 1000
+      dlqConsumerGroup: dlq-group
+      secretsFile: "/etc/datastorage/secrets/redis-secrets.yaml"
+      passwordKey: "password"
+    logging:
+      level: debug
+      format: json
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+stringData:
+  redis-secrets.yaml: |
+    password: ""
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: data-storage-sa
+  labels:
+    app: datastorage
+    component: auth
+    authorization: dd-auth-014
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-storage-auth-middleware
+  labels:
+    app: datastorage
+    component: auth
+    authorization: dd-auth-014
+rules:
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+- apiGroups: ["authorization.k8s.io"]
+  resources: ["subjectaccessreviews"]
+  verbs: ["create"]
+# Issue #1661 Phase 29 (DD-WORKFLOW-018): informer-backed read-only cache of
+# RemediationWorkflow/ActionType CRDs (etcd is the single source of truth).
+- apiGroups: ["kubernaut.ai"]
+  resources: ["remediationworkflows", "actiontypes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: data-storage-auth-middleware
+  labels:
+    app: datastorage
+    component: auth
+    authorization: dd-auth-014
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: data-storage-auth-middleware
+subjects:
+- kind: ServiceAccount
+  name: data-storage-sa
+  namespace: %[1]s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-storage-service
+  labels:
+    app: datastorage
+spec:
+  type: NodePort
+  ports:
+  - name: https
+    port: 8080
+    targetPort: 8080
+    nodePort: %[2]s
+    protocol: TCP
+  # DD-PLATFORM-010 (supersedes the original #1985 "health" Service port
+  # that used to live here): AuthWebhook's DataStorage readiness gate now
+  # probes an unauthenticated /readyz route on the SAME port (8080) as the
+  # https entry above, already exposed via cluster DNS -- no separate
+  # Service port needed for the dedicated kubelet-only health port (8081),
+  # which stays pod-local only.
+  selector:
+    app: datastorage
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datastorage
+  labels:
+    app: datastorage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: datastorage
+  template:
+    metadata:
+      labels:
+        app: datastorage
+    spec:
+      serviceAccountName: data-storage-sa
+      containers:
+      - name: datastorage
+        image: %[3]s
+        imagePullPolicy: %[4]s
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        - name: health
+          containerPort: 8081
+        env:
+        - name: CONFIG_PATH
+          value: /etc/datastorage/config.yaml
+        - name: GOCOVERDIR
+          value: /coverdata
+        volumeMounts:
+        - name: config
+          mountPath: /etc/datastorage
+          readOnly: true
+        - name: secrets
+          mountPath: /etc/datastorage/secrets
+          readOnly: true
+        - name: coverdata
+          mountPath: /coverdata
+        - name: tls-certs
+          mountPath: /etc/tls
+          readOnly: true
+        - name: signing-certs
+          mountPath: /etc/signing-certs
+          readOnly: true
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 250m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: datastorage-config
+      - name: tls-certs
+        secret:
+          secretName: datastorage-tls
+      - name: signing-certs
+        secret:
+          secretName: datastorage-signing
+      - name: secrets
+        projected:
+          sources:
+          - secret:
+              name: postgresql-secret
+              items:
+              - key: db-secrets.yaml
+                path: db-secrets.yaml
+          - secret:
+              name: redis-secret
+              items:
+              - key: redis-secrets.yaml
+                path: redis-secrets.yaml
+      - name: coverdata
+        hostPath:
+          path: /coverdata
+`, namespace, nodePort, imageTag, pullPolicy)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-n", namespace, "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to deploy DataStorage: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "   ✅ Data Storage deployed (NodePort %s, image %s)\n", nodePort, imageTag)
+	return nil
+}
+
+// waitForServicesReady waits for Data Storage and AuthWebhook services to be ready
+func waitForServicesReady(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) error {
+	clientset, err := getKubernetesClient(kubeconfigPath)
+	if err != nil {
+		return err
+	}
+
+	// Wait for Data Storage pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for Data Storage pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=datastorage", 5*time.Minute, "Data Storage pod should be ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ Data Storage pod ready\n")
+
+	// Wait for AuthWebhook pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for AuthWebhook pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app.kubernetes.io/name=authwebhook", 5*time.Minute, "AuthWebhook pod should be ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ AuthWebhook pod ready\n")
+
+	return nil
+}
+
+func waitForReadyServicePod(ctx context.Context, clientset kubernetes.Interface, namespace, selector string, timeout time.Duration, message string) {
+	Eventually(func() bool {
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		return err == nil && anyPodReady(pods)
+	}, timeout, 5*time.Second).Should(BeTrue(), message)
+}
+
+func anyPodReady(pods *corev1.PodList) bool {
+	if len(pods.Items) == 0 {
+		return false
+	}
+	for _, pod := range pods.Items {
+		if podReady(pod) {
+			return true
+		}
+	}
+	return false
+}
+
+func podReady(pod corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,590 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package audit
+
+import (
+	"encoding/json"
+	"strings"
+	"time"
+
+	"github.com/go-faster/jx"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+)
+
+func dataString(d map[string]interface{}, key string) string {
+	if v, ok := d[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func dataInt(d map[string]interface{}, key string) int {
+	n, _ := dataIntValue(d, key)
+	return n
+}
+
+func dataIntValue(d map[string]interface{}, key string) (int, bool) {
+	if v, ok := d[key]; ok {
+		switch n := v.(type) {
+		case int:
+			return n, true
+		case int8:
+			return int(n), true
+		case int16:
+			return int(n), true
+		case int32:
+			return int(n), true
+		case int64:
+			return int(n), true
+		case uint:
+			return int(n), true
+		case uint8:
+			return int(n), true
+		case uint16:
+			return int(n), true
+		case uint32:
+			return int(n), true
+		case uint64:
+			return int(n), true
+		case float64:
+			return int(n), true
+		}
+	}
+	return 0, false
+}
+
+func dataBool(d map[string]interface{}, key string) bool {
+	if v, ok := d[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func dataFloat64(d map[string]interface{}, key string) float64 {
+	if v, ok := d[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return n
+		case float32:
+			return float64(n)
+		case int:
+			return float64(n)
+		}
+	}
+	return 0
+}
+
+func dataStringSlice(d map[string]interface{}, key string) []string {
+	if v, ok := d[key]; ok {
+		if ss, ok := v.([]string); ok {
+			return ss
+		}
+	}
+	return nil
+}
+
+func dataStringMap(d map[string]interface{}, key string) map[string]string {
+	if v, ok := d[key]; ok {
+		if values, ok := v.(map[string]string); ok {
+			return values
+		}
+	}
+	return nil
+}
+
+func detectedLabelsFromStringMap(values map[string]string) ogenclient.DetectedLabels {
+	labels := ogenclient.DetectedLabels{}
+	setDetectedLabelBooleans(values, &labels)
+	if value := values["gitOpsTool"]; value != "" {
+		labels.GitOpsTool.SetTo(ogenclient.DetectedLabelsGitOpsTool(value))
+	}
+	if value := values["serviceMesh"]; value != "" {
+		labels.ServiceMesh.SetTo(ogenclient.DetectedLabelsServiceMesh(value))
+	}
+	if value := values["storageBackend"]; value != "" {
+		labels.StorageBackend.SetTo(ogenclient.DetectedLabelsStorageBackend(value))
+	}
+	if value := values["failedDetections"]; value != "" {
+		for _, field := range strings.Split(value, ",") {
+			if field != "" {
+				labels.FailedDetections = append(labels.FailedDetections, ogenclient.DetectedLabelsFailedDetectionsItem(field))
+			}
+		}
+	}
+	return labels
+}
+
+func setDetectedLabelBooleans(values map[string]string, labels *ogenclient.DetectedLabels) {
+	const detectedLabelTrue = "true"
+	if values["gitOpsManaged"] == detectedLabelTrue {
+		labels.GitOpsManaged.SetTo(true)
+	}
+	if values["pdbProtected"] == detectedLabelTrue {
+		labels.PdbProtected.SetTo(true)
+	}
+	if values["hpaEnabled"] == detectedLabelTrue {
+		labels.HpaEnabled.SetTo(true)
+	}
+	if values["stateful"] == detectedLabelTrue {
+		labels.Stateful.SetTo(true)
+	}
+	if values["helmManaged"] == detectedLabelTrue {
+		labels.HelmManaged.SetTo(true)
+	}
+	if values["networkIsolated"] == detectedLabelTrue {
+		labels.NetworkIsolated.SetTo(true)
+	}
+	if values["resourceQuotaConstrained"] == detectedLabelTrue {
+		labels.ResourceQuotaConstrained.SetTo(true)
+	}
+	if values["virtualMachine"] == detectedLabelTrue {
+		labels.VirtualMachine.SetTo(true)
+	}
+	if values["liveMigratable"] == detectedLabelTrue {
+		labels.LiveMigratable.SetTo(true)
+	}
+	if values["cdiManaged"] == detectedLabelTrue {
+		labels.CdiManaged.SetTo(true)
+	}
+}
+
+func detectedLabelsFromEventData(d map[string]interface{}, key string) (ogenclient.DetectedLabels, bool) {
+	value, ok := d[key]
+	if !ok || value == nil {
+		return ogenclient.DetectedLabels{}, false
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ogenclient.DetectedLabels{}, false
+	}
+	var labels ogenclient.DetectedLabels
+	if err := json.Unmarshal(raw, &labels); err != nil {
+		return ogenclient.DetectedLabels{}, false
+	}
+	return labels, true
+}
+
+func detectedLabelsFromJSONText(raw string) (ogenclient.DetectedLabels, bool) {
+	if raw == "" {
+		return ogenclient.DetectedLabels{}, false
+	}
+	var labels ogenclient.DetectedLabels
+	if err := json.Unmarshal([]byte(raw), &labels); err != nil {
+		return ogenclient.DetectedLabels{}, false
+	}
+	return labels, true
+}
+
+const previewMaxLen = 500
+
+// maxReasoningPayloadLen bounds reasoning text stored in Data-Storage audit
+// payloads (BR-AI-086 AC6). Mirrors the investigator package's
+// maxReasoningAuditChars: a defense-in-depth cap applied again at this
+// consuming boundary regardless of whether the producer already truncated.
+const maxReasoningPayloadLen = 40000
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen])
+}
+
+// reasoningPayloadFields renders reasoning text/redacted into the OptString/
+// OptBool pair shared by LLMResponsePayload and
+// IncidentResponseDataRootCauseAnalysis, applying the audit size guard.
+func reasoningPayloadFields(text string, redacted bool) (ogenclient.OptString, ogenclient.OptBool) {
+	var t ogenclient.OptString
+	t.SetTo(truncate(text, maxReasoningPayloadLen))
+	var r ogenclient.OptBool
+	r.SetTo(redacted)
+	return t, r
+}
+
+func toJxRaw(s string) jx.Raw {
+	if s != "null" && json.Valid([]byte(s)) {
+		return jx.Raw(s)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return jx.Raw(`""`)
+	}
+	return jx.Raw(b)
+}
+
+func toJxRawMap(s string) ogenclient.LLMToolCallPayloadToolArguments {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return nil
+	}
+	result := make(ogenclient.LLMToolCallPayloadToolArguments, len(raw))
+	for k, v := range raw {
+		result[k] = jx.Raw(v)
+	}
+	return result
+}
+
+type investigationResultJSON struct {
+	RCASummary                  string                          `json:"rca_summary"`
+	Severity                    string                          `json:"severity"`
+	ContributingFactors         []string                        `json:"contributing_factors"`
+	WorkflowID                  string                          `json:"workflow_id"`
+	WorkflowName                string                          `json:"workflow_name"`
+	WorkflowSelectionConfidence *float64                        `json:"workflow_selection_confidence"`
+	RepeatJustification         *ogenclient.RepeatJustification `json:"repeat_justification"`
+	RepeatJustificationRequired *bool                           `json:"repeat_justification_required"`
+	PriorWorkflowMatch          *bool                           `json:"prior_workflow_match"`
+	RepeatValidationOutcome     string                          `json:"repeat_validation_outcome"`
+	HandoffDigest               string                          `json:"handoff_digest"`
+	PriorRemediationUIDs        []string                        `json:"prior_remediation_uids"`
+	SelectionAssessment         *ogenclient.SelectionAssessment `json:"selection_assessment"`
+	ExecutionBundle             string                          `json:"execution_bundle"`
+	Confidence                  float64                         `json:"confidence"`
+	NeedsHumanReview            bool                            `json:"needs_human_review"`
+	HumanReviewReason           string                          `json:"human_review_reason"`
+	TerminalOutcome             string                          `json:"terminal_outcome"`
+	WorkflowDiscoveryStatus     string                          `json:"workflow_discovery_status"`
+	Warnings                    []string                        `json:"warnings"`
+	Parameters                  map[string]interface{}          `json:"parameters"`
+	AlternativeWorkflows        []altWorkflowJSON               `json:"alternative_workflows"`
+	RemediationTarget           *remediationTargetJSON          `json:"remediation_target"`
+	CausalChain                 []string                        `json:"causal_chain"`
+	CausalMechanismStatus       string                          `json:"causal_mechanism_status"`
+	DueDiligence                *dueDiligenceJSON               `json:"due_diligence"`
+	Reasoning                   *reasoningJSON                  `json:"reasoning"`
+	// IsActionable is a pointer so json.Unmarshal leaves it nil when the key
+	// is absent (pre-#1923 audit JSON blobs), distinguishing "never
+	// determined" from an explicit false (Issue #1923 Gap 1).
+	IsActionable *bool `json:"is_actionable"`
+}
+
+// reasoningJSON mirrors katypes.ReasoningSummary (BR-AI-086 AC6): visible
+// text + a redacted flag only, never an opaque replay signature.
+type reasoningJSON struct {
+	Text     string `json:"text"`
+	Redacted bool   `json:"redacted"`
+}
+
+type dueDiligenceJSON struct {
+	CausalCompleteness    string `json:"causal_completeness"`
+	TargetAccuracy        string `json:"target_accuracy"`
+	EvidenceSufficiency   string `json:"evidence_sufficiency"`
+	AlternativeHypotheses string `json:"alternative_hypotheses"`
+	ScopeCompleteness     string `json:"scope_completeness"`
+	Proportionality       string `json:"proportionality"`
+	RegressionAwareness   string `json:"regression_awareness"`
+	ConfidenceCalibration string `json:"confidence_calibration"`
+}
+
+type altWorkflowJSON struct {
+	WorkflowID      string  `json:"workflow_id"`
+	Rationale       string  `json:"rationale"`
+	ExecutionBundle string  `json:"execution_bundle"`
+	Confidence      float64 `json:"confidence"`
+}
+
+type remediationTargetJSON struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+func toIncidentResponseData(responseDataJSON string, incidentID string) ogenclient.IncidentResponseData {
+	var ir investigationResultJSON
+	if err := json.Unmarshal([]byte(responseDataJSON), &ir); err != nil {
+		return ogenclient.IncidentResponseData{
+			IncidentId: incidentID,
+			Timestamp:  time.Now().UTC(),
+		}
+	}
+
+	data := ogenclient.IncidentResponseData{
+		IncidentId: incidentID,
+		Analysis:   ir.RCASummary,
+		Confidence: float32(ir.Confidence),
+		Timestamp:  time.Now().UTC(),
+		RootCauseAnalysis: ogenclient.IncidentResponseDataRootCauseAnalysis{
+			Summary:             ir.RCASummary,
+			Severity:            mapSeverity(ir.Severity),
+			ContributingFactors: ir.ContributingFactors,
+		},
+	}
+
+	if ir.RemediationTarget != nil {
+		data.RootCauseAnalysis.RemediationTarget.SetTo(toRemediationTargetResponse(ir.RemediationTarget))
+	}
+
+	if len(ir.CausalChain) > 0 {
+		data.RootCauseAnalysis.CausalChain = ir.CausalChain
+	}
+	if status, ok := causalMechanismStatusResponse(ir.CausalMechanismStatus); ok {
+		data.RootCauseAnalysis.CausalMechanismStatus.SetTo(status)
+	}
+	if ir.DueDiligence != nil {
+		data.RootCauseAnalysis.DueDiligence.SetTo(toDueDiligenceResponse(ir.DueDiligence))
+	}
+	if ir.Reasoning != nil {
+		data.RootCauseAnalysis.Reasoning, data.RootCauseAnalysis.ReasoningRedacted = reasoningPayloadFields(
+			ir.Reasoning.Text, ir.Reasoning.Redacted)
+	}
+
+	if ir.WorkflowID != "" {
+		data.SelectedWorkflow.SetTo(toSelectedWorkflowResponse(ir))
+	} else if ir.SelectionAssessment != nil {
+		data.SelectionAssessment.SetTo(*ir.SelectionAssessment)
+	}
+
+	applyIncidentResponseOptionalFields(&data, ir)
+	return data
+}
+
+func applyIncidentResponseOptionalFields(data *ogenclient.IncidentResponseData, ir investigationResultJSON) {
+	if ir.NeedsHumanReview {
+		data.NeedsHumanReview.SetTo(true)
+	}
+	if outcome, ok := validTerminalOutcome(ir.TerminalOutcome); ok {
+		data.TerminalOutcome.SetTo(outcome)
+	}
+	if discoveryStatus, ok := validWorkflowDiscoveryStatus(ir.WorkflowDiscoveryStatus); ok {
+		data.WorkflowDiscoveryStatus.SetTo(discoveryStatus)
+	}
+	if ir.HumanReviewReason != "" {
+		if reason, ok := validHumanReviewReason(ir.HumanReviewReason); ok {
+			data.HumanReviewReason.SetTo(reason)
+		}
+	}
+	if len(ir.Warnings) > 0 {
+		data.Warnings = ir.Warnings
+	} else {
+		data.Warnings = []string{}
+	}
+
+	if len(ir.AlternativeWorkflows) > 0 {
+		data.AlternativeWorkflows = toAlternativeWorkflowsResponse(ir.AlternativeWorkflows)
+	}
+
+	if ir.IsActionable != nil {
+		data.IsActionable.SetTo(*ir.IsActionable)
+	}
+}
+
+func validTerminalOutcome(value string) (ogenclient.IncidentResponseDataTerminalOutcome, bool) {
+	outcome := ogenclient.IncidentResponseDataTerminalOutcome(value)
+	switch outcome {
+	case ogenclient.IncidentResponseDataTerminalOutcomeWorkflowSelected,
+		ogenclient.IncidentResponseDataTerminalOutcomeProblemResolved,
+		ogenclient.IncidentResponseDataTerminalOutcomeEvidenceTransportUnavailable,
+		ogenclient.IncidentResponseDataTerminalOutcomeHistoryEnrichmentUnavailable,
+		ogenclient.IncidentResponseDataTerminalOutcomeRcaIncomplete,
+		ogenclient.IncidentResponseDataTerminalOutcomeNoMatchingWorkflows,
+		ogenclient.IncidentResponseDataTerminalOutcomeWorkflowDiscoveryFailed,
+		ogenclient.IncidentResponseDataTerminalOutcomeCancelled:
+		return outcome, true
+	default:
+		return "", false
+	}
+}
+
+func validWorkflowDiscoveryStatus(value string) (ogenclient.IncidentResponseDataWorkflowDiscoveryStatus, bool) {
+	status := ogenclient.IncidentResponseDataWorkflowDiscoveryStatus(value)
+	switch status {
+	case ogenclient.IncidentResponseDataWorkflowDiscoveryStatusNotStarted,
+		ogenclient.IncidentResponseDataWorkflowDiscoveryStatusStarted,
+		ogenclient.IncidentResponseDataWorkflowDiscoveryStatusCompletedSelected,
+		ogenclient.IncidentResponseDataWorkflowDiscoveryStatusCompletedNoMatch,
+		ogenclient.IncidentResponseDataWorkflowDiscoveryStatusFailed,
+		ogenclient.IncidentResponseDataWorkflowDiscoveryStatusSkippedDueToFailure:
+		return status, true
+	default:
+		return "", false
+	}
+}
+
+// toRemediationTargetResponse maps the audit-record RemediationTarget into
+// the ogen wire format, omitting any field that was never populated.
+func toRemediationTargetResponse(rt *remediationTargetJSON) ogenclient.IncidentResponseDataRootCauseAnalysisRemediationTarget {
+	var out ogenclient.IncidentResponseDataRootCauseAnalysisRemediationTarget
+	if rt.Kind != "" {
+		out.Kind.SetTo(rt.Kind)
+	}
+	if rt.Name != "" {
+		out.Name.SetTo(rt.Name)
+	}
+	if rt.Namespace != "" {
+		out.Namespace.SetTo(rt.Namespace)
+	}
+	return out
+}
+
+// toDueDiligenceResponse maps the audit-record DueDiligence review into the
+// ogen wire format, omitting any field that was never populated.
+func causalMechanismStatusResponse(value string) (ogenclient.IncidentResponseDataRootCauseAnalysisCausalMechanismStatus, bool) {
+	status := ogenclient.IncidentResponseDataRootCauseAnalysisCausalMechanismStatus(value)
+	switch status {
+	case ogenclient.IncidentResponseDataRootCauseAnalysisCausalMechanismStatusVerified,
+		ogenclient.IncidentResponseDataRootCauseAnalysisCausalMechanismStatusProbable,
+		ogenclient.IncidentResponseDataRootCauseAnalysisCausalMechanismStatusUnknown:
+		return status, true
+	default:
+		return "", false
+	}
+}
+
+func toDueDiligenceResponse(dd *dueDiligenceJSON) ogenclient.IncidentResponseDataRootCauseAnalysisDueDiligence {
+	out := ogenclient.IncidentResponseDataRootCauseAnalysisDueDiligence{}
+	if dd.CausalCompleteness != "" {
+		out.CausalCompleteness.SetTo(dd.CausalCompleteness)
+	}
+	if dd.TargetAccuracy != "" {
+		out.TargetAccuracy.SetTo(dd.TargetAccuracy)
+	}
+	if dd.EvidenceSufficiency != "" {
+		out.EvidenceSufficiency.SetTo(dd.EvidenceSufficiency)
+	}
+	if dd.AlternativeHypotheses != "" {
+		out.AlternativeHypotheses.SetTo(dd.AlternativeHypotheses)
+	}
+	if dd.ScopeCompleteness != "" {
+		out.ScopeCompleteness.SetTo(dd.ScopeCompleteness)
+	}
+	if dd.Proportionality != "" {
+		out.Proportionality.SetTo(dd.Proportionality)
+	}
+	if dd.RegressionAwareness != "" {
+		out.RegressionAwareness.SetTo(dd.RegressionAwareness)
+	}
+	if dd.ConfidenceCalibration != "" {
+		out.ConfidenceCalibration.SetTo(dd.ConfidenceCalibration)
+	}
+	return out
+}
+
+// toSelectedWorkflowResponse maps the selected-workflow fields of ir into the
+// ogen wire format. Callers must check ir.WorkflowID != "".
+func toSelectedWorkflowResponse(ir investigationResultJSON) ogenclient.IncidentResponseDataSelectedWorkflow {
+	sw := ogenclient.IncidentResponseDataSelectedWorkflow{}
+	sw.WorkflowId.SetTo(ir.WorkflowID)
+	if ir.WorkflowName != "" {
+		sw.WorkflowName.SetTo(ir.WorkflowName)
+	}
+	if ir.WorkflowSelectionConfidence != nil {
+		sw.WorkflowSelectionConfidence.SetTo(*ir.WorkflowSelectionConfidence)
+	}
+	if ir.RepeatJustification != nil {
+		sw.RepeatJustification.SetTo(*ir.RepeatJustification)
+	}
+	if ir.RepeatJustificationRequired != nil {
+		sw.RepeatJustificationRequired.SetTo(*ir.RepeatJustificationRequired)
+	}
+	if ir.PriorWorkflowMatch != nil {
+		sw.PriorWorkflowMatch.SetTo(*ir.PriorWorkflowMatch)
+	}
+	if ir.RepeatValidationOutcome != "" {
+		sw.RepeatValidationOutcome.SetTo(ogenclient.IncidentResponseDataSelectedWorkflowRepeatValidationOutcome(ir.RepeatValidationOutcome))
+	}
+	if ir.HandoffDigest != "" {
+		sw.HandoffDigest.SetTo(ir.HandoffDigest)
+	}
+	sw.PriorRemediationUids = append([]string(nil), ir.PriorRemediationUIDs...)
+	if ir.ExecutionBundle != "" {
+		sw.ExecutionBundle.SetTo(ir.ExecutionBundle)
+	}
+	sw.Confidence.SetTo(float32(ir.Confidence))
+	if len(ir.Parameters) > 0 {
+		params := make(ogenclient.IncidentResponseDataSelectedWorkflowParameters, len(ir.Parameters))
+		for k, v := range ir.Parameters {
+			b, err := json.Marshal(v)
+			if err != nil {
+				continue
+			}
+			params[k] = jx.Raw(b)
+		}
+		sw.Parameters.SetTo(params)
+	}
+	return sw
+}
+
+// toAlternativeWorkflowsResponse maps the audit-record AlternativeWorkflows
+// list into the ogen wire format.
+func toAlternativeWorkflowsResponse(alts []altWorkflowJSON) []ogenclient.IncidentResponseDataAlternativeWorkflowsItem {
+	out := make([]ogenclient.IncidentResponseDataAlternativeWorkflowsItem, 0, len(alts))
+	for _, alt := range alts {
+		item := ogenclient.IncidentResponseDataAlternativeWorkflowsItem{}
+		if alt.WorkflowID != "" {
+			item.WorkflowId.SetTo(alt.WorkflowID)
+		}
+		if alt.Rationale != "" {
+			item.Rationale.SetTo(alt.Rationale)
+		}
+		if alt.ExecutionBundle != "" {
+			item.ExecutionBundle.SetTo(alt.ExecutionBundle)
+		}
+		if alt.Confidence > 0 {
+			item.Confidence.SetTo(float32(alt.Confidence))
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func mapSeverity(s string) ogenclient.IncidentResponseDataRootCauseAnalysisSeverity {
+	switch s {
+	case "critical":
+		return ogenclient.IncidentResponseDataRootCauseAnalysisSeverityCritical
+	case "high":
+		return ogenclient.IncidentResponseDataRootCauseAnalysisSeverityHigh
+	case "warning":
+		return ogenclient.IncidentResponseDataRootCauseAnalysisSeverityWarning
+	case "info":
+		return ogenclient.IncidentResponseDataRootCauseAnalysisSeverityInfo
+	default:
+		return ogenclient.IncidentResponseDataRootCauseAnalysisSeverityUnknown
+	}
+}
+
+var validHumanReviewReasons = map[string]ogenclient.IncidentResponseDataHumanReviewReason{
+	"workflow_not_found":          ogenclient.IncidentResponseDataHumanReviewReasonWorkflowNotFound,
+	"image_mismatch":              ogenclient.IncidentResponseDataHumanReviewReasonImageMismatch,
+	"parameter_validation_failed": ogenclient.IncidentResponseDataHumanReviewReasonParameterValidationFailed,
+	"no_matching_workflows":       ogenclient.IncidentResponseDataHumanReviewReasonNoMatchingWorkflows,
+	"low_confidence":              ogenclient.IncidentResponseDataHumanReviewReasonLowConfidence,
+	"llm_parsing_error":           ogenclient.IncidentResponseDataHumanReviewReasonLlmParsingError,
+	"investigation_inconclusive":  ogenclient.IncidentResponseDataHumanReviewReasonInvestigationInconclusive,
+	"rca_incomplete":              ogenclient.IncidentResponseDataHumanReviewReasonRcaIncomplete,
+	"alignment_check_failed":      ogenclient.IncidentResponseDataHumanReviewReasonAlignmentCheckFailed,
+	// #2019/#2020: preserved decision-expired outcome must not be silently
+	// dropped by ogen client-side OpenAPI validation.
+	"decision_expired": ogenclient.IncidentResponseDataHumanReviewReasonDecisionExpired,
+}
+
+// validHumanReviewReason returns the ogen enum value if the string is a recognised
+// HumanReviewReason. Free-text values from the LLM are rejected so that the
+// ogen client-side OpenAPI validation does not drop the entire audit event.
+func validHumanReviewReason(s string) (ogenclient.IncidentResponseDataHumanReviewReason, bool) {
+	v, ok := validHumanReviewReasons[s]
+	return v, ok
+}
+
+var _ AuditStore = (*DSAuditStore)(nil)

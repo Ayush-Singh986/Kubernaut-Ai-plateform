@@ -1,0 +1,14 @@
+# Malformed YAML file for testing error handling
+
+server:
+  listenAddr: ":8080"
+  readTimeout: "30s"
+  # Missing closing quote
+  writeTimeout: "30s
+  idleTimeout: "120s"
+
+# Invalid indentation
+middleware:
+  # Concurrency limiting via chi Throttle in server.maxConcurrentRequests (ADR-048-ADDENDUM-001)
+
+

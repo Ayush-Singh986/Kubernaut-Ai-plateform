@@ -1,0 +1,216 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package investigator
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+)
+
+// AnomalyConfig holds configurable thresholds for the anomaly detector (I7).
+type AnomalyConfig struct {
+	MaxToolCallsPerTool int      `yaml:"maxToolCallsPerTool"`
+	MaxTotalToolCalls   int      `yaml:"maxTotalToolCalls"`
+	MaxRepeatedFailures int      `yaml:"maxRepeatedFailures"`
+	ExemptPrefixes      []string `yaml:"exemptPrefixes"`
+}
+
+// DefaultAnomalyConfig returns production defaults per DD-KA-019-003.
+// MaxToolCallsPerTool raised from 5 to 10 per #860 to accommodate
+// workflow discovery pagination (DD-WORKFLOW-016).
+// ExemptPrefixes includes "todo_" per #770: internal planning tools should
+// not consume the investigation tool budget.
+func DefaultAnomalyConfig() AnomalyConfig {
+	return AnomalyConfig{
+		MaxToolCallsPerTool: 10,
+		MaxTotalToolCalls:   30,
+		MaxRepeatedFailures: 3,
+		ExemptPrefixes:      []string{"todo_"},
+	}
+}
+
+// AnomalyResult indicates the outcome of an anomaly check.
+type AnomalyResult struct {
+	Allowed bool
+	Reason  string
+}
+
+// AnomalyDetector tracks tool call patterns and aborts on anomalous behavior (I7).
+// All public methods are safe for concurrent use (#970).
+type AnomalyDetector struct {
+	mu                 sync.Mutex
+	config             AnomalyConfig
+	suspiciousPatterns []*regexp.Regexp
+	toolCallCounts     map[string]int
+	totalCallCount     int
+	failureTracker     map[string]int
+}
+
+// NewAnomalyDetector creates an I7 anomaly detector with the given config.
+func NewAnomalyDetector(config AnomalyConfig, suspiciousPatterns []*regexp.Regexp) *AnomalyDetector {
+	return &AnomalyDetector{
+		config:             config,
+		suspiciousPatterns: suspiciousPatterns,
+		toolCallCounts:     make(map[string]int),
+		failureTracker:     make(map[string]int),
+	}
+}
+
+// CheckToolCall validates a tool call against anomaly thresholds.
+// Returns Allowed=false if the call should be rejected.
+// Tools matching ExemptPrefixes are checked for suspicious arguments but
+// do not count against total or per-tool budgets (#770).
+// Pagination calls (cursor-bearing calls to list_workflows / list_available_actions)
+// count toward MaxTotalToolCalls but are exempt from per-tool counting (#860).
+func (d *AnomalyDetector) CheckToolCall(name string, args json.RawMessage) AnomalyResult {
+	if r := d.checkSuspiciousArgs(name, args); !r.Allowed {
+		return r
+	}
+
+	if d.isExempt(name) {
+		return AnomalyResult{Allowed: true}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.totalCallCount++
+	if d.totalCallCount > d.config.MaxTotalToolCalls {
+		return AnomalyResult{
+			Allowed: false,
+			Reason:  fmt.Sprintf("total tool call limit exceeded (%d > %d)", d.totalCallCount, d.config.MaxTotalToolCalls),
+		}
+	}
+
+	if isPaginationCall(name, args) {
+		return AnomalyResult{Allowed: true}
+	}
+
+	d.toolCallCounts[name]++
+	if d.toolCallCounts[name] > d.config.MaxToolCallsPerTool {
+		return AnomalyResult{
+			Allowed: false,
+			Reason:  fmt.Sprintf("per-tool call limit exceeded for %s (%d > %d)", name, d.toolCallCounts[name], d.config.MaxToolCallsPerTool),
+		}
+	}
+
+	return AnomalyResult{Allowed: true}
+}
+
+// isPaginationCall returns true when the call is a cursor-based pagination
+// continuation for a known paginated tool. Only list_workflows and
+// list_available_actions qualify (DD-WORKFLOW-016). Returns false (fail-closed)
+// on malformed input, missing cursor, or unrecognized tool names.
+func isPaginationCall(name string, args json.RawMessage) bool {
+	if name != "list_workflows" && name != "list_available_actions" {
+		return false
+	}
+	if len(args) == 0 {
+		return false
+	}
+	var parsed struct {
+		Cursor string `json:"cursor"`
+	}
+	if err := json.Unmarshal(args, &parsed); err != nil {
+		return false
+	}
+	return parsed.Cursor != ""
+}
+
+// isExempt returns true if the tool name matches any configured exempt prefix.
+func (d *AnomalyDetector) isExempt(name string) bool {
+	for _, prefix := range d.config.ExemptPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordFailure records a tool execution failure for repeated-failure detection.
+// The key is tool name + args hash, so different arguments are tracked independently.
+func (d *AnomalyDetector) RecordFailure(name string, args json.RawMessage) AnomalyResult {
+	key := failureKey(name, args)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.failureTracker[key]++
+	if d.failureTracker[key] >= d.config.MaxRepeatedFailures {
+		return AnomalyResult{
+			Allowed: false,
+			Reason:  fmt.Sprintf("repeated identical failure for %s (%d >= %d)", name, d.failureTracker[key], d.config.MaxRepeatedFailures),
+		}
+	}
+	return AnomalyResult{Allowed: true}
+}
+
+// TotalExceeded returns true when the total tool call count has exceeded the configured limit.
+// Used by runLLMLoop to abort early.
+func (d *AnomalyDetector) TotalExceeded() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.totalCallCount > d.config.MaxTotalToolCalls
+}
+
+// Reset clears all accumulated counters (total calls, per-tool calls, failure
+// tracker) while preserving config thresholds and suspicious patterns. Called
+// at the start of each Investigate() session (#770) and between phases (RCA →
+// workflow selection) per DD-KA-019-003.
+func (d *AnomalyDetector) Reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.totalCallCount = 0
+	d.toolCallCounts = make(map[string]int)
+	d.failureTracker = make(map[string]int)
+}
+
+// Clone returns a new AnomalyDetector with the same config and suspicious
+// patterns but freshly zeroed counters. Used to give each concurrent
+// investigation its own isolated budget instance (#1892) instead of sharing
+// a single pod-wide detector, whose Reset()/counter mutations would
+// otherwise silently corrupt other in-flight investigations.
+func (d *AnomalyDetector) Clone() *AnomalyDetector {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return NewAnomalyDetector(d.config, d.suspiciousPatterns)
+}
+
+func (d *AnomalyDetector) checkSuspiciousArgs(name string, args json.RawMessage) AnomalyResult {
+	if len(d.suspiciousPatterns) == 0 || len(args) == 0 {
+		return AnomalyResult{Allowed: true}
+	}
+	argsStr := string(args)
+	for _, p := range d.suspiciousPatterns {
+		if p.MatchString(argsStr) {
+			return AnomalyResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("suspicious argument pattern in %s: %s", name, p.String()),
+			}
+		}
+	}
+	return AnomalyResult{Allowed: true}
+}
+
+func failureKey(name string, args json.RawMessage) string {
+	h := sha256.Sum256(args)
+	return fmt.Sprintf("%s:%x", name, h[:8])
+}

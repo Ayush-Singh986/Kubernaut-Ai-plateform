@@ -1,0 +1,379 @@
+// Package ka provides clients for communicating with the Kubernaut Agent (KA).
+package ka
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/go-logr/logr"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	gobreaker "github.com/sony/gobreaker/v2"
+)
+
+// ErrMCPUnavailable indicates the KA MCP endpoint is unreachable.
+var ErrMCPUnavailable = errors.New("KA MCP endpoint unavailable")
+
+// Config holds the configuration for KA REST and MCP clients.
+type Config struct {
+	// BaseURL is the KA REST API base URL.
+	BaseURL string
+	// MCPEndpoint is the KA MCP endpoint URL.
+	MCPEndpoint string
+	// Timeout for HTTP requests to KA.
+	Timeout time.Duration
+	// BaseTransport is the underlying transport used for outbound requests.
+	// When nil, http.DefaultTransport is used. Inject a TLS-configured
+	// transport here for mTLS/CA-verified connections.
+	BaseTransport http.RoundTripper
+	// CBMaxRequests is the circuit breaker max requests in half-open state.
+	CBMaxRequests uint32
+	// CBInterval is the circuit breaker interval.
+	CBInterval time.Duration
+	// CBTimeout is the circuit breaker timeout.
+	CBTimeout time.Duration
+	// CBFailureThreshold is the number of failures before circuit opens.
+	CBFailureThreshold uint32
+	// RetryMax is the maximum number of retries (0 = no retries, only the initial attempt).
+	RetryMax int
+	// RetryInitBackoff is the initial backoff duration for retries.
+	RetryInitBackoff time.Duration
+	// RetryMaxBackoff is the max backoff duration.
+	RetryMaxBackoff time.Duration
+	// RetryableStatuses are HTTP status codes that trigger a retry.
+	RetryableStatuses []int
+	// CBAuditFunc is called on circuit breaker state transitions for SOC2 AU-2 compliance.
+	CBAuditFunc func(dependency string, from, to gobreaker.State)
+}
+
+// AnalyzeRequest is the AF-facing input for starting an investigation.
+// The Analyze method maps these fields to the full KA IncidentRequest schema.
+type AnalyzeRequest struct {
+	Namespace string `json:"namespace,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+// SessionStatus is the response from GET /api/v1/incident/session/{id}.
+// KA v1.5 may return status as either a string or a number; the custom
+// UnmarshalJSON handles both representations transparently.
+type SessionStatus struct {
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// UnmarshalJSON accepts SessionStatus payloads where "status" is either a JSON string or number.
+func (s *SessionStatus) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		SessionID string          `json:"session_id"`
+		Status    json.RawMessage `json:"status"`
+		Error     string          `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.SessionID = raw.SessionID
+	s.Error = raw.Error
+
+	if len(raw.Status) == 0 {
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(raw.Status, &str); err == nil {
+		s.Status = str
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(raw.Status, &num); err == nil {
+		s.Status = num.String()
+		return nil
+	}
+	return fmt.Errorf("SessionStatus.status: expected string or number, got %s", string(raw.Status))
+}
+
+// IncidentResponse is the response from GET /api/v1/incident/session/{id}/result.
+type IncidentResponse struct {
+	SessionID string `json:"session_id"`
+	Summary   string `json:"summary"`
+}
+
+// DiscoverWorkflowsArgs is the input for the kubernaut_discover_workflows MCP tool call.
+type DiscoverWorkflowsArgs struct {
+	RRID       string `json:"rr_id"`
+	WorkflowID string `json:"workflow_id,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+}
+
+// WorkflowParameterSchema describes a single parameter from a KA discovery response.
+type WorkflowParameterSchema struct {
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Default     any      `json:"default,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+}
+
+// DiscoveredWorkflow represents a workflow returned by KA's discover_workflows.
+type DiscoveredWorkflow struct {
+	WorkflowID  string                    `json:"workflow_id"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description"`
+	Kind        string                    `json:"kind,omitempty"`
+	Confidence  float64                   `json:"confidence,omitempty"`
+	Parameters  []WorkflowParameterSchema `json:"parameters"`
+}
+
+// DiscoveryTarget identifies a Kubernetes resource involved in workflow discovery (#1437).
+type DiscoveryTarget struct {
+	APIVersion string `json:"api_version,omitempty"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+}
+
+// DiscoverWorkflowsResult is the response from kubernaut_discover_workflows MCP call.
+type DiscoverWorkflowsResult struct {
+	katypes.LiveSelectionContext
+	Workflows      []DiscoveredWorkflow `json:"workflows"`
+	SearchedTarget *DiscoveryTarget     `json:"searched_target,omitempty"`
+	SignalTarget   *DiscoveryTarget     `json:"signal_target,omitempty"`
+}
+
+// investigateEnvelope matches the top-level fields of KA's InvestigateOutput.
+type investigateEnvelope struct {
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	Response  string `json:"response"`
+}
+
+// kaDiscoveryTarget matches KA's DiscoveryTargetInfo JSON fields.
+type kaDiscoveryTarget struct {
+	APIVersion string `json:"api_version,omitempty"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+}
+
+// kaWorkflowDiscoveryPayload matches the JSON inside the Response string
+// of KA's InvestigateOutput when action=discover_workflows.
+type kaWorkflowDiscoveryPayload struct {
+	katypes.LiveSelectionContext
+	Recommended    *kaDiscoveredWorkflow  `json:"recommended,omitempty"`
+	Alternatives   []kaDiscoveredWorkflow `json:"alternatives,omitempty"`
+	SearchedTarget *kaDiscoveryTarget     `json:"searched_target,omitempty"`
+	SignalTarget   *kaDiscoveryTarget     `json:"signal_target,omitempty"`
+}
+
+// kaDiscoveredWorkflow matches KA's internal DiscoveredWorkflow JSON fields.
+type kaDiscoveredWorkflow struct {
+	WorkflowID      string                 `json:"workflow_id"`
+	Name            string                 `json:"name,omitempty"`
+	ExecutionBundle string                 `json:"execution_bundle,omitempty"`
+	Confidence      float64                `json:"confidence"`
+	Rationale       string                 `json:"rationale"`
+	Parameters      map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// ParseDiscoverWorkflowsResponse handles both the direct AF format
+// ({"workflows": [...]}) and KA's InvestigateOutput envelope format
+// ({"session_id":..., "status":..., "response": "{recommended:..., alternatives:...}"}).
+func ParseDiscoverWorkflowsResponse(raw json.RawMessage) (*DiscoverWorkflowsResult, error) {
+	var directShape map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &directShape); err != nil {
+		return nil, fmt.Errorf("parse discover_workflows response: %w", err)
+	}
+	if _, ok := directShape["workflows"]; ok {
+		var direct DiscoverWorkflowsResult
+		if err := json.Unmarshal(raw, &direct); err != nil {
+			return nil, fmt.Errorf("parse direct discover_workflows response: %w", err)
+		}
+		direct.LiveSelectionContext = direct.SafeCopy()
+		return &direct, nil
+	}
+
+	var envelope investigateEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("parse discover_workflows response: %w", err)
+	}
+
+	if envelope.Response == "" {
+		return &DiscoverWorkflowsResult{}, nil
+	}
+
+	var payload kaWorkflowDiscoveryPayload
+	if err := json.Unmarshal([]byte(envelope.Response), &payload); err != nil {
+		return nil, fmt.Errorf("parse workflow discovery payload: %w", err)
+	}
+
+	var workflows []DiscoveredWorkflow
+	if payload.Recommended != nil {
+		workflows = append(workflows, mapKAWorkflow(*payload.Recommended))
+	}
+	for _, alt := range payload.Alternatives {
+		workflows = append(workflows, mapKAWorkflow(alt))
+	}
+
+	result := &DiscoverWorkflowsResult{Workflows: workflows, LiveSelectionContext: payload.SafeCopy()}
+	if payload.SearchedTarget != nil {
+		result.SearchedTarget = &DiscoveryTarget{
+			APIVersion: payload.SearchedTarget.APIVersion,
+			Kind:       payload.SearchedTarget.Kind,
+			Name:       payload.SearchedTarget.Name,
+			Namespace:  payload.SearchedTarget.Namespace,
+		}
+	}
+	if payload.SignalTarget != nil {
+		result.SignalTarget = &DiscoveryTarget{
+			APIVersion: payload.SignalTarget.APIVersion,
+			Kind:       payload.SignalTarget.Kind,
+			Name:       payload.SignalTarget.Name,
+			Namespace:  payload.SignalTarget.Namespace,
+		}
+	}
+	return result, nil
+}
+
+func mapKAWorkflow(raw kaDiscoveredWorkflow) DiscoveredWorkflow {
+	return DiscoveredWorkflow{
+		WorkflowID:  raw.WorkflowID,
+		Name:        raw.Name,
+		Description: raw.Rationale,
+		Confidence:  raw.Confidence,
+	}
+}
+
+// SelectWorkflowArgs is the input for the kubernaut_select_workflow MCP tool call.
+type SelectWorkflowArgs struct {
+	RRID       string         `json:"rr_id"`
+	WorkflowID string         `json:"workflow_id"`
+	Kind       string         `json:"kind,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Namespace  string         `json:"namespace,omitempty"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
+// SelectWorkflowResult is the response from kubernaut_select_workflow MCP call.
+type SelectWorkflowResult struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// InvestigateArgs is the input for the kubernaut_investigate MCP tool call.
+type InvestigateArgs struct {
+	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+}
+
+// InvestigateResult is the response from kubernaut_investigate MCP call.
+type InvestigateResult struct {
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary,omitempty"`
+}
+
+// InvestigationEvent represents a discrete event from KA's MCP LoggingMessage stream.
+// Wire-format compatible with internal/kubernautagent/session.InvestigationEvent.
+type InvestigationEvent struct {
+	Type  string          `json:"type"`
+	Turn  int             `json:"turn"`
+	Phase string          `json:"phase,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// ParseLoggingEvent attempts to unmarshal raw JSON into an InvestigationEvent.
+// Returns the event and true on success. For non-structured messages (e.g.
+// plain-text KA logs on pooled sessions), logs at V(2) and returns false.
+// AU-6: Non-structured messages are expected after session pooling and must
+// not emit Error-level noise that degrades audit log signal-to-noise ratio.
+func ParseLoggingEvent(logger logr.Logger, raw json.RawMessage) (InvestigationEvent, bool) {
+	var evt InvestigationEvent
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		logger.V(2).Info("non-structured logging message (expected after session pooling)",
+			"parse_error", err.Error())
+		return InvestigationEvent{}, false
+	}
+	return evt, true
+}
+
+// StartInvestigationArgs is the input for starting a dedicated MCP investigation session.
+type StartInvestigationArgs struct {
+	RRID      string `json:"rr_id"`
+	SessionID string `json:"session_id,omitempty"` // #1452: KA session ID from AIA CRD, enables direct session lookup
+}
+
+// StartInvestigationResult holds the response from a dedicated MCP investigation
+// session, including the event channel for streaming and a closer for cleanup.
+type StartInvestigationResult struct {
+	// SessionID is KA's MCP driver-lease ID: it grants exclusive control of the
+	// interactive session but is NOT pollable via the KA REST session-status API.
+	SessionID string `json:"session_id"`
+	// InvestigationSessionID is the underlying investigation-analysis session ID
+	// where RCA/workflow results are stored; it IS pollable via REST. KA's
+	// kubernaut_investigate "start" action returns both IDs (#2029). Callers that
+	// correlate a session for later polling (e.g. IS.Status.KACorrelationID) MUST
+	// use this field, falling back to SessionID only when KA omits it.
+	InvestigationSessionID string                    `json:"investigation_session_id,omitempty"`
+	Status                 string                    `json:"status"`
+	Events                 <-chan InvestigationEvent `json:"-"`
+	Closer                 func()                    `json:"-"`
+	// Session is the underlying MCP session. Exposed so the blocking A2A
+	// path can hand it off to the KASessionPool after the investigation
+	// completes, letting discover_workflows / select_workflow reuse the
+	// same connection and driver lease.
+	Session PoolSession `json:"-"`
+}
+
+// InvokeActionArgs is the input for the generic kubernaut_investigate action dispatch.
+// The acting_user and acting_user_groups are extracted from context by the
+// implementation and added to the MCP args map automatically.
+type InvokeActionArgs struct {
+	RRID    string `json:"rr_id"`
+	Action  string `json:"action"`
+	Message string `json:"message,omitempty"`
+}
+
+// InvokeActionResult is the response from a generic kubernaut_investigate action.
+type InvokeActionResult struct {
+	SessionID string          `json:"session_id,omitempty"`
+	Status    string          `json:"status"`
+	Response  string          `json:"response,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+}
+
+// CompleteNoActionArgs is the input for the kubernaut_complete_no_action tool proxy.
+type CompleteNoActionArgs struct {
+	RRID             string `json:"rr_id"`
+	Reason           string `json:"reason,omitempty"`
+	EscalationReason string `json:"escalation_reason,omitempty"`
+}
+
+// CompleteNoActionResult is the response from kubernaut_complete_no_action.
+type CompleteNoActionResult struct {
+	Status           string `json:"status"`
+	Reason           string `json:"reason,omitempty"`
+	EscalationReason string `json:"escalation_reason,omitempty"`
+}
+
+// SSE event type constants matching KA's wire format.
+const (
+	EventTypeReasoningDelta   = "reasoning_delta"
+	EventTypeTokenDelta       = "token_delta"
+	EventTypeToolCallDelta    = "tool_call_delta"
+	EventTypeToolCallStart    = "tool_call_start"
+	EventTypeToolCall         = "tool_call"
+	EventTypeToolResult       = "tool_result"
+	EventTypeError            = "error"
+	EventTypeComplete         = "complete"
+	EventTypeCancelled        = "cancelled"
+	EventTypeAlignmentVerdict = "alignment_verdict"
+	EventTypeSessionEnded     = "session_ended"
+	// EventTypeReasoningContentDelta mirrors
+	// internal/kubernautagent/session.EventTypeReasoningContentDelta for wire
+	// compatibility (#1634, #1635, DD-LLM-009).
+	EventTypeReasoningContentDelta = "reasoning_content_delta"
+)

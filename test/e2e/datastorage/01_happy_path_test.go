@@ -1,0 +1,307 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package datastorage
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/http"
+	"sort"
+	"time"
+
+	"github.com/go-logr/logr"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+// Scenario 1: Happy Path - Complete Remediation Audit Trail (P0)
+//
+// Business Requirements:
+// - BR-STORAGE-001: Audit persistence
+// - BR-STORAGE-021: REST API Read Endpoints
+// - BR-STORAGE-022: Query Filtering
+//
+// Business Value: Verify complete audit trail across all services
+//
+// Test Flow:
+// 1. Deploy Data Storage Service in isolated namespace
+// 2. Simulate audit events from 5 services (Gateway, AIAnalysis, Workflow, Orchestrator, Monitor)
+// 3. Verify all events persisted to audit_events table (ADR-034 unified table)
+// 4. Query by correlation_id and verify complete timeline
+// 5. Verify chronological order
+//
+// Expected Results:
+// - 5 audit records created in audit_events table
+// - All audit writes complete <1s (p95 latency)
+// - Zero DLQ fallbacks
+// - Query API retrieves complete timeline by correlation_id
+//
+// Parallel Execution: ✅ ENABLED
+// - Each test gets unique namespace (datastorage-e2e-p{N}-{timestamp})
+// - Complete infrastructure isolation
+// - No data pollution between tests
+
+var _ = Describe("BR-DS-001: Audit Event Persistence - Complete Remediation Audit Trail (DD-AUDIT-003)", Label("e2e", "happy-path", "p0"), Ordered, ContinueOnFailure, func() {
+	var (
+		testCancel context.CancelFunc
+		testLogger logr.Logger
+		// DD-AUTH-014: Use exported HTTPClient from suite setup
+		testNamespace string
+		serviceURL    string
+		db            *sql.DB
+		correlationID string
+	)
+
+	BeforeAll(func() {
+		_, testCancel = context.WithTimeout(ctx, 15*time.Minute)
+		testLogger = logger.WithValues("test", "happy-path")
+		// DD-AUTH-014: HTTPClient is now provided by suite setup with ServiceAccount auth
+
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		testLogger.Info("Scenario 1: Happy Path - Setup")
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Use shared deployment from SynchronizedBeforeSuite (no per-test deployment)
+		// Services are deployed ONCE and shared via NodePort (no port-forwarding needed)
+		testNamespace = sharedNamespace
+		serviceURL = dataStorageURL
+		testLogger.Info("Using shared deployment", "namespace", testNamespace, "url", serviceURL)
+
+		// Wait for Data Storage Service to be responsive (Issue #753: health on dedicated port)
+		testLogger.Info("⏳ Waiting for Data Storage Service...")
+		httpClient := &http.Client{Timeout: 2 * time.Second}
+		Eventually(func() error {
+			resp, err := httpClient.Get(healthURL + "/readyz")
+			if err != nil {
+				testLogger.V(1).Info("Health check failed, retrying...", "error", err)
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("health check returned status %d", resp.StatusCode)
+			}
+			return nil
+		}, 60*time.Second, 2*time.Second).Should(Succeed(), "Data Storage Service should be healthy")
+		testLogger.Info("✅ Data Storage Service is responsive")
+
+		// Connect to PostgreSQL for verification (using shared NodePort - no port-forward needed)
+		testLogger.Info("🔌 Connecting to PostgreSQL via NodePort...")
+		connStr := "host=localhost port=25433 user=slm_user password=test_password dbname=action_history sslmode=disable" // Per DD-TEST-001
+		var err error
+		db, err = sql.Open("pgx", connStr)
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(func() error {
+			return db.Ping()
+		}, 30*time.Second, 2*time.Second).Should(Succeed(), "PostgreSQL should be connectable")
+		testLogger.Info("✅ PostgreSQL connected")
+
+		// Generate unique correlation ID for this test
+		correlationID = fmt.Sprintf("remediation-%s", testNamespace)
+
+		testLogger.Info("✅ Test services ready", "namespace", testNamespace)
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	})
+
+	AfterAll(func() {
+		testLogger.Info("🧹 Cleaning up test resources...")
+		if db != nil {
+			if err := db.Close(); err != nil {
+				testLogger.Info("warning: failed to close database connection", "error", err)
+			}
+		}
+		if testCancel != nil {
+			testCancel()
+		}
+		// Note: Shared namespace is NOT cleaned up here - it's managed by SynchronizedAfterSuite
+	})
+
+	It("should create complete audit trail across all services", func() {
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		testLogger.Info("Test: Complete Audit Trail")
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Step 1: Gateway - Signal Received
+		testLogger.Info("📨 Step 1: Gateway processes signal...")
+
+		// DD-API-001: Use typed OpenAPI struct for type safety
+		gatewayEvent := dsgen.AuditEventRequest{
+			Version:        "1.0",
+			EventCategory:  dsgen.AuditEventRequestEventCategoryGateway,
+			EventAction:    "signal_processing",
+			EventType:      "gateway.signal.received",
+			EventTimestamp: time.Now().UTC(),
+			CorrelationID:  correlationID,
+			EventOutcome:   dsgen.AuditEventRequestEventOutcomeSuccess,
+			EventData:      newMinimalGatewayPayload("PodCrashLooping"),
+		}
+
+		eventID := createAuditEventOpenAPI(ctx, DSClient, gatewayEvent)
+		Expect(eventID).ToNot(BeEmpty(), "Gateway audit event should be created")
+		testLogger.Info("✅ Gateway audit event created")
+
+		// Step 2: AIAnalysis - Analysis Completed
+		testLogger.Info("🤖 Step 2: AIAnalysis generates RCA...")
+
+		// DD-API-001: Use typed OpenAPI struct
+		aiEvent := dsgen.AuditEventRequest{
+			Version:        "1.0",
+			EventCategory:  dsgen.AuditEventRequestEventCategoryAnalysis,
+			EventAction:    "rca_generation",
+			EventType:      "aianalysis.analysis.completed",
+			EventTimestamp: time.Now().UTC(),
+			CorrelationID:  correlationID,
+			EventOutcome:   dsgen.AuditEventRequestEventOutcomeSuccess,
+			EventData:      newMinimalAIAnalysisPayload(fmt.Sprintf("analysis-%s", testNamespace)),
+		}
+
+		eventID = createAuditEventOpenAPI(ctx, DSClient, aiEvent)
+		Expect(eventID).ToNot(BeEmpty(), "AIAnalysis audit event should be created")
+		testLogger.Info("✅ AIAnalysis audit event created")
+
+		// Step 3: Workflow - Workflow Completed
+		testLogger.Info("⚙️  Step 3: Workflow executes remediation...")
+
+		// DD-API-001: Use typed OpenAPI struct
+		workflowEvent := dsgen.AuditEventRequest{
+			Version:        "1.0",
+			EventCategory:  dsgen.AuditEventRequestEventCategoryWorkflow,
+			EventAction:    "remediation_execution",
+			EventType:      "workflow.execution.started",
+			EventTimestamp: time.Now().UTC(),
+			CorrelationID:  correlationID,
+			EventOutcome:   dsgen.AuditEventRequestEventOutcomeSuccess,
+			EventData:      newMinimalWorkflowPayload(fmt.Sprintf("workflow-%s", testNamespace)),
+		}
+
+		eventID = createAuditEventOpenAPI(ctx, DSClient, workflowEvent)
+		Expect(eventID).ToNot(BeEmpty(), "Workflow audit event should be created")
+		testLogger.Info("✅ Workflow audit event created")
+
+		// Step 4: Orchestrator - Remediation Completed
+		testLogger.Info("🎯 Step 4: Orchestrator completes...")
+		// DD-API-001: Use typed OpenAPI struct
+		orchestratorEvent := dsgen.AuditEventRequest{
+			Version:        "1.0",
+			EventCategory:  dsgen.AuditEventRequestEventCategoryOrchestration, // ADR-034 v1.2 valid category
+			EventAction:    "orchestration",
+			EventType:      "workflow.search.executed", // Using minimal generic payload
+			EventTimestamp: time.Now().UTC(),
+			CorrelationID:  correlationID,
+			EventOutcome:   dsgen.AuditEventRequestEventOutcomeSuccess,
+			EventData:      newMinimalGenericPayload(),
+		}
+
+		eventID = createAuditEventOpenAPI(ctx, DSClient, orchestratorEvent)
+		Expect(eventID).ToNot(BeEmpty(), "Orchestrator audit event should be created")
+		testLogger.Info("✅ Orchestrator audit event created")
+
+		// Step 5: EffectivenessMonitor - Assessment Completed
+		testLogger.Info("📊 Step 5: EffectivenessMonitor assesses...")
+		// DD-API-001: Use typed OpenAPI struct
+		monitorEvent := dsgen.AuditEventRequest{
+			Version:        "1.0",
+			EventCategory:  dsgen.AuditEventRequestEventCategoryAnalysis, // ADR-034 v1.2: effectiveness assessment = analysis category
+			EventAction:    "effectiveness_assessment",
+			EventType:      "workflow.search.executed", // Using minimal generic payload
+			EventTimestamp: time.Now().UTC(),
+			CorrelationID:  correlationID,
+			EventOutcome:   dsgen.AuditEventRequestEventOutcomeSuccess,
+			EventData:      newMinimalGenericPayload(),
+		}
+
+		eventID = createAuditEventOpenAPI(ctx, DSClient, monitorEvent)
+		Expect(eventID).ToNot(BeEmpty(), "Monitor audit event should be created")
+		testLogger.Info("✅ Monitor audit event created")
+
+		// Verification: Query database directly
+		testLogger.Info("🔍 Verifying audit events in database...")
+		var count int
+		err := db.QueryRow(`
+			SELECT COUNT(*) FROM audit_events
+			WHERE correlation_id = $1
+		`, correlationID).Scan(&count)
+		Expect(err).ToNot(HaveOccurred())
+		// Self-auditing creates additional events (datastorage.audit.written)
+		// We expect at least 5 events (the ones we created), but may have more
+		Expect(count).To(BeNumerically(">=", 5), "Should have at least 5 audit events in database")
+		testLogger.Info("✅ All audit events persisted to database", "count", count)
+
+		// Verification: Query via REST API using OpenAPI client with pagination
+		// Per docs/testing/AUDIT_QUERY_PAGINATION_STANDARDS.md: ALWAYS handle pagination under concurrent load
+		testLogger.Info("🔍 Querying audit trail via REST API...")
+		var allEvents []dsgen.AuditEvent
+		offset := 0
+		limit := 100
+
+		for {
+			queryResp, err := DSClient.QueryAuditEvents(ctx, dsgen.QueryAuditEventsParams{
+				CorrelationID: dsgen.NewOptString(correlationID),
+				Limit:         dsgen.NewOptInt(limit),
+				Offset:        dsgen.NewOptInt(offset),
+			})
+			Expect(err).ToNot(HaveOccurred())
+
+			if len(queryResp.Data) == 0 {
+				break
+			}
+
+			allEvents = append(allEvents, queryResp.Data...)
+
+			if len(queryResp.Data) < limit {
+				break
+			}
+
+			offset += limit
+		}
+
+		Expect(allEvents).ToNot(BeNil(), "Query response should have data array")
+
+		// Self-auditing creates additional events, so we expect at least 5
+		data := allEvents
+		Expect(len(data)).To(BeNumerically(">=", 5), "Query API should return at least 5 events")
+		testLogger.Info("✅ Query API returned complete audit trail", "event_count", len(data))
+
+		// Verification: Chronological order (sort events first since API doesn't guarantee order)
+		testLogger.Info("🔍 Verifying chronological order...")
+
+		// Sort events by timestamp
+		sort.Slice(data, func(i, j int) bool {
+			return data[i].EventTimestamp.Before(data[j].EventTimestamp)
+		})
+
+		var previousTimestamp time.Time
+		for i, event := range data {
+			if i > 0 {
+				Expect(event.EventTimestamp.After(previousTimestamp) || event.EventTimestamp.Equal(previousTimestamp)).To(BeTrue(),
+					"Events should be in chronological order")
+			}
+			previousTimestamp = event.EventTimestamp
+		}
+		testLogger.Info("✅ Events are in chronological order")
+
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		testLogger.Info("✅ Scenario 1: Happy Path - PASSED")
+		testLogger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	})
+})
+
+// DD-API-001: postAuditEvent helper function removed
+// Replaced by createAuditEventFromMap() in helpers.go (OpenAPI client-based)

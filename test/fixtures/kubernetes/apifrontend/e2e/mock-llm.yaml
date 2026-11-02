@@ -1,0 +1,549 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/name: mock-llm
+    app.kubernetes.io/component: test-infrastructure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-llm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-llm
+        app.kubernetes.io/component: test-infrastructure
+    spec:
+      containers:
+        - name: mock-llm
+          image: ghcr.io/jordigilh/kubernaut/mock-llm:pr-1161
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: MOCK_LLM_HOST
+              value: "0.0.0.0"
+            - name: MOCK_LLM_PORT
+              value: "8080"
+            - name: MOCK_LLM_FORCE_TEXT
+              value: "false"
+            - name: MOCK_LLM_CONFIG_PATH
+              value: "/etc/mock-llm/config.yaml"
+            - name: MOCK_LLM_HUB_CLUSTER_ID
+              value: "__HUB_CLUSTER_ID__"
+          volumeMounts:
+            - name: mock-llm-config
+              mountPath: /etc/mock-llm
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: mock-llm-config
+          configMap:
+            name: mock-llm-config
+      securityContext:
+        fsGroup: 1001
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-llm-config
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/name: mock-llm
+    app.kubernetes.io/component: test-infrastructure
+data:
+  config.yaml: |
+    # AF-specific selector→tool_call mappings for E2E testing.
+    # mock-LLM matches selector constraints and returns the corresponding tool call.
+    scenario_selectors:
+      - name: "af_session_active_investigate"
+        # #1922 uses a dedicated target so its intentionally-held interactive
+        # lease cannot make the independent #1407/#1408 progressive RCA specs
+        # inherit session_active under Ginkgo parallel scheduling.
+        keywords: ["session active investigate"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-session-active-e2e"
+            name: "af-session-active-target"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_progressive_investigate"
+        keywords: ["progressive investigate", "investigate progressively"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            # #1839: dedicated namespace/name (not "default"/"nginx") so
+            # this fixture's synthetic grounding alert can only ever match
+            # the #1407 target. Keep it separate from af_investigate and the
+            # #1408 structured-artifact fixture: Ginkgo runs their Ordered
+            # containers concurrently and KA permits only one driver per RR.
+            namespace: "af-progressive-e2e"
+            name: "af-progressive-target"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_progressive_no_rca"
+        # #1407 intentionally exercises the AF-only no-RCA contract. Scope this
+        # override to KA's RCA extraction request for the dedicated signal so
+        # the initial investigation still runs normally, while the generic
+        # mock-LLM fallback cannot fabricate RCA findings for the fixture.
+        signal_patterns: ["AFProgressiveGrounding"]
+        caller: "ka"
+        phase: "rca"
+        tool_call:
+          name: "submit_result"
+
+      - name: "af_structured_artifact_investigate"
+        # #1408 has its own target because it runs concurrently with #1407
+        # under Ginkgo --procs>1 and must acquire an independent KA lease.
+        keywords: ["structured artifact investigate"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-structured-artifact-e2e"
+            name: "af-structured-artifact-target"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_investigate"
+        caller: "af"
+        phase: "investigation"
+        keywords: ["start investigation", "investigate", "begin investigation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            # api_version is required by kubernaut_investigate's argument
+            # validation ("api_version must not be empty",
+            # pkg/apifrontend/validate/k8s.go). Keep this generic scenario on
+            # its own fixture; the progressive and structured-artifact
+            # scenarios above intentionally use isolated targets.
+            api_version: "v1"
+            namespace: "af-investigate-e2e"
+            name: "af-investigate-target"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_investigate_resume"
+        keywords: ["stream the investigation", "resume investigation", "check investigation status"]
+        match_last_only: true
+        repeat_tool_call: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            session_id: "$from_tool:kubernaut_investigate:session_id"
+
+      - name: "af_discover_workflows"
+        keywords: ["discover available workflows", "discover workflows"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_discover_workflows"
+          arguments:
+            rr_id: "kubernaut-system/rr-test"
+
+      - name: "af_select_workflow"
+        keywords: ["select workflow", "select the restart workflow"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_select_workflow"
+          arguments:
+            workflow_id: "restart-v1"
+            remediation_id: "rr-001"
+
+      - name: "af_present_decision"
+        keywords: ["present decision", "present remediation options", "remediation options"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_present_decision"
+          arguments:
+            session_id: "sess-002"
+            summary: "Remediation decision required"
+            options:
+              - workflow_id: "wf-restart"
+                name: "Restart"
+                description: "Restart affected pods"
+              - workflow_id: "wf-scale-up"
+                name: "Scale Up"
+                description: "Scale up deployment replicas"
+              - workflow_id: "wf-rollback"
+                name: "Rollback"
+                description: "Rollback to previous revision"
+
+      - name: "af_structured_decision_ground"
+        # Dedicated grounding call for structured_decision_e2e_test.go's
+        # groundSession helper. Deliberately does NOT reuse af_investigate's
+        # keywords/target (af-investigate-e2e/af-investigate-target): that
+        # fixture is shared by 3 other scenarios above, and under Ginkgo
+        # --procs>1 a concurrent spec can already hold its interactive KA
+        # session open when this one calls in, hitting KA's session_active
+        # fallback instead of a clean grounded result (CI run 31320575553,
+        # E2E-AF-1395-001). This keyword/target pair is used nowhere else.
+        keywords: ["seed grounding context"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-structured-decision-e2e"
+            name: "structured-decision-target"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_structured_decision_ground_2"
+        # Dedicated grounding call for structured_decision_e2e_test.go's
+        # E2E-AF-1396-002 alone (its own target, not shared with
+        # af_structured_decision_ground above): that Describe block is
+        # Ordered, and by its 3rd It, af_create_rr.go's
+        # checkExistingRRByFingerprint would otherwise dedup onto the SAME
+        # RR the first two Its already opened a KA interactive session
+        # against, nondeterministically hitting session_active instead of a
+        # clean grounded result (CI run 31335085795, E2E-AF-1396-002, "AC-6:
+        # ALL options must be presented"). See
+        # StructuredDecisionGrounding2 (apifrontend_prometheus_e2e.go).
+        #
+        # Keyword deliberately shares no substring with any other keyword in
+        # this file (mock-llm's match is strings.Contains and picks the
+        # first-registered tie among equal-confidence matches, registry.go
+        # Detect) -- e.g. "seed grounding context v2" would also match
+        # af_structured_decision_ground's "seed grounding context" keyword.
+        keywords: ["seed alt fixture context 1396 002"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-structured-decision-e2e"
+            name: "structured-decision-target-2"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_structured_decision_ground_3"
+        # Dedicated grounding call for structured_decision_e2e_test.go's
+        # E2E-AF-1396-001 alone. af_structured_decision_ground_2 above only
+        # closed contention for the 3rd It (1396-002) relative to the first
+        # two -- it did not address that the 2nd It (1396-001) still shares
+        # af_structured_decision_ground's target with the 1st It
+        # (1395-001), so 1396-001's own grounding call could nondeterministically
+        # inherit 1395-001's still-open KA session and observe
+        # session_active, surfacing as an empty (fail-closed)
+        # payload.RCA.Severity instead of the authoritative "warning" (CI run
+        # 31351842574, E2E-AF-1396-001). See StructuredDecisionGrounding3
+        # (apifrontend_prometheus_e2e.go).
+        keywords: ["seed third fixture context 1396 001"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-structured-decision-e2e"
+            name: "structured-decision-target-3"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_structured_decision_ground_4"
+        # Dedicated grounding call for structured_decision_e2e_test.go's
+        # E2E-AF-2387-002 alone (structured-decision-target-4,
+        # StructuredDecisionGrounding4). Same intra-suite session_active
+        # contention rationale as ground_2/ground_3: this Ordered block's
+        # Its share nothing, so this grounding call always opens a fresh KA
+        # interactive session and runs a REAL synchronous Investigate
+        # (#1818 Gap 3), whose server-computed totals the test then asserts
+        # on the present_decision artifact. Keyword shares no substring
+        # with any other keyword in this file (strings.Contains match).
+        keywords: ["seed fourth fixture context 2387 002"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            api_version: "v1"
+            namespace: "af-structured-decision-e2e"
+            name: "structured-decision-target-4"
+            kind: "Pod"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      - name: "af_structured_decision"
+        keywords: ["structured decision", "present structured rca decision"]
+        # The APIFRONTEND reinvoking runner can replace the latest user message
+        # with its synthetic "Continue the investigation" prompt while the
+        # decision turn is still active. Keep this scenario eligible from the
+        # original decision request in the conversation history so the mock
+        # emits present_decision instead of falling through to the default
+        # scenario (which can issue an invalid duplicate investigation).
+        match_last_only: false
+        # repeat_tool_call is required, not optional, here: the mock-LLM's
+        # hasFunctionResults gate (handlers/gemini.go) is computed over the
+        # WHOLE session's conversation history, not scoped to this scenario.
+        # structured_decision_e2e_test.go's groundSession helper (#2023) runs
+        # a kubernaut_investigate call first in the same A2A session to
+        # satisfy the grounding guard, which leaves that tool's
+        # FunctionResponse in history. Without repeat_tool_call, this
+        # scenario's own first match would see hasFunctionResults=true (from
+        # groundSession's unrelated call) and fall straight to a text-only
+        # response, never invoking kubernaut_present_decision at all --
+        # silently producing no decision SSE event (CI run 31325053872,
+        # E2E-AF-1395-001, "not to be empty"). repeat_tool_call switches the
+        # re-fire guard to LastContentIsFunctionResponse (scoped to this
+        # scenario's own last turn), which still correctly falls through to
+        # text once present_decision's own result lands.
+        repeat_tool_call: true
+        thought_text: "Let me analyze the investigation findings. The data-processor pod has been OOMKilled repeatedly, which correlates with the memory leak pattern in the worker goroutine. I should present the decision options to the operator."
+        tool_call:
+          name: "kubernaut_present_decision"
+          arguments:
+            session_id: "sess-structured-001"
+            summary: "OOMKill detected in production data-processor pod with critical severity and high confidence from investigation"
+            rca:
+              severity: "critical"
+              confidence: 0.92
+              causal_chain:
+                - "Memory leak in data-processor worker goroutine"
+                - "Container hit 512Mi memory limit"
+                - "Kernel sent OOMKill signal to container"
+              target: "Deployment/data-processor in production"
+              tool_calls_count: 19
+              llm_turns: 17
+            options:
+              - workflow_id: "wf-restart-pod"
+                name: "Restart Pod"
+                description: "Rolling restart of affected deployment pods to recover from OOM state"
+                risk: "low"
+                recommended: true
+                parameters:
+                  namespace: "production"
+                  deployment: "data-processor"
+              - workflow_id: "wf-increase-memory"
+                name: "Increase Memory Limit"
+                description: "Scale memory limit from 512Mi to 1Gi to prevent future OOMKill events"
+                risk: "medium"
+                parameters:
+                  new_limit: "1Gi"
+              - workflow_id: "wf-rollback"
+                name: "Rollback Deployment"
+                description: "Roll back to previous stable revision without memory leak"
+                risk: "low"
+                ruled_out_reason: "No previous revision available in cluster deployment history"
+
+      - name: "af_approval_request"
+        keywords: ["watch approval gate", "watch approval gate and approve", "watch approval gate expire"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_watch"
+          arguments:
+            name: "rr-approval-e2e"
+
+      - name: "af_list_remediations"
+        keywords: ["list remediations", "list all remediations"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_list_remediations"
+          arguments: {}
+
+      - name: "af_get_remediation"
+        keywords: ["get details for remediation", "get remediation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_get_remediation"
+          arguments:
+            name: "rr-test"
+
+      - name: "af_cancel_remediation"
+        keywords: ["cancel the remediation", "cancel remediation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_cancel_remediation"
+          arguments:
+            name: "rr-test"
+
+      - name: "af_watch"
+        keywords: ["watch the progress", "watch remediation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_watch"
+          arguments:
+            name: "rr-test"
+
+      - name: "af_watch_progress_e2e"
+        keywords: ["watch progress e2e 1403"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_watch"
+          arguments:
+            name: "rr-progress-e2e-1403"
+
+      - name: "af_list_workflows"
+        keywords: ["list workflows", "available remediation workflows", "list all available"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_list_workflows"
+          arguments:
+            action_type: "remediation"
+
+      - name: "af_get_remediation_history"
+        keywords: ["remediation history", "get remediation history"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_get_remediation_history"
+          arguments:
+            namespace: "payments"
+
+      - name: "af_get_effectiveness"
+        keywords: ["effectiveness", "remediation effectiveness"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_get_effectiveness"
+          arguments: {}
+
+      - name: "af_get_audit_trail"
+        keywords: ["audit trail", "get the audit trail"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_get_audit_trail"
+          arguments:
+            remediation_id: "rr-audit"
+
+      - name: "kubectl_list_events"
+        keywords: ["list events", "list kubernetes events"]
+        match_last_only: true
+        tool_call:
+          name: "kubectl_list_events"
+          arguments:
+            namespace: "kubernaut-system"
+
+      - name: "kubectl_list_pods"
+        keywords: ["get pods", "get all pods"]
+        match_last_only: true
+        tool_call:
+          name: "kubectl_list"
+          arguments:
+            kind: "Pod"
+            namespace: "default"
+
+      - name: "kubectl_list_workloads"
+        keywords: ["get workloads"]
+        match_last_only: true
+        tool_call:
+          name: "kubectl_list"
+          arguments:
+            kind: "Deployment"
+            namespace: "default"
+
+      - name: "kubernaut_check_existing_remediation"
+        keywords: ["check existing", "remediation already exists", "check if a remediation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_check_existing_remediation"
+          arguments:
+            namespace: "prod"
+            kind: "Deployment"
+            name: "web"
+
+      - name: "af_list_alerts_prioritized"
+        keywords: ["list alerts", "check active alerts", "what alerts are firing"]
+        match_last_only: true
+        tool_call:
+          name: "list_alerts"
+          arguments:
+            namespace: "default"
+
+      - name: "af_investigate_prioritized_alert"
+        keywords: ["investigate selected alert", "investigate the highest severity"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate_alert"
+          arguments:
+            alert_name: "KubePodCrashLooping"
+            namespace: "prod"
+            kind: "Deployment"
+            name: "web-frontend"
+            api_version: "apps/v1"
+            cluster_id: "__HUB_CLUSTER_ID__"
+
+      # #1637: two-step interactive flow proving live event relay for pooled
+      # kubernaut_message calls. Turn 1 opens the interactive session (via
+      # kubernaut_investigate on a pre-existing RR); turn 2 (same shared A2A
+      # contextId, see a2aMessageStreamWithContext) drives it forward via
+      # kubernaut_message, embedding the "mock_reasoning_capture" keyword so
+      # KA's own mock-LLM (test/services/mock-llm/scenarios/scenario_mock_keywords.go)
+      # returns a captured reasoning block, which the fix in this PR relays
+      # live to turn 2's SSE stream as a reasoning_content event.
+      - name: "af_investigate_reasoning_capture"
+        keywords: ["start reasoning capture investigation"]
+        match_last_only: true
+        tool_call:
+          name: "kubernaut_investigate"
+          arguments:
+            rr_id: "rr-reasoning-e2e-1637"
+
+      - name: "af_drive_reasoning_capture"
+        keywords: ["drive reasoning capture turn"]
+        match_last_only: true
+        repeat_tool_call: true
+        tool_call:
+          name: "kubernaut_message"
+          arguments:
+            rr_id: "rr-reasoning-e2e-1637"
+            message: "continue the analysis mock_reasoning_capture"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/name: mock-llm
+    app.kubernetes.io/component: test-infrastructure
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: mock-llm

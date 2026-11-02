@@ -1,0 +1,32 @@
+# DD-AUTH-014: DataStorage Service with Middleware-Based Auth
+# Port Routing (aligned with Helm):
+# - API:     8080 → Pod 8080
+# - Health:  8081 → Pod 8081
+# - Metrics: 9090 → Pod 9090
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-storage-service
+  namespace: kubernaut-system
+  labels:
+    app: data-storage-service
+    component: stateless
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: health
+      port: 8081
+      targetPort: health
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: data-storage-service
+

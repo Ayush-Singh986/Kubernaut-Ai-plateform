@@ -1,0 +1,1238 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// ========================================
+// GATEWAY E2E INFRASTRUCTURE
+// ========================================
+//
+// Gateway E2E tests require:
+// - Kind cluster (RemediationRequest CRD)
+// - PostgreSQL (Data Storage dependency)
+// - Redis (Data Storage dependency)
+// - Data Storage service (audit events)
+// - Gateway service (signal ingestion)
+//
+// Pattern: Follows AIAnalysis E2E infrastructure pattern
+// Authority: test/infrastructure/aianalysis.go
+// ========================================
+
+// Gateway E2E service ports (DD-TEST-001 port allocation strategy)
+const (
+	containerRuntimePodman = "podman"
+	containerRuntimeDocker = "docker"
+
+	GatewayE2EHostPort     = 8080  // Gateway API (NodePort 30080 → host port 8080)
+	GatewayE2EHealthPort   = 28080 // Gateway health (NodePort 30180 → host port 28080) -- Issue #753
+	GatewayE2EMetricsPort  = 9090  // Gateway metrics (NodePort 30090 → host port 9090)
+	GatewayDataStoragePort = 30081 // Data Storage NodePort (from shared deployDataStorage)
+	DataStorageE2EHostPort = 18091 // Data Storage host port (NodePort 30081 → host port 18091)
+
+	// Gateway Integration test ports (restored from git history for backward compatibility)
+	GatewayIntegrationPostgresPort    = 15437 // PostgreSQL (DataStorage backend)
+	GatewayIntegrationRedisPort       = 16383 // Redis (DataStorage DLQ)
+	GatewayIntegrationDataStoragePort = 18091 // DataStorage API (Audit + State)
+	GatewayIntegrationMetricsPort     = 19091 // DataStorage Metrics
+)
+
+// SetupGatewayInfrastructureParallel creates the full E2E infrastructure using HYBRID parallel pattern.
+// This optimizes setup time by building images BEFORE cluster creation (eliminating idle time).
+//
+// HYBRID Parallel Execution Strategy (OPTIMIZED - 18% faster):
+//
+//	Phase 1 (PARALLEL):   Build Gateway image | Build DataStorage image (~2-3 min, NO CLUSTER YET)
+//	Phase 2 (Sequential): Create Kind cluster + CRDs + namespace (~10-15 sec)
+//	Phase 3 (PARALLEL):   Load Gateway image | Load DataStorage image | Deploy PostgreSQL+Redis (~30-60 sec)
+//	Phase 4 (Sequential): Deploy DataStorage (~30s)
+//	Phase 5 (Sequential): Deploy Gateway (~30s)
+//
+// Total time: ~4-5 minutes (vs ~5.5 minutes standard pattern)
+// Savings: ~1 minute (18% faster) - cluster never sits idle
+//
+// Pattern: Hybrid (build-before-cluster) - eliminates cluster idle time during builds
+// Reference: test/infrastructure/remediationorchestrator_e2e_hybrid.go (authoritative hybrid pattern)
+func SetupGatewayInfrastructureParallel(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer, enableCoverage bool) error {
+	coverageStatus := "DISABLED"
+	if enableCoverage {
+		coverageStatus = "ENABLED (DD-TEST-007)"
+	}
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintf(writer, "🚀 Gateway E2E Infrastructure (HYBRID PARALLEL, Coverage: %s)\n", coverageStatus)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "  Strategy: Build images → Create cluster → Load → Deploy")
+	_, _ = fmt.Fprintln(writer, "  Optimization: 18% faster (eliminates cluster idle time)")
+	_, _ = fmt.Fprintln(writer, "  Authority: E2E_PATTERN_PERFORMANCE_ANALYSIS_JAN07.md")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	namespace := kubernautSystem
+
+	// DD-TEST-007: Create coverdata directory BEFORE cluster creation if coverage enabled
+	if enableCoverage {
+		projectRoot := getProjectRoot()
+		coverdataPath := filepath.Join(projectRoot, "coverdata")
+		_, _ = fmt.Fprintf(writer, "📁 Creating coverage directory: %s\n", coverdataPath)
+		if err := os.MkdirAll(coverdataPath, 0777); err != nil {
+			return fmt.Errorf("failed to create coverdata directory: %w", err)
+		}
+	}
+
+	gatewayImageName, dataStorageImageName, err := buildGatewayImages(ctx, enableCoverage, writer)
+	if err != nil {
+		return err
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 2: Create Kind cluster + CRDs + namespace (images ready, no idle time)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 2: Creating Kind cluster + CRDs + namespace...")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~10-15 seconds")
+
+	// Create Kind cluster
+	_, _ = fmt.Fprintln(writer, "📦 Creating Kind cluster...")
+	if err := createGatewayKindCluster(ctx, clusterName, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create Kind cluster: %w", err)
+	}
+
+	// Install RemediationRequest CRD
+	_, _ = fmt.Fprintln(writer, "📋 Installing RemediationRequest CRD...")
+	crdPath := getProjectRoot() + "/config/crd/bases/kubernaut.ai_remediationrequests.yaml"
+	crdCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", crdPath)
+	crdCmd.Stdout = writer
+	crdCmd.Stderr = writer
+	if err := crdCmd.Run(); err != nil {
+		return fmt.Errorf("failed to install RemediationRequest CRD: %w", err)
+	}
+
+	// Create namespace
+	_, _ = fmt.Fprintf(writer, "📁 Creating namespace %s...\n", namespace)
+	if err := CreateTestNamespace(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	// Issue #1661 (DD-WORKFLOW-018): DataStorage's workflow/action-type catalog
+	// is now a controller-runtime informer cache directly over the
+	// RemediationWorkflow/ActionType CRDs -- DS's startup indexes
+	// RemediationWorkflow by .spec.actionType, which requires the
+	// kubernaut.ai/v1alpha1 API group to already be registered with the
+	// apiserver. This suite runs no live AuthWebhook to apply these CRDs as a
+	// side effect, so apply them directly, BEFORE DataStorage is deployed
+	// below (mirrors SetupDataStorageInfrastructureParallel's step).
+	_, _ = fmt.Fprintln(writer, "📋 Applying RemediationWorkflow/ActionType CRDs (DD-WORKFLOW-018)...")
+	if err := applyRemediationWorkflowCRDs(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to apply RemediationWorkflow/ActionType CRDs: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "✅ Kind cluster ready!")
+
+	if err := loadAndDeployGatewayDependencies(ctx, clusterName, namespace, kubeconfigPath, gatewayImageName, dataStorageImageName, writer); err != nil {
+		return err
+	}
+
+	if err := deployGatewayDataStorage(ctx, namespace, kubeconfigPath, dataStorageImageName, writer); err != nil {
+		return err
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 5: Deploy Gateway (requires DataStorage)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 5: Deploying Gateway...")
+
+	// Deploy Gateway service (coverage-enabled or standard)
+	if enableCoverage {
+		// Use coverage manifest (DD-TEST-007)
+		// Pass the actual image name from BuildImageForKind (registry or local)
+		// to avoid image name mismatch when CI uses registry images
+		_, _ = fmt.Fprintf(writer, "   Using coverage-enabled Gateway deployment (image: %s)...\n", gatewayImageName)
+		if err := DeployGatewayCoverageManifest(ctx, kubeconfigPath, gatewayImageName, writer); err != nil {
+			return fmt.Errorf("failed to deploy Gateway with coverage: %w", err)
+		}
+	} else {
+		// Use standard deployment
+		if err := deployGatewayService(ctx, namespace, kubeconfigPath, gatewayImageName, writer); err != nil {
+			return fmt.Errorf("failed to deploy Gateway: %w", err)
+		}
+	}
+
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "✅ Gateway E2E infrastructure ready (HYBRID PARALLEL MODE)!")
+	_, _ = fmt.Fprintf(writer, "  • Gateway: https://localhost:%d (TLS)\n", GatewayE2EHostPort)
+	_, _ = fmt.Fprintf(writer, "  • Gateway Health: http://localhost:%d (plain HTTP)\n", GatewayE2EHealthPort)
+	_, _ = fmt.Fprintf(writer, "  • Gateway Metrics: http://localhost:%d/metrics (plain HTTP)\n", GatewayE2EMetricsPort)
+	_, _ = fmt.Fprintf(writer, "  • DataStorage: https://localhost:%d (TLS, NodePort %d)\n", DataStorageE2EHostPort, GatewayDataStoragePort)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	return nil
+}
+
+func deployGatewayDataStorage(ctx context.Context, namespace, kubeconfigPath, image string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 4: Applying migrations + Deploying DataStorage...")
+	if err := ApplyAllMigrations(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to apply migrations: %w", err)
+	}
+	if err := deployDataStorageClientClusterRole(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to deploy client ClusterRole: %w", err)
+	}
+	if err := deployDataStorageServiceRBAC(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to deploy service RBAC: %w", err)
+	}
+	if err := CreateDataStorageAccessRoleBinding(ctx, namespace, kubeconfigPath, "gateway", writer); err != nil {
+		return fmt.Errorf("failed to create Gateway DataStorage access RoleBinding: %w", err)
+	}
+	if _, err := GenerateInterServiceTLS(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to generate inter-service TLS: %w", err)
+	}
+	if err := GenerateSigningCertSecret(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to generate signing certificate: %w", err)
+	}
+	if err := deployDataStorageServiceInNamespace(ctx, namespace, kubeconfigPath, image, writer); err != nil {
+		return fmt.Errorf("failed to deploy DataStorage: %w", err)
+	}
+	if err := waitForDataStorageServicesReady(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("DataStorage readiness check failed: %w", err)
+	}
+	if err := SeedActionTypesViaCRD(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to seed action types: %w", err)
+	}
+	return nil
+}
+
+func buildGatewayImages(ctx context.Context, enableCoverage bool, writer io.Writer) (string, string, error) {
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 1: Building images in parallel (NO CLUSTER YET)...")
+	_, _ = fmt.Fprintln(writer, "  ├── Gateway image (direct podman build)\n  └── DataStorage image (with dynamic tag)")
+	results := make(chan struct {
+		name  string
+		image string
+		err   error
+	}, 2)
+	configs := []E2EImageConfig{{ServiceName: "gateway", ImageName: "gateway", DockerfilePath: "docker/gateway.Dockerfile", EnableCoverage: enableCoverage}, {ServiceName: "datastorage", ImageName: "kubernaut/datastorage", DockerfilePath: "docker/data-storage.Dockerfile", EnableCoverage: enableCoverage}}
+	for _, cfg := range configs {
+		cfg := cfg
+		go func() {
+			image, err := BuildImageForKind(ctx, cfg, writer)
+			if err != nil {
+				err = fmt.Errorf("%s image build failed: %w", cfg.ServiceName, err)
+			}
+			results <- struct {
+				name  string
+				image string
+				err   error
+			}{cfg.ServiceName, image, err}
+		}()
+	}
+	images := make(map[string]string, 2)
+	var errs []string
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", result.name, result.err))
+			continue
+		}
+		images[result.name] = result.image
+		_, _ = fmt.Fprintf(writer, "  ✅ %s build completed\n", result.name)
+	}
+	if len(errs) > 0 {
+		return "", "", fmt.Errorf("image builds failed: %s", strings.Join(errs, "; "))
+	}
+	_, _ = fmt.Fprintln(writer, "\n✅ All images built successfully!")
+	return images["gateway"], images["datastorage"], nil
+}
+
+func loadAndDeployGatewayDependencies(ctx context.Context, clusterName, namespace, kubeconfigPath, gatewayImage, dataStorageImage string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "\n⚡ PHASE 3: Loading images + Deploying infrastructure...")
+	results := make(chan struct {
+		name string
+		err  error
+	}, 4)
+	go func() {
+		results <- struct {
+			name string
+			err  error
+		}{"Gateway image", loadGatewayImageToKind(ctx, gatewayImage, clusterName, writer)}
+	}()
+	go func() {
+		results <- struct {
+			name string
+			err  error
+		}{"DataStorage image", LoadImageToKind(ctx, dataStorageImage, "datastorage", clusterName, writer)}
+	}()
+	go func() {
+		for _, image := range []string{"docker.io/library/postgres:16-alpine", "quay.io/jordigilh/redis:7-alpine"} {
+			if err := PreloadExternalImage(ctx, image, clusterName, writer); err != nil {
+				results <- struct {
+					name string
+					err  error
+				}{"Third-party images", fmt.Errorf("preload %s: %w", image, err)}
+				return
+			}
+		}
+		results <- struct {
+			name string
+			err  error
+		}{"Third-party images", nil}
+	}()
+	go func() {
+		err := deployPostgreSQLInNamespace(ctx, namespace, kubeconfigPath, writer)
+		if err == nil {
+			err = deployRedisInNamespace(ctx, namespace, kubeconfigPath, writer)
+		}
+		results <- struct {
+			name string
+			err  error
+		}{"PostgreSQL+Redis", err}
+	}()
+	var errs []string
+	for range 4 {
+		result := <-results
+		if result.err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", result.name, result.err))
+			_, _ = fmt.Fprintf(writer, "  ❌ %s failed: %v\n", result.name, result.err)
+			continue
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ %s completed\n", result.name)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("parallel load/deploy failed: %s", strings.Join(errs, "; "))
+	}
+	_, _ = fmt.Fprintln(writer, "✅ Images loaded + Infrastructure deployed!")
+	return nil
+}
+
+// SetupGatewayInfrastructureSequentialWithCoverage creates the full E2E infrastructure with coverage enabled using SEQUENTIAL setup.
+// This is the RECOMMENDED approach that fixes Kind cluster timeout issues (Dec 25, 2025).
+//
+// SEQUENTIAL APPROACH (Build → Cluster → Load → Deploy):
+// 1. Build images FIRST (Gateway ~2-3min with SKIP_SYSTEM_UPDATE, DataStorage ~1-2min)
+// 2. Create Kind cluster (10s)
+// 3. Load images immediately (30s) - no idle time for cluster
+// 4. Deploy services (1-2min)
+//
+// Why Sequential vs Parallel:
+// - OLD (Parallel): Cluster created → sits idle 10min during Gateway build → container crashes → FAIL
+// - NEW (Sequential): Build 3min → create cluster → load immediately → SUCCESS
+//
+// Per DD-TEST-007: E2E Coverage Capture Standard
+//
+// Differences from standard setup:
+// 1. Builds Gateway image with GOFLAGS=-cover + SKIP_SYSTEM_UPDATE=true (2-3min vs 10min)
+// 2. Deploys Gateway with GOCOVERDIR=/coverdata
+// 3. Uses hostPath volume for coverage data collection
+//
+// Usage: Set E2E_COVERAGE=true environment variable
+func CreateGatewayCluster(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "Gateway E2E Cluster Setup")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "Dependencies:")
+	_, _ = fmt.Fprintf(writer, "  • PostgreSQL (port 5433) - Data Storage persistence\n")
+	_, _ = fmt.Fprintf(writer, "  • Redis (port 6380) - Data Storage caching\n")
+	_, _ = fmt.Fprintf(writer, "  • Data Storage (host port %d, NodePort %d) - Audit trail\n", DataStorageE2EHostPort, GatewayDataStoragePort)
+	_, _ = fmt.Fprintf(writer, "  • Gateway (host port %d) - Signal ingestion\n", GatewayE2EHostPort)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// 1. Create Kind cluster
+	_, _ = fmt.Fprintln(writer, "📦 Creating Kind cluster...")
+	if err := createGatewayKindCluster(ctx, clusterName, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create Kind cluster: %w", err)
+	}
+
+	// 2. Install RemediationRequest CRD (reuse from signalprocessing.go)
+	_, _ = fmt.Fprintln(writer, "📋 Installing RemediationRequest CRD...")
+	crdPath := getProjectRoot() + "/config/crd/bases/kubernaut.ai_remediationrequests.yaml" // Updated to new API group
+	crdCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", crdPath)
+	crdCmd.Stdout = writer
+	crdCmd.Stderr = writer
+	if err := crdCmd.Run(); err != nil {
+		return fmt.Errorf("failed to install RemediationRequest CRD: %w", err)
+	}
+
+	// 3. Build and load Gateway Docker image
+	_, _ = fmt.Fprintln(writer, "🐳 Building Gateway Docker image...")
+	if err := buildAndLoadGatewayImage(ctx, clusterName, writer); err != nil {
+		return fmt.Errorf("failed to build Gateway image: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "✅ Gateway E2E cluster created successfully")
+	return nil
+}
+
+// DeployTestServices deploys Gateway and its dependencies to the Kind cluster
+// This includes:
+// 0. Namespace creation
+// 1. PostgreSQL deployment
+// 2. Redis deployment
+// 3. Data Storage deployment
+// 4. Gateway deployment
+//
+// NOTE: This function appears to be UNUSED in actual test code (only referenced in documentation)
+// Consider removing in future cleanup if confirmed unused.
+// DeployTestServices deploys Gateway E2E services including DataStorage with OAuth2-Proxy.
+// TD-E2E-001 Phase 1: oauth2ProxyImage parameter added for SOC2 architecture parity.
+func DeployTestServices(ctx context.Context, namespace, kubeconfigPath, dataStorageImage, gatewayImage string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "📦 Deploying Gateway E2E services...")
+
+	// 0. Create namespace first (shared function from datastorage.go)
+	// Deploy shared Data Storage infrastructure with OAuth2-Proxy (TD-E2E-001 Phase 1)
+	// Use same image tags that were built and loaded earlier
+	_, _ = fmt.Fprintln(writer, "📦 Deploying Data Storage infrastructure with OAuth2-Proxy...")
+	if err := DeployDataStorageTestServices(ctx, namespace, kubeconfigPath, dataStorageImage, writer); err != nil {
+		return fmt.Errorf("failed to deploy Data Storage infrastructure: %w", err)
+	}
+	_, _ = fmt.Fprintln(writer, "✅ Data Storage infrastructure deployed")
+
+	// 5. Deploy Gateway service with parameter-based image name (no file I/O)
+	_, _ = fmt.Fprintln(writer, "🚪 Deploying Gateway service...")
+	if err := deployGatewayService(ctx, namespace, kubeconfigPath, gatewayImage, writer); err != nil {
+		return fmt.Errorf("failed to deploy Gateway: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "✅ All services deployed successfully")
+	return nil
+}
+
+// DeleteGatewayCluster deletes the Kind cluster
+func DeleteGatewayCluster(clusterName, kubeconfigPath string, testsFailed bool, writer io.Writer) error {
+	// Use shared cleanup function with log export on failure
+	return DeleteCluster(clusterName, "gateway", testsFailed, writer)
+}
+
+// ========================================
+// INTERNAL HELPERS
+// ========================================
+
+// createGatewayKindCluster creates a Kind cluster for Gateway E2E tests
+// REFACTORED: Now uses shared CreateKindClusterWithConfig() helper
+func createGatewayKindCluster(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) error {
+	opts := KindClusterOptions{
+		ClusterName:             clusterName,
+		KubeconfigPath:          kubeconfigPath,
+		ConfigPath:              "test/infrastructure/kind-gateway-config.yaml",
+		WaitTimeout:             "5m",
+		DeleteExisting:          false,
+		ReuseExisting:           false,
+		UsePodman:               true,
+		ProjectRootAsWorkingDir: true, // DD-TEST-007: For ./coverdata resolution
+	}
+	return CreateKindClusterWithConfig(ctx, opts, writer)
+}
+
+// loadGatewayImageToKind loads a pre-built Gateway image to Kind cluster.
+// This is Phase 3 of the hybrid E2E pattern (load after cluster creation).
+//
+// Pattern: Load pre-built image using LoadImageToKind() helper
+func loadGatewayImageToKind(ctx context.Context, imageName, clusterName string, writer io.Writer) error {
+	// Use the consolidated LoadImageToKind() helper
+	return LoadImageToKind(ctx, imageName, "gateway", clusterName, writer)
+}
+
+// buildAndLoadGatewayImage builds Gateway Docker image using shared build utilities and loads it into Kind
+// DD-TEST-001: Uses shared build script for unique container tags and multi-team testing support
+//
+// DEPRECATED for hybrid pattern: Use buildGatewayImageOnly() + loadGatewayImageToKind() instead
+// Still used by: standard pattern E2E tests (if any)
+func buildAndLoadGatewayImage(ctx context.Context, clusterName string, writer io.Writer) error {
+	projectRoot := getProjectRoot()
+
+	// Use shared build utilities (DD-TEST-001 compliant)
+	// Benefits:
+	// - Unique tags prevent multi-developer test conflicts
+	// - Consistent with all other services (notification, signalprocessing, etc.)
+	// - Zero maintenance (Platform Team owns shared script)
+	// - Automatic cleanup support
+	_, _ = fmt.Fprintln(writer, "   Building Gateway image via shared build utilities (DD-TEST-001)...")
+
+	buildScript := filepath.Join(projectRoot, "scripts", "build-service-image.sh")
+	buildCmd := exec.CommandContext(ctx, buildScript,
+		"gateway",
+		"--kind",
+		"--cluster", clusterName,
+	)
+	buildCmd.Dir = projectRoot
+	buildCmd.Stdout = writer
+	buildCmd.Stderr = writer
+
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("shared build script failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "   ✅ Gateway image built and loaded to Kind with unique tag")
+	return nil
+}
+
+// gatewayRBACManifest returns ServiceAccount + ClusterRole + ClusterRoleBinding YAML.
+// Applied first to avoid Kubernetes API propagation race where SA may not be visible
+// when the pod is created.
+func gatewayRBACManifest() string {
+	return `---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gateway
+  namespace: kubernaut-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gateway-role
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationrequests"]
+    verbs: ["create", "get", "list", "watch", "update", "patch"]
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationrequests/status"]
+    verbs: ["update", "patch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services", "secrets", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "delete"]
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gateway-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gateway-role
+subjects:
+  - kind: ServiceAccount
+    name: gateway
+    namespace: kubernaut-system
+`
+}
+
+// gatewayWorkloadManifest returns ConfigMap + Deployment + Service YAML.
+// Applied after RBAC with 2s propagation delay.
+func gatewayWorkloadManifest(imageName string, enableCoverage bool) string {
+	pullPolicy := GetImagePullPolicy()
+
+	coverageEnvYAML := ""
+	coverageVolumeMountYAML := ""
+	coverageVolumeYAML := ""
+	coverageSecurityContextYAML := ""
+
+	if enableCoverage {
+		coverageEnvYAML = `
+            - name: GOCOVERDIR
+              value: /coverdata`
+		coverageVolumeMountYAML = `
+            - name: coverdata
+              mountPath: /coverdata`
+		coverageVolumeYAML = `
+        - name: coverdata
+          hostPath:
+            path: /coverdata
+            type: DirectoryOrCreate`
+		coverageSecurityContextYAML = `
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0`
+	}
+
+	return fmt.Sprintf(`---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: kubernaut-system
+data:
+  config.yaml: |
+    server:
+      listenAddr: ":8080"
+      authenticationEnabled: true
+      tls:
+        certDir: /etc/tls
+      maxConcurrentRequests: 100
+      readTimeout: 30s
+      writeTimeout: 30s
+      idleTimeout: 120s
+    datastorage:
+      url: "https://data-storage-service.kubernaut-system.svc.cluster.local:8080"
+      healthUrl: "https://data-storage-service.kubernaut-system.svc.cluster.local:8080/readyz"
+      timeout: 10s
+      buffer:
+        bufferSize: 10000
+        batchSize: 100
+        flushInterval: 1s
+        maxRetries: 3
+    processing:
+      environment:
+        cacheTtl: 5s
+        configmapNamespace: "kubernaut-system"
+        configmapName: "kubernaut-environment-overrides"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: kubernaut-system
+  labels:
+    app: gateway
+    component: webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        component: webhook
+    spec:
+      serviceAccountName: gateway
+      terminationGracePeriodSeconds: 30%s
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: gateway
+          image: %s
+          imagePullPolicy: %s
+          args:
+            - "--config=/etc/gateway/config.yaml"
+          env:%s
+            - name: TLS_CA_FILE
+              value: /etc/tls-ca/ca.crt
+            - name: KUBERNAUT_CONTROLLER_NAMESPACE
+              value: kubernaut-system
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gateway
+              readOnly: true
+            - name: tls-certs
+              mountPath: /etc/tls
+              readOnly: true
+            - name: tls-ca
+              mountPath: /etc/tls-ca
+              readOnly: true%s
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config
+          configMap:
+            name: gateway-config
+        - name: tls-certs
+          secret:
+            secretName: gateway-tls
+        - name: tls-ca
+          configMap:
+            name: inter-service-ca%s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: kubernaut-system
+  labels:
+    app: gateway
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+    - name: health
+      protocol: TCP
+      port: 8081
+      targetPort: 8081
+      nodePort: 30180
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: 9090
+      nodePort: 30090
+`, coverageSecurityContextYAML, imageName, pullPolicy, coverageEnvYAML, coverageVolumeMountYAML, coverageVolumeYAML)
+}
+
+// Gateway resilience E2E (#1985): a second, throwaway, single-replica
+// Gateway instance dedicated to the DataStorage-resilience journey
+// (test/e2e/gateway/39_datastorage_resilience_test.go), reusing the exact
+// image already running as the shared "gateway" Deployment (resolved live
+// via kubectl rather than re-derived, so it always matches whatever this
+// suite actually built/pulled). Both its datastorage.url (audit writes)
+// and datastorage.healthUrl (readiness probe) point at a dedicated,
+// isolated DataStorage instance (infrastructure.DeployIsolatedDataStorageInstance,
+// GatewayResilienceDataStorageNamespace) -- true black-box: the outage is
+// induced by scaling that isolated instance's own "datastorage" Deployment
+// to 0 replicas (see infrastructure.ScaleIsolatedDataStorageDown), a real
+// Kubernetes Service-endpoint removal, never a sidecar or proxy. NodePorts
+// (30183 health, 30185 API) are unique within this suite's own Kind
+// cluster, distinct from the shared Gateway's own 30080/30180/30090.
+const (
+	// GatewayResilienceAPINodePort/HealthNodePort are this suite's own,
+	// distinct from the shared Gateway's 30080 (API) / 30180 (health).
+	GatewayResilienceAPINodePort    = 30185
+	GatewayResilienceHealthNodePort = 30183
+	// GatewayResilienceAPIHostPort/HealthHostPort mirror the Kind config's
+	// extraPortMappings for the above NodePorts (see
+	// kind-gateway-config.yaml -- must be added there for these NodePorts
+	// to be host-reachable).
+	GatewayResilienceAPIHostPort    = 28185
+	GatewayResilienceHealthHostPort = 28183
+
+	// GatewayResilienceDataStorageNamespace is the dedicated, isolated
+	// DataStorage instance's own namespace -- distinct from the shared
+	// Gateway/DataStorage namespace, so scaling it to 0 replicas never
+	// touches the real, shared DataStorage instance every other spec in
+	// this suite depends on.
+	GatewayResilienceDataStorageNamespace = "gateway-resilience-ds"
+	// GatewayResilienceInterServiceCAConfigMap is kept separate from the shared
+	// cluster CA because the isolated DataStorage stack has its own trust root.
+	GatewayResilienceInterServiceCAConfigMap = "inter-service-ca-gateway-resilience"
+
+	// GatewayResilienceDataStorageAPIHostPort exposes the isolated
+	// DataStorage instance's API to the host so
+	// triggerGatewayResilienceSignalAndVerifyAudit can query its audit
+	// trail directly by correlation_id after recovery. Container port is
+	// ResilienceDSNodePortAPI (30082, datastorage_isolated_instance.go) --
+	// safe to reuse verbatim since this is a distinct Kind cluster from
+	// the datastorage E2E suite's own isolated instance. See
+	// kind-gateway-config.yaml's extraPortMappings for the host mapping.
+	GatewayResilienceDataStorageAPIHostPort = 28193
+)
+
+// resolveDeployedImage reads back the exact image reference a running
+// Deployment's first container uses, so a dedicated throwaway instance can
+// reuse it verbatim instead of re-deriving a build tag that might drift
+// (registry vs. local build, coverage-instrumented vs. not).
+func resolveDeployedImage(ctx context.Context, kubeconfigPath, namespace, deploymentName string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", namespace, "get", "deployment", deploymentName,
+		"-o", "jsonpath={.spec.template.spec.containers[0].image}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve image for deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+	image := strings.TrimSpace(string(out))
+	if image == "" {
+		return "", fmt.Errorf("empty image resolved for deployment %s/%s", namespace, deploymentName)
+	}
+	return image, nil
+}
+
+// DeployGatewayForDataStorageResilienceTest deploys BOTH a dedicated,
+// isolated DataStorage instance (GatewayResilienceDataStorageNamespace)
+// and the dedicated, throwaway "gateway-resilience" Gateway instance wired
+// to it (datastorage.url/healthUrl both point at the isolated instance over
+// HTTPS), waiting for both to report Ready.
+func DeployGatewayForDataStorageResilienceTest(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) error {
+	imageName, err := resolveDeployedImage(ctx, kubeconfigPath, namespace, "gateway")
+	if err != nil {
+		return fmt.Errorf("failed to resolve gateway image for resilience instance: %w", err)
+	}
+	dsImage, err := resolveDeployedImage(ctx, kubeconfigPath, namespace, "datastorage")
+	if err != nil {
+		return fmt.Errorf("failed to resolve datastorage image for resilience instance: %w", err)
+	}
+	pullPolicy := GetImagePullPolicy()
+
+	if err := DeployIsolatedDataStorageInstance(ctx, GatewayResilienceDataStorageNamespace, kubeconfigPath, dsImage, writer); err != nil {
+		return fmt.Errorf("failed to deploy isolated DataStorage instance for gateway resilience test: %w", err)
+	}
+	isolatedCAPath := filepath.Join(filepath.Dir(kubeconfigPath), "inter-service-ca-"+GatewayResilienceDataStorageNamespace+".pem")
+	if err := ReplicateInterServiceCAConfigMapAtPath(ctx, kubeconfigPath, namespace, isolatedCAPath, GatewayResilienceInterServiceCAConfigMap, writer); err != nil {
+		return fmt.Errorf("failed to replicate isolated DataStorage CA for gateway resilience test: %w", err)
+	}
+	if err := ReplicateTLSSecret(ctx, kubeconfigPath, GatewayResilienceDataStorageNamespace, namespace, "gateway-tls", writer); err != nil {
+		return fmt.Errorf("failed to replicate isolated Gateway TLS Secret for gateway resilience test: %w", err)
+	}
+
+	// The isolated instance's own auth.MiddlewareConfig.Namespace (DD-AUTH-014
+	// SAR check) is its own POD_NAMESPACE (GatewayResilienceDataStorageNamespace),
+	// not gatewayNamespace -- so the "gateway" ServiceAccount's existing
+	// data-storage-client RoleBinding (scoped to gatewayNamespace, covering
+	// the SHARED DataStorage instance deployed there) does not authorize
+	// audit writes to this dedicated instance. Without this, DD-AUDIT-003's
+	// fail-open buffering silently drops every post-recovery audit event
+	// with a 403, and the SOC2 CC8.1 reconstruction assertion below would
+	// find nothing to reconstruct.
+	if err := GrantDataStorageAccessInNamespace(ctx, kubeconfigPath, GatewayResilienceDataStorageNamespace, namespace, "gateway", writer); err != nil {
+		return fmt.Errorf("failed to grant gateway-resilience's ServiceAccount access to the isolated DataStorage instance: %w", err)
+	}
+
+	manifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-resilience-config
+  namespace: %[1]s
+  labels:
+    app: gateway-resilience
+data:
+  config.yaml: |
+    server:
+      listenAddr: ":8080"
+      tls:
+        certDir: /etc/tls
+      maxConcurrentRequests: 100
+      readTimeout: 30s
+      writeTimeout: 30s
+      idleTimeout: 120s
+    datastorage:
+      # #1985 follow-up (2026-08-16): both url (audit writes) and
+      # healthUrl (readiness probe) point at a DEDICATED, ISOLATED
+      # DataStorage instance (GatewayResilienceDataStorageNamespace),
+      # never the shared one -- Journey induces the outage by scaling
+      # that instance's own Deployment to 0 replicas directly (a real
+      # Service-endpoint removal), so no sidecar/proxy/TLS-override is
+      # needed here. The isolated instance uses its namespace-specific
+      # inter-service CA and follows the same HTTPS contract as production.
+      url: "https://data-storage-service.%[2]s.svc.cluster.local:8080"
+      healthUrl: "https://data-storage-service.%[2]s.svc.cluster.local:8080/readyz"
+      timeout: 10s
+      buffer:
+        bufferSize: 10000
+        batchSize: 100
+        flushInterval: 1s
+        maxRetries: 3
+    processing:
+      environment:
+        cacheTtl: 5s
+        configmapNamespace: %[1]s
+        configmapName: "kubernaut-environment-overrides"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-resilience
+  namespace: %[1]s
+  labels:
+    app: gateway-resilience
+    kubernaut.ai/resilience-test: "datastorage-1985"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-resilience
+  template:
+    metadata:
+      labels:
+        app: gateway-resilience
+    spec:
+      serviceAccountName: gateway
+      terminationGracePeriodSeconds: 5
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: gateway
+          image: %[3]s
+          imagePullPolicy: %[4]s
+          args:
+            - "--config=/etc/gateway/config.yaml"
+          env:
+            - name: TLS_CA_FILE
+              value: /etc/tls-ca/ca.crt
+            - name: KUBERNAUT_CONTROLLER_NAMESPACE
+              value: %[1]s
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gateway
+              readOnly: true
+            - name: tls-certs
+              mountPath: /etc/tls
+              readOnly: true
+            - name: tls-ca
+              mountPath: /etc/tls-ca
+              readOnly: true
+          # No startupProbe/readinessProbe gating the pod's OWN Service
+          # endpoints here on purpose: the whole point of this dedicated
+          # instance is to let the test poll its /readyz directly via the
+          # host-reachable NodePort below and observe the real transition,
+          # rather than have kubelet silently pull it out of rotation.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+      volumes:
+        - name: config
+          configMap:
+            name: gateway-resilience-config
+        - name: tls-certs
+          secret:
+            secretName: gateway-tls
+        - name: tls-ca
+          configMap:
+            name: %[7]s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-resilience-service
+  namespace: %[1]s
+  labels:
+    app: gateway-resilience
+spec:
+  type: NodePort
+  selector:
+    app: gateway-resilience
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: %[5]d
+    - name: health
+      protocol: TCP
+      port: 8081
+      targetPort: 8081
+      nodePort: %[6]d
+`, namespace, GatewayResilienceDataStorageNamespace, imageName, pullPolicy, GatewayResilienceAPINodePort, GatewayResilienceHealthNodePort, GatewayResilienceInterServiceCAConfigMap)
+
+	if err := kubectlApplyManifest(ctx, kubeconfigPath, writer, manifest); err != nil {
+		return fmt.Errorf("failed to deploy gateway-resilience: %w", err)
+	}
+
+	return waitForDeploymentReadyWithTimeout(ctx, kubeconfigPath, namespace, "gateway-resilience", 90*time.Second, writer)
+}
+
+// TeardownGatewayForDataStorageResilienceTest deletes everything
+// DeployGatewayForDataStorageResilienceTest created (the gateway-resilience
+// instance plus its dedicated, isolated DataStorage instance). Best-effort.
+func TeardownGatewayForDataStorageResilienceTest(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) {
+	del := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
+		"delete", "deployment,service,configmap", "-l", "app=gateway-resilience", "--ignore-not-found", "--wait=false")
+	del.Stdout = writer
+	del.Stderr = writer
+	if err := del.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  failed to delete gateway-resilience resources: %v\n", err)
+	}
+
+	delCA := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "-n", namespace,
+		"delete", "configmap", GatewayResilienceInterServiceCAConfigMap, "--ignore-not-found")
+	delCA.Stdout = writer
+	delCA.Stderr = writer
+	if err := delCA.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  failed to delete %s ConfigMap: %v\n", GatewayResilienceInterServiceCAConfigMap, err)
+	}
+
+	if err := TeardownIsolatedDataStorageInstance(ctx, GatewayResilienceDataStorageNamespace, kubeconfigPath, writer); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  failed to teardown isolated DataStorage instance: %v\n", err)
+	}
+}
+
+// gatewayManifest generates the full Gateway multi-document YAML manifest as an inline
+// template. This eliminates static YAML files that can drift from code expectations.
+// Delegates to gatewayRBACManifest + gatewayWorkloadManifest for external callers
+// (e.g., GatewayCoverageManifest) that need the combined manifest.
+//
+// Standardization: All kubernaut E2E services use inline YAML templates piped to
+// kubectl apply -f - (same pattern as AA, SP, RO, EM, WE, KA).
+func gatewayManifest(imageName string, enableCoverage bool) string {
+	return gatewayRBACManifest() + gatewayWorkloadManifest(imageName, enableCoverage)
+}
+
+// deployGatewayService deploys Gateway service using an inline YAML template.
+// Applies RBAC first, then workload after 2s propagation delay to avoid API race
+// where SA may not be visible when the pod is created.
+// Standardized: same pattern as AA, SP, RO, EM, WE, KA (no static YAML files).
+func deployGatewayService(ctx context.Context, namespace, kubeconfigPath, gatewayImageName string, writer io.Writer) error {
+	if gatewayImageName == "" {
+		return fmt.Errorf("gatewayImageName parameter is required")
+	}
+
+	_, _ = fmt.Fprintf(writer, "   Using Gateway image: %s\n", gatewayImageName)
+
+	// Apply RBAC first (SA + ClusterRole + ClusterRoleBinding)
+	rbacManifest := gatewayRBACManifest()
+	rbacCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	rbacCmd.Stdin = strings.NewReader(rbacManifest)
+	rbacCmd.Stdout = writer
+	rbacCmd.Stderr = writer
+	if err := rbacCmd.Run(); err != nil {
+		return fmt.Errorf("kubectl apply Gateway RBAC failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "   Waiting 2s for RBAC API propagation...")
+	time.Sleep(2 * time.Second)
+
+	// Apply workload (ConfigMap + Deployment + Service)
+	workloadManifest := gatewayWorkloadManifest(gatewayImageName, false)
+	workloadCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	workloadCmd.Stdin = strings.NewReader(workloadManifest)
+	workloadCmd.Stdout = writer
+	workloadCmd.Stderr = writer
+	if err := workloadCmd.Run(); err != nil {
+		return fmt.Errorf("kubectl apply Gateway workload failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "   Waiting for Gateway pod (may take up to 5 minutes for RBAC + initial startup)...")
+	waitCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"wait", "--for=condition=ready", "pod",
+		"-l", "app=gateway",
+		"-n", namespace,
+		"--timeout=300s")
+	waitCmd.Stdout = writer
+	waitCmd.Stderr = writer
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("gateway pod not ready: %w", err)
+	}
+
+	return nil
+}
+func BuildGatewayImageWithCoverage(writer io.Writer) error {
+	projectRoot := getProjectRoot()
+	if projectRoot == "" {
+		return fmt.Errorf("project root not found")
+	}
+
+	dockerfilePath := filepath.Join(projectRoot, "docker", "gateway.Dockerfile")
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		return fmt.Errorf("gateway Dockerfile not found at %s", dockerfilePath)
+	}
+
+	containerCmd := containerRuntimePodman
+	if _, err := exec.LookPath(containerRuntimePodman); err != nil {
+		containerCmd = containerRuntimeDocker
+	}
+
+	// Use unique image tag with coverage suffix
+	imageTag := e2eTestCoverageTag
+	imageName := fmt.Sprintf("localhost/kubernaut-gateway:%s", imageTag)
+	_, _ = fmt.Fprintf(writer, "  📦 Building Gateway with coverage: %s\n", imageName)
+
+	// Build with GOFLAGS=-cover for E2E coverage
+	// Using go-toolset:1.26 (no dnf update) reduces build time from 10min to 2-3min
+	// CRITICAL: --no-cache ensures latest code changes are included (DD-TEST-002)
+	cmd := exec.CommandContext(context.Background(), containerCmd, "build",
+		"--no-cache", // Force fresh build to include latest code changes
+		"-t", imageName,
+		"-f", dockerfilePath,
+		"--build-arg", "GOFLAGS=-cover",
+		projectRoot,
+	)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	cmd.Dir = projectRoot
+
+	return cmd.Run()
+}
+
+func GetGatewayCoverageImageTag() string {
+	return e2eTestCoverageTag
+}
+
+func GetGatewayCoverageFullImageName() string {
+	return fmt.Sprintf("localhost/kubernaut-gateway:%s", GetGatewayCoverageImageTag())
+}
+
+func LoadGatewayCoverageImage(clusterName string, writer io.Writer) error {
+	imageTag := GetGatewayCoverageImageTag()
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("kubernaut-gateway-%s.tar", imageTag))
+	imageName := GetGatewayCoverageFullImageName()
+
+	_, _ = fmt.Fprintf(writer, "  Saving coverage image to tar file: %s...\n", tmpFile)
+	saveCmd := exec.CommandContext(context.Background(), containerRuntimePodman, "save",
+		"-o", tmpFile,
+		imageName,
+	)
+	saveCmd.Stdout = writer
+	saveCmd.Stderr = writer
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to save image: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "  Loading coverage image into Kind...")
+	loadCmd := exec.CommandContext(context.Background(), "kind", "load", "image-archive",
+		tmpFile,
+		"--name", clusterName,
+	)
+	loadCmd.Stdout = writer
+	loadCmd.Stderr = writer
+	if err := loadCmd.Run(); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to load image: %w", err)
+	}
+
+	_ = os.Remove(tmpFile)
+
+	// CRITICAL: Remove Podman image immediately to free disk space
+	// Image is now in Kind, Podman copy is duplicate
+	_, _ = fmt.Fprintf(writer, "  🗑️  Removing Podman image to free disk space...\n")
+	rmiCmd := exec.CommandContext(context.Background(), containerRuntimePodman, "rmi", "-f", imageName)
+	rmiCmd.Stdout = writer
+	rmiCmd.Stderr = writer
+	if err := rmiCmd.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "  ⚠️  Failed to remove Podman image (non-fatal): %v\n", err)
+	} else {
+		_, _ = fmt.Fprintf(writer, "  ✅ Podman image removed: %s\n", imageName)
+	}
+
+	_, _ = fmt.Fprintf(writer, "  ✅ Coverage image loaded and temp file cleaned\n")
+	return nil
+}
+
+// GatewayCoverageManifest returns the coverage-enabled Gateway manifest.
+// Delegates to the unified gatewayManifest() with coverage enabled.
+func GatewayCoverageManifest(imageName string) string {
+	return gatewayManifest(imageName, true)
+}
+
+// DeployGatewayCoverageManifest deploys Gateway with coverage instrumentation.
+// Applies RBAC first, then workload after 2s propagation delay to avoid API race.
+// Uses the unified inline YAML template with coverage=true.
+func DeployGatewayCoverageManifest(ctx context.Context, kubeconfigPath string, gatewayImageName string, writer io.Writer) error {
+	// Apply RBAC first (SA + ClusterRole + ClusterRoleBinding)
+	rbacManifest := gatewayRBACManifest()
+	rbacCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	rbacCmd.Stdin = strings.NewReader(rbacManifest)
+	rbacCmd.Stdout = writer
+	rbacCmd.Stderr = writer
+	if err := rbacCmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply Gateway RBAC: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "   Waiting 2s for RBAC API propagation...")
+	time.Sleep(2 * time.Second)
+
+	// Apply workload (ConfigMap + Deployment + Service)
+	workloadManifest := gatewayWorkloadManifest(gatewayImageName, true)
+	workloadCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	workloadCmd.Stdin = strings.NewReader(workloadManifest)
+	workloadCmd.Stdout = writer
+	workloadCmd.Stderr = writer
+	if err := workloadCmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply Gateway workload: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "⏳ Waiting for Gateway to be ready...")
+	return waitForGatewayHealth(ctx, writer, 90*time.Second)
+}
+
+// waitForGatewayHealth waits for the Gateway service to become healthy.
+// Issue #753: Uses dedicated health port (8081) instead of the API port (8080).
+func waitForGatewayHealth(ctx context.Context, writer io.Writer, timeout time.Duration) error {
+	healthURL := fmt.Sprintf("http://localhost:%d/readyz", GatewayE2EHealthPort)
+	return WaitForHTTPHealth(ctx, healthURL, timeout, writer)
+}
+
+// ScaleDownGatewayForCoverage is deprecated.
+// Use CollectE2EBinaryCoverage from coverage.go instead, which handles
+// scale-down, extraction, and conversion in a single call.

@@ -1,0 +1,256 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package aianalysis_test
+
+import (
+	"context"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/go-logr/logr"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/jordigilh/kubernaut/internal/controller/aianalysis"
+	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/creator"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
+	aistatus "github.com/jordigilh/kubernaut/pkg/aianalysis/status"
+	"github.com/jordigilh/kubernaut/test/shared/mocks"
+)
+
+// ============================================================================
+// AA CONTROLLER CASCADE CANCEL TESTS (#1421, amended #2214)
+//
+// BR-INTERACTIVE-010 SC-9 (AF-owned IS terminal-phase closure): on external
+// cascade-cancel, AA no longer writes InvestigationSession directly -- it
+// deletes the AgentSession, and AF's AgentSessionTerminalCloseReconciler
+// (watching AgentSession) closes the correlated IS to Cancelled. This lets
+// KA's already-proven Dispatcher.cancelOnDelete stop the in-flight
+// investigation goroutine too, which a Status-only write would not.
+//
+// FedRAMP Control Objectives:
+//   IR-4 (Incident Handling): Cancelled remediation sessions MUST be terminated
+//     promptly -- orphaned AI investigation sessions represent uncontrolled
+//     incident handling that violates IR-4(1) automated response mechanisms.
+//   AC-6 (Least Privilege): Active KA sessions hold elevated cluster access;
+//     failing to revoke them when the parent operation is cancelled violates
+//     the principle of least privilege by maintaining unnecessary access.
+//   SI-4 (Information System Monitoring): All state transitions in the
+//     remediation chain must be observable; a cancelled RR with an active
+//     AgentSession creates a blind spot in monitoring.
+// ============================================================================
+var _ = Describe("AA Controller Cascade Cancel to AgentSession (#1421, #2214) [IR-4, AC-6, SI-4]", func() {
+
+	var (
+		ctx         context.Context
+		scheme      *runtime.Scheme
+		testMetrics *metrics.Metrics
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		scheme = runtime.NewScheme()
+		_ = clientgoscheme.AddToScheme(scheme)
+		_ = aianalysisv1.AddToScheme(scheme)
+		_ = isv1alpha1.AddToScheme(scheme)
+		_ = agentsessionv1.AddToScheme(scheme)
+		testMetrics = metrics.NewMetrics()
+	})
+
+	buildReconciler := func(fakeClient client.Client, agentSessionCreator *creator.AgentSessionCreator) (*aianalysis.AIAnalysisReconciler, *mocks.MockAgentClient) {
+		mockClient := mocks.NewMockAgentClient().WithPhase(agentsessionv1.AgentSessionPhaseInvestigating)
+
+		mockAuditStore := &MockAuditStore{}
+		auditClient := aiaudit.NewAuditClient(mockAuditStore, ctrl.Log.WithName("test-1421-audit"))
+		statusManager := aistatus.NewManager(fakeClient, fakeClient)
+		regoEvaluator := rego.NewEvaluator(rego.Config{PolicyPath: "testdata/policies/always_approve.rego"}, logr.Discard())
+
+		reconciler := &aianalysis.AIAnalysisReconciler{
+			Client:              fakeClient,
+			Scheme:              scheme,
+			Recorder:            record.NewFakeRecorder(20),
+			Log:                 ctrl.Log.WithName("test-1421"),
+			Metrics:             testMetrics,
+			StatusManager:       statusManager,
+			AuditClient:         auditClient,
+			AgentSessionCreator: agentSessionCreator,
+		}
+		investigatingHandler := handlers.NewInvestigatingHandler(
+			mockClient, ctrl.Log.WithName("test-1421-handler"), testMetrics, auditClient,
+			handlers.WithRecorder(record.NewFakeRecorder(20)),
+		)
+		reconciler.InvestigatingHandler.Store(investigatingHandler)
+		reconciler.AnalyzingHandler = handlers.NewAnalyzingHandler(
+			regoEvaluator, ctrl.Log.WithName("test-1421-analyzing"), testMetrics, auditClient,
+		)
+
+		return reconciler, mockClient
+	}
+
+	// UT-AA-2214-001: IR-4(1) -- Automated incident handling deletes the
+	// AgentSession when the parent is cancelled, in place of writing IS.
+	It("UT-AA-2214-001: should delete AgentSession as-<rrName> when AA is Failed with ParentCancelled reason [IR-4(1)]", func() {
+		analysis := &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "ai-1421-001",
+				Namespace:  "default",
+				UID:        types.UID("ai-1421-001-uid"),
+				Generation: 1,
+				Finalizers: []string{"kubernaut.ai/finalizer"},
+			},
+			Spec: aianalysisv1.AIAnalysisSpec{
+				RemediationRequestRef: corev1.ObjectReference{
+					Name:      "rr-1421-001",
+					Namespace: "default",
+				},
+			},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase:              aianalysisv1.PhaseFailed,
+				Reason:             aianalysisv1.ReasonParentCancelled,
+				Message:            "Parent RR entered terminal phase: Cancelled",
+				ObservedGeneration: 1,
+			},
+		}
+		agentSession := &agentsessionv1.AgentSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "as-rr-1421-001",
+				Namespace: "default",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(analysis, agentSession).
+			WithStatusSubresource(analysis).
+			Build()
+
+		reconciler, _ := buildReconciler(fakeClient, creator.NewAgentSessionCreator(fakeClient, scheme))
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: "ai-1421-001", Namespace: "default"},
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		var fetched agentsessionv1.AgentSession
+		getErr := fakeClient.Get(ctx, types.NamespacedName{Name: "as-rr-1421-001", Namespace: "default"}, &fetched)
+		Expect(apierrors.IsNotFound(getErr)).To(BeTrue(), "AgentSession must be deleted on cascade-cancel")
+	})
+
+	// UT-AA-2214-002 (formerly UT-AA-1421-002): AC-6 -- Normal failure paths
+	// must NOT trigger cascade (least privilege scope).
+	It("UT-AA-2214-002: should NOT delete AgentSession when AA is Failed with non-ParentCancelled reason [AC-6]", func() {
+		analysis := &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "ai-1421-002",
+				Namespace:  "default",
+				UID:        types.UID("ai-1421-002-uid"),
+				Generation: 1,
+				Finalizers: []string{"kubernaut.ai/finalizer"},
+			},
+			Spec: aianalysisv1.AIAnalysisSpec{
+				RemediationRequestRef: corev1.ObjectReference{
+					Name:      "rr-1421-002",
+					Namespace: "default",
+				},
+			},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase:              aianalysisv1.PhaseFailed,
+				Reason:             aianalysisv1.ReasonTransientError,
+				Message:            "LLM timeout",
+				ObservedGeneration: 1,
+			},
+		}
+		agentSession := &agentsessionv1.AgentSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "as-rr-1421-002",
+				Namespace: "default",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(analysis, agentSession).
+			WithStatusSubresource(analysis).
+			Build()
+
+		reconciler, _ := buildReconciler(fakeClient, creator.NewAgentSessionCreator(fakeClient, scheme))
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: "ai-1421-002", Namespace: "default"},
+		})
+		Expect(err).ToNot(HaveOccurred())
+
+		var fetched agentsessionv1.AgentSession
+		Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "as-rr-1421-002", Namespace: "default"}, &fetched)).To(Succeed(),
+			"AgentSession must NOT be deleted for non-ParentCancelled reasons")
+	})
+
+	// UT-AA-2214-003 (formerly UT-AA-1421-003): SI-4 -- Controller resilience
+	// under degraded conditions (nil AgentSessionCreator dependency).
+	It("UT-AA-2214-003: should not panic when AgentSessionCreator is nil and reason is ParentCancelled [SI-4]", func() {
+		analysis := &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "ai-1421-003",
+				Namespace:  "default",
+				UID:        types.UID("ai-1421-003-uid"),
+				Generation: 1,
+				Finalizers: []string{"kubernaut.ai/finalizer"},
+			},
+			Spec: aianalysisv1.AIAnalysisSpec{
+				RemediationRequestRef: corev1.ObjectReference{
+					Name:      "rr-1421-003",
+					Namespace: "default",
+				},
+			},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase:              aianalysisv1.PhaseFailed,
+				Reason:             aianalysisv1.ReasonParentCancelled,
+				Message:            "Parent RR entered terminal phase: Cancelled",
+				ObservedGeneration: 1,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(analysis).
+			WithStatusSubresource(analysis).
+			Build()
+
+		reconciler, _ := buildReconciler(fakeClient, nil)
+
+		Expect(func() {
+			_, _ = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "ai-1421-003", Namespace: "default"},
+			})
+		}).ToNot(Panic(), "Reconcile must not panic when AgentSessionCreator is nil")
+	})
+})

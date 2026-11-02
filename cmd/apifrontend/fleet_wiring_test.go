@@ -1,0 +1,358 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	mockModel = "mock-model"
+	testKey   = "test-key"
+	// unreachableTestEndpoint is a deliberately-unreachable address (port 1
+	// on loopback, RFC 6335 "system port" almost never listening) used
+	// across this package's fleet/DataStorage readiness wiring tests to
+	// force mcpclient.NewResilient/health-check dials to fail fast rather
+	// than hang or flake on an actually-reachable-but-wrong endpoint.
+	unreachableTestEndpoint = "http://127.0.0.1:1/unreachable"
+)
+
+// backendGVRListKinds mirrors the GVR the EAIGWRegistry watches (Envoy AI
+// Gateway Backend CRDs), needed for the fake dynamic client's list-kind map.
+var backendGVRListKinds = map[schema.GroupVersionResource]string{
+	registry.BackendGVR: "BackendList",
+}
+
+// ---------------------------------------------------------------------------
+// IT-AF-054-005: cmd/apifrontend must wire FleetReaderFactory/ClusterRegistry
+// from Config.Fleet — this is the actual production entry point consumed by
+// AgentConfig (pkg/apifrontend/agent/root.go:134-142). Existing
+// IT-AF-054-001..004 (test/integration/apifrontend/fleet) construct
+// AgentConfig/ResourceReaderFactory directly, bypassing cmd/ entirely, which
+// is why this wiring gap stayed invisible (Pyramid Invariant violation).
+// ---------------------------------------------------------------------------
+
+func TestBuildFleetReaderDeps_Disabled_NoOp(t *testing.T) {
+	t.Parallel()
+
+	deps := &backendDeps{}
+	cfg := &config.Config{} // Fleet.Enabled defaults to false
+
+	err := buildFleetReaderDeps(context.Background(), cfg, deps, logr.Discard())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deps.FleetReaderFactory != nil {
+		t.Error("IT-AF-054-005: FleetReaderFactory must remain nil when fleet is disabled")
+	}
+	if deps.FleetClusterRegistry != nil {
+		t.Error("IT-AF-054-005: FleetClusterRegistry must remain nil when fleet is disabled")
+	}
+}
+
+// TestBuildFleetReaderDeps_Enabled_WiresReaderFactoryAndClusterRegistry is
+// IT-AF-054-005: proves cmd/apifrontend actually constructs
+// FleetReaderFactory and FleetClusterRegistry from Config.Fleet when
+// federation is enabled and the MCP Gateway is reachable — the real
+// production dispatch path that buildA2AHandler threads into
+// agentpkg.AgentConfig. Uses the mock-mcp-gateway test double (also used by
+// pkg/fleet/mcpclient's own discovery tests) so mcpclient.NewResilient's
+// initial connection succeeds synchronously, isolating the wiring assertion
+// from network reachability concerns.
+func TestBuildFleetReaderDeps_Enabled_WiresReaderFactoryAndClusterRegistry(t *testing.T) {
+	t.Parallel()
+
+	gw := mockgw.NewMockGateway()
+	t.Cleanup(gw.Close)
+
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), backendGVRListKinds)
+
+	deps := &backendDeps{k8sDynClient: dynClient}
+	cfg := &config.Config{}
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = gw.URL()
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := buildFleetReaderDeps(ctx, cfg, deps, logr.Discard())
+	if err != nil {
+		t.Fatalf("IT-AF-054-005: unexpected error wiring fleet reader deps: %v", err)
+	}
+	if fc := deps.FleetResilientClient(); fc != nil {
+		defer func() { _ = fc.Close() }()
+	}
+	if deps.fleetReadinessGate != nil {
+		defer deps.fleetReadinessGate.Stop()
+	}
+	if deps.FleetClusterRegistry != nil {
+		defer deps.FleetClusterRegistry.Stop()
+	}
+
+	if deps.FleetReaderFactory == nil {
+		t.Error("IT-AF-054-005: FleetReaderFactory must be wired from Config.Fleet when fleet is enabled — " +
+			"this is the field AgentConfig needs for kubectl_get/kubectl_list cross-cluster routing (BR-FLEET-054)")
+	}
+	if deps.FleetClusterRegistry == nil {
+		t.Error("IT-AF-054-005: FleetClusterRegistry must be wired from Config.Fleet when fleet is enabled — " +
+			"this is the field AgentConfig needs to register the list_clusters tool (BR-FLEET-054)")
+	}
+	if !deps.FleetReady() {
+		t.Error("IT-FLEET-READY-AF-001b: FleetReady() must report true immediately when the MCP Gateway is reachable")
+	}
+}
+
+// TestBuildFleetReaderDeps_EnabledUnreachableEndpoint_SelfHeals proves issue
+// #2315's fix: an unreachable Fleet MCP Gateway at startup must never error
+// out of buildFleetReaderDeps or block AF startup indefinitely, and —
+// unlike the pre-#2315 contract this test used to pin (FleetReaderFactory
+// == nil forever) — FleetReaderFactory must still be built (from the
+// resilient client's SessionProvider) and FleetClusterRegistry
+// (K8s-watch-based, independent of the MCP session) must still be wired,
+// so multi-cluster tool routing self-heals once the background reconnect
+// succeeds, instead of staying disabled until a pod restart.
+//
+// #1553 [readiness gate Wave 5]: the resilient client is kept (not
+// discarded) on an initial connection failure, and a readiness.Gate is
+// still constructed around it, so deps.FleetReady() correctly reports
+// NotReady (and the periodic probe keeps retrying) instead of the client
+// being silently lost with no path back to healthy short of a restart.
+// Mirrors the identical change made to GW/RO/EM/SP/WE.
+func TestBuildFleetReaderDeps_EnabledUnreachableEndpoint_SelfHeals(t *testing.T) {
+	t.Parallel()
+
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), backendGVRListKinds)
+
+	deps := &backendDeps{k8sDynClient: dynClient}
+	cfg := &config.Config{}
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = unreachableTestEndpoint
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := buildFleetReaderDeps(ctx, cfg, deps, logr.Discard())
+	if fc := deps.FleetResilientClient(); fc != nil {
+		t.Cleanup(func() { _ = fc.Close() })
+	}
+	if err != nil {
+		t.Fatalf("unexpected error for an unreachable Fleet MCP Gateway endpoint: %v", err)
+	}
+	if deps.FleetReaderFactory == nil {
+		t.Error("IT-AF-2315-001: FleetReaderFactory must still be built even when the Fleet MCP Gateway is " +
+			"initially unreachable, so it self-heals once the background reconnect succeeds")
+	}
+	if deps.FleetClusterRegistry == nil {
+		t.Error("IT-AF-2315-001: FleetClusterRegistry must still be wired (K8s-watch-based, independent of " +
+			"the MCP session) even when the Fleet MCP Gateway is initially unreachable")
+	}
+	if deps.FleetResilientClient() == nil {
+		t.Fatal("IT-AF-1553-001: *mcpclient.ResilientClient must be kept (not discarded) when the Fleet " +
+			"MCP Gateway is unreachable so the readiness gate's periodic probe can keep retrying it (#1553)")
+	}
+	if deps.FleetReady() {
+		t.Error("IT-AF-1553-001: FleetReady() must report false when the initial connection failed")
+	}
+	t.Cleanup(deps.fleetReadinessGate.Stop)
+}
+
+// TestBuildFleetReaderDeps_ResilienceOverrideReachesNewResilient proves the
+// issue #2262 Phase 2 wiring: a chart-shaped Config.Fleet.Resilience
+// override (fleet.FleetResilienceConfig) actually reaches the real
+// mcpclient.NewResilient call inside buildFleetReaderDeps
+// (cmd/apifrontend/backend_deps.go), not just
+// mcpclient.ResilienceConfigFromFleet in isolation (already unit-tested by
+// UT-FLEET-RES-013/014). Asserts via ResilientClient.ResilienceConfig()
+// rather than timing, so the test is deterministic.
+func TestBuildFleetReaderDeps_ResilienceOverrideReachesNewResilient(t *testing.T) {
+	t.Parallel()
+
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), backendGVRListKinds)
+
+	deps := &backendDeps{k8sDynClient: dynClient}
+	cfg := &config.Config{}
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = unreachableTestEndpoint
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+	cfg.Fleet.Resilience = fleet.FleetResilienceConfig{
+		ConnectTimeout:       7 * time.Second,
+		DiscoverProbeTimeout: 3 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := buildFleetReaderDeps(ctx, cfg, deps, logr.Discard())
+	if err != nil {
+		t.Fatalf("unexpected error for an unreachable Fleet MCP Gateway endpoint: %v", err)
+	}
+	fc := deps.FleetResilientClient()
+	if fc == nil {
+		t.Fatal("expected a kept (non-nil) *mcpclient.ResilientClient even for an unreachable endpoint (#1553)")
+	}
+	t.Cleanup(func() { _ = fc.Close() })
+	if deps.fleetReadinessGate != nil {
+		t.Cleanup(deps.fleetReadinessGate.Stop)
+	}
+
+	got := fc.ResilienceConfig()
+	want := mcpclient.ResilienceConfigFromFleet(cfg.Fleet.Resilience)
+	if got != want {
+		t.Fatalf("issue #2262 Phase 2: Config.Fleet.Resilience did not reach the real NewResilient call inside "+
+			"buildFleetReaderDeps -- got %+v, want %+v", got, want)
+	}
+	if got.ConnectTimeout != 7*time.Second || got.DiscoverProbeTimeout != 3*time.Second {
+		t.Fatalf("overridden fields did not survive the chart-shaped override -> NewResilient round trip: %+v", got)
+	}
+	defaults := mcpclient.DefaultResilienceConfig()
+	if got.InitialInterval != defaults.InitialInterval || got.MaxInterval != defaults.MaxInterval || got.MaxElapsedTime != defaults.MaxElapsedTime {
+		t.Fatalf("fields left unset in the override must keep mcpclient.DefaultResilienceConfig()'s values, got %+v", got)
+	}
+}
+
+// TestBuildFleetReaderDeps_Enabled_WithNamespace_ScopesClusterRegistryWatch is
+// IT-AF-020-001 (#1686, BR-RBAC-020): proves cmd/apifrontend threads
+// Config.Fleet.Namespace into registry.RegistryConfig instead of always
+// passing registry.RegistryConfig{} — the previously-hardcoded gap that
+// forced a cluster-wide watch (and matching cluster-wide RBAC) even when an
+// operator configured a namespace scope. Asserted via the fake dynamic
+// client's recorded actions: EAIGWRegistry's informer factory
+// (NewFilteredDynamicSharedInformerFactory) issues its list/watch calls
+// against whatever namespace RegistryConfig.Namespace carries.
+func TestBuildFleetReaderDeps_Enabled_WithNamespace_ScopesClusterRegistryWatch(t *testing.T) {
+	t.Parallel()
+
+	gw := mockgw.NewMockGateway()
+	t.Cleanup(gw.Close)
+
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), backendGVRListKinds)
+
+	deps := &backendDeps{k8sDynClient: dynClient}
+	cfg := &config.Config{}
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = gw.URL()
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+	cfg.Fleet.Namespace = "team-a"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := buildFleetReaderDeps(ctx, cfg, deps, logr.Discard())
+	if err != nil {
+		t.Fatalf("IT-AF-020-001: unexpected error wiring fleet reader deps: %v", err)
+	}
+	if fc := deps.FleetResilientClient(); fc != nil {
+		defer func() { _ = fc.Close() }()
+	}
+	if deps.fleetReadinessGate != nil {
+		defer deps.fleetReadinessGate.Stop()
+	}
+	if deps.FleetClusterRegistry != nil {
+		defer deps.FleetClusterRegistry.Stop()
+	}
+
+	if deps.FleetClusterRegistry == nil {
+		t.Fatal("IT-AF-020-001: FleetClusterRegistry must be wired when fleet is enabled")
+	}
+
+	scoped := false
+	for _, action := range dynClient.Actions() {
+		if action.GetResource() != registry.BackendGVR {
+			continue
+		}
+		if action.GetNamespace() == "team-a" {
+			scoped = true
+			break
+		}
+	}
+	if !scoped {
+		t.Error("IT-AF-020-001: Config.Fleet.Namespace must thread into registry.RegistryConfig.Namespace — " +
+			"expected the ClusterRegistry's informer to List/Watch backends.gateway.envoyproxy.io scoped to " +
+			"namespace \"team-a\", but no such namespaced action was recorded (BR-RBAC-020, #1686)")
+	}
+}
+
+// stubFleetClusterRegistry is a minimal registry.ClusterRegistry for testing
+// AgentConfig threading without a live MCP Gateway or CRD watcher.
+type stubFleetClusterRegistry struct{}
+
+func (stubFleetClusterRegistry) List() []registry.ClusterInfo { return nil }
+func (stubFleetClusterRegistry) Get(_ string) (registry.ClusterInfo, bool) {
+	return registry.ClusterInfo{}, false
+}
+func (stubFleetClusterRegistry) WatchClusters() <-chan registry.ClusterEvent { return nil }
+func (stubFleetClusterRegistry) Ready() bool                                 { return true }
+func (stubFleetClusterRegistry) Start(_ context.Context) error               { return nil }
+func (stubFleetClusterRegistry) Stop()                                       {}
+
+var _ registry.ClusterRegistry = stubFleetClusterRegistry{}
+
+// TestBuildA2AHandler_ThreadsFleetReaderFactory proves buildA2AHandler passes
+// backendDeps.FleetReaderFactory/FleetClusterRegistry through to
+// agentpkg.AgentConfig (mirrors the existing TestBuildA2AHandler_Threads*
+// convention for other backend fields). Without this wiring, list_clusters
+// would never be registered and kubectl_get/list would silently ignore
+// cluster_id, exactly the production bug IT-AF-054-005 catches.
+func TestBuildA2AHandler_ThreadsFleetReaderFactory(t *testing.T) {
+	t.Parallel()
+
+	mockLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`))
+	}))
+	t.Cleanup(mockLLM.Close)
+
+	d := testHandlerDeps(func(d *handlerDeps) {
+		d.Cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		d.Cfg.Agent.LLM.Endpoint = mockLLM.URL
+		d.Cfg.Agent.LLM.Model = mockModel
+		d.Cfg.Agent.LLM.APIKey = testKey
+		d.Backends.FleetReaderFactory = tools.ResourceReaderFactory(
+			func(_ context.Context, _ string) (tools.ResourceReader, error) {
+				return &tools.DynamicResourceReader{}, nil
+			})
+		d.Backends.FleetClusterRegistry = stubFleetClusterRegistry{}
+	})
+
+	h, err := buildA2AHandler(context.Background(), d)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h == nil {
+		t.Fatal("IT-AF-054-005: handler must not be nil — FleetReaderFactory/ClusterRegistry threading must not break construction")
+	}
+}

@@ -1,0 +1,409 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tools_test
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"time"
+
+	"github.com/a2aproject/a2a-go/a2a"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+)
+
+var _ = Describe("bridgeEventsCollectSummary RCA Parsing — TP-1395-1396 (#1396)", func() {
+	DescribeTable("UT-AF-2496-001: complete-event delivery keeps selection confidence independent and rejected reasoning non-executable (BR-KA-016, AU-3, SI-10)",
+		func(rejected bool) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			DeferCleanup(cancel)
+			queue := &bridgeQueue{}
+			ctx = launcher.WithEventBridge(ctx, queue, "task-live-2496", "context-live-2496", nil)
+			field, identity, outcome := "selected_workflow", "workflow_id", "accepted"
+			if rejected {
+				field, identity, outcome = "selection_assessment", "proposed_workflow_id", "rejected"
+			}
+			reasoning := map[string]any{"evidence_basis": "Current limit observed", "prior_outcome_relevance": "Prior Full zero"}
+			if !rejected {
+				reasoning["expected_mechanism"] = "Increase current limit"
+			}
+			payload := map[string]any{
+				"severity": "critical", "confidence": .93, "rca_summary": "Current memory pressure",
+				field: map[string]any{
+					identity: "catalog-id-2496", "workflow_name": "increase-memory", "workflow_selection_confidence": 0.,
+					"repeat_justification": reasoning, "repeat_justification_required": true, "prior_workflow_match": true,
+					"repeat_validation_outcome": outcome, "handoff_digest": "sha256:" + strings.Repeat("b", 64),
+					"prior_remediation_uids": []string{"private-prior-2496"}, "execution_bundle": "private-bundle-2496",
+					"parameters": map[string]any{"PASSWORD": "private-parameter-2496"},
+				},
+			}
+			wire, err := json.Marshal(payload)
+			Expect(err).NotTo(HaveOccurred())
+			before := append([]byte(nil), wire...)
+			events := make(chan ka.InvestigationEvent, 1)
+			events <- ka.InvestigationEvent{Type: ka.EventTypeComplete, Data: wire}
+			close(events)
+			cfg := &tools.InvestigateConfig{MCPClient: &ka.MockMCPClient{
+				StartInvestigationFn: func(context.Context, ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					return &ka.StartInvestigationResult{SessionID: "session-live-2496", Status: "completed", Events: events}, nil
+				},
+			}}
+			result, err := tools.HandleInvestigationMCPWithRegistry(ctx, cfg, tools.InvestigateMCPArgs{RRID: "rr-live-2496"}, true, "alice")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RCA).NotTo(BeNil())
+			Expect(result.RCA.Confidence).To(Equal(.93))
+			var artifacts []*a2a.TaskArtifactUpdateEvent
+			for _, event := range queue.Events() {
+				if artifact, ok := event.(*a2a.TaskArtifactUpdateEvent); ok {
+					artifacts = append(artifacts, artifact)
+				}
+			}
+			Expect(artifacts).To(HaveLen(1), "the blocking handler emits one final live summary, not an audit-read reconstruction")
+			artifact := artifacts[0].Artifact
+			Expect(artifact.Metadata).To(HaveKeyWithValue("schema", "investigation_summary"))
+			Expect(artifact.Parts).To(HaveLen(2))
+			part, ok := artifact.Parts[0].(a2a.DataPart)
+			Expect(ok).To(BeTrue())
+			Expect(part.Data["rca"]).To(HaveKeyWithValue("confidence", .93))
+			Expect(part.Data[field]).To(HaveKeyWithValue(identity, "catalog-id-2496"))
+			Expect(part.Data[field]).To(HaveKeyWithValue("workflow_selection_confidence", 0.))
+			Expect(part.Data[field]).To(HaveKeyWithValue("repeat_validation_outcome", outcome))
+			if rejected {
+				Expect(part.Data).NotTo(HaveKey("selected_workflow"))
+				Expect(part.Data[field]).NotTo(HaveKey("workflow_id"))
+			} else {
+				Expect(part.Data).NotTo(HaveKey("selection_assessment"))
+			}
+			emitted, err := json.Marshal(part.Data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(emitted)).NotTo(ContainSubstring("private-"))
+			Expect(string(emitted)).NotTo(ContainSubstring("prior_remediation_uids"))
+			Expect(string(emitted)).NotTo(ContainSubstring("execution_bundle"))
+			Expect(string(emitted)).NotTo(ContainSubstring("parameters"))
+			Expect(artifact.Parts[1]).To(BeAssignableToTypeOf(a2a.TextPart{}))
+			if rejected {
+				result.RCA.SelectionAssessment.ProposedWorkflowID = "mutated-result"
+			} else {
+				result.RCA.SelectedWorkflow.WorkflowID = "mutated-result"
+			}
+			after, err := json.Marshal(part.Data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(Equal(emitted), "mutating the parsed result cannot rewrite an emitted artifact")
+			Expect(wire).To(Equal(before), "projection never modifies the incoming event")
+		},
+		Entry("accepted current workflow", false),
+		Entry("rejected proposal with incomplete bounded reasoning", true),
+	)
+
+	Describe("UT-AF-1396-020: bridgeEventsCollectSummary populates RCA from complete event Data", func() {
+		It("should extract structured RCA from EventTypeComplete Data field", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+
+			rcaPayload := map[string]interface{}{
+				"severity":         "critical",
+				"confidence":       0.92,
+				"causal_chain":     []string{"Memory leak", "OOMKill"},
+				"target":           "Deployment/worker in production",
+				"rca_summary":      "OOMKill caused by memory leak",
+				"total_llm_turns":  17,
+				"total_tool_calls": 19,
+			}
+			rcaJSON, err := json.Marshal(rcaPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeTokenDelta,
+				Data: json.RawMessage(`{"delta":"Investigating..."}`),
+			}
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+				Data: rcaJSON,
+			}
+
+			ctx := context.Background()
+			summary, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			Expect(summary).To(ContainSubstring("Investigating..."))
+			Expect(rca).NotTo(BeNil(), "RCA should be populated from complete event Data")
+			Expect(rca.Severity).To(Equal("critical"))
+			Expect(rca.Confidence).To(BeNumerically("~", 0.92, 0.001))
+			Expect(rca.CausalChain).To(ConsistOf("Memory leak", "OOMKill"))
+			Expect(rca.Target).To(Equal("Deployment/worker in production"))
+			Expect(rca.RCASummary).To(Equal("OOMKill caused by memory leak"))
+			Expect(rca.TotalLLMTurns).To(Equal(17))
+			Expect(rca.TotalToolCalls).To(Equal(19))
+		})
+	})
+
+	Describe("UT-AF-1396-021: bridgeEventsCollectSummary with empty Data on complete event", func() {
+		It("should fall back to text summary with nil RCA", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeTokenDelta,
+				Data: json.RawMessage(`{"delta":"Found the issue."}`),
+			}
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+			}
+
+			ctx := context.Background()
+			summary, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			Expect(summary).To(Equal("Found the issue."))
+			Expect(rca).To(BeNil(), "RCA should be nil when complete event has no Data")
+		})
+	})
+
+	// #1918: AF's phase_guard.go harness gate needs is_actionable/has_workflow
+	// mirrored onto InvestigateRCA so it can decide Phase 2 reachability
+	// independent of the model's own reading of the RCA narrative.
+	Describe("UT-AF-1918-004: bridgeEventsCollectSummary mirrors is_actionable/has_workflow from the complete event Data", func() {
+		It("should populate IsActionable=false and HasWorkflow=false when KA's RCA concluded no remediation is warranted", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+			notActionable := false
+			rcaPayload := map[string]interface{}{
+				"severity":      "info",
+				"confidence":    0.90,
+				"rca_summary":   "Problem self-resolved after pod restart",
+				"is_actionable": notActionable,
+			}
+			rcaJSON, err := json.Marshal(rcaPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			events <- ka.InvestigationEvent{Type: ka.EventTypeComplete, Data: rcaJSON}
+
+			ctx := context.Background()
+			_, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			Expect(rca).NotTo(BeNil())
+			Expect(rca.IsActionable).NotTo(BeNil(),
+				"#1918: IsActionable must be surfaced on InvestigateRCA so phase_guard.go can read it")
+			Expect(*rca.IsActionable).To(BeFalse())
+			Expect(rca.HasWorkflow).To(BeFalse())
+		})
+
+		It("should populate IsActionable=true and HasWorkflow=true when KA's RCA selected a workflow", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+			actionable := true
+			rcaPayload := map[string]interface{}{
+				"severity":      "critical",
+				"confidence":    0.92,
+				"rca_summary":   "OOMKill caused by memory leak",
+				"is_actionable": actionable,
+				"has_workflow":  true,
+			}
+			rcaJSON, err := json.Marshal(rcaPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			events <- ka.InvestigationEvent{Type: ka.EventTypeComplete, Data: rcaJSON}
+
+			ctx := context.Background()
+			_, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			Expect(rca).NotTo(BeNil())
+			Expect(rca.IsActionable).NotTo(BeNil())
+			Expect(*rca.IsActionable).To(BeTrue())
+			Expect(rca.HasWorkflow).To(BeTrue())
+		})
+
+		It("should leave IsActionable nil when KA's payload omits it (older/unset signal)", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+			rcaPayload := map[string]interface{}{
+				"severity":    "warning",
+				"confidence":  0.80,
+				"rca_summary": "Investigation in progress",
+			}
+			rcaJSON, err := json.Marshal(rcaPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			events <- ka.InvestigationEvent{Type: ka.EventTypeComplete, Data: rcaJSON}
+
+			ctx := context.Background()
+			_, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			Expect(rca).NotTo(BeNil())
+			Expect(rca.IsActionable).To(BeNil(),
+				"#1918: an absent is_actionable key must stay nil, not be coerced to false")
+		})
+	})
+})
+
+// =============================================================================
+// Issue #1407: Progressive RCA Emission — early RCA status-update on completion
+// =============================================================================
+
+var _ = Describe("Progressive RCA Emission — #1407", func() {
+
+	Describe("UT-AF-1407-001: SI-4 early RCA emitted as decision status-update on investigation complete", func() {
+		It("should emit a TaskStatusUpdateEvent with metadata.type=decision containing structured RCA", func() {
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(context.Background(), queue, "task-1407-001", "ctx-1407-001", nil)
+
+			events := make(chan ka.InvestigationEvent, 5)
+			rcaPayload := map[string]interface{}{
+				"severity":         "critical",
+				"confidence":       0.92,
+				"causal_chain":     []string{"Memory leak", "OOMKill"},
+				"target":           "Deployment/worker in production",
+				"rca_summary":      "OOMKill caused by memory leak",
+				"total_llm_turns":  17,
+				"total_tool_calls": 19,
+			}
+			rcaJSON, err := json.Marshal(rcaPayload)
+			Expect(err).NotTo(HaveOccurred())
+
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+				Data: rcaJSON,
+			}
+
+			_, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+			Expect(rca).NotTo(BeNil())
+
+			allEvents := queue.Events()
+			var decisionEvents []*a2a.TaskStatusUpdateEvent
+			for _, evt := range allEvents {
+				statusEvt, ok := evt.(*a2a.TaskStatusUpdateEvent)
+				if !ok {
+					continue
+				}
+				metaType, _ := statusEvt.Metadata["type"].(string)
+				if metaType == launcher.MetaTypeDecision {
+					decisionEvents = append(decisionEvents, statusEvt)
+				}
+			}
+			Expect(decisionEvents).To(HaveLen(1),
+				"SI-4: exactly one early RCA decision status-update must be emitted")
+
+			decisionEvt := decisionEvents[0]
+			Expect(decisionEvt.Metadata["schema"]).To(Equal("early_rca"),
+				"SI-4: schema must identify this as early RCA for audit trail differentiation")
+			Expect(decisionEvt.Metadata["schema_version"]).To(Equal("1.0"))
+
+			Expect(decisionEvt.Status.Message).NotTo(BeNil())
+			Expect(decisionEvt.Status.Message.Parts).To(HaveLen(1))
+			textPart, ok := decisionEvt.Status.Message.Parts[0].(a2a.TextPart)
+			Expect(ok).To(BeTrue())
+			Expect(textPart.Text).To(ContainSubstring("critical"),
+				"AU-3: RCA severity must be included for auditable decision trail")
+			Expect(textPart.Text).To(ContainSubstring("OOMKill caused by memory leak"))
+		})
+	})
+
+	Describe("UT-AF-1407-002: SI-4 no early RCA emitted when investigation has no structured result", func() {
+		It("should NOT emit a decision event when EventTypeComplete has empty Data", func() {
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(context.Background(), queue, "task-1407-002", "ctx-1407-002", nil)
+
+			events := make(chan ka.InvestigationEvent, 5)
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeTokenDelta,
+				Data: json.RawMessage(`{"delta":"Investigating..."}`),
+			}
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+			}
+
+			_, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+			Expect(rca).To(BeNil())
+
+			allEvents := queue.Events()
+			for _, evt := range allEvents {
+				statusEvt, ok := evt.(*a2a.TaskStatusUpdateEvent)
+				if !ok {
+					continue
+				}
+				metaType, _ := statusEvt.Metadata["type"].(string)
+				Expect(metaType).NotTo(Equal(launcher.MetaTypeDecision),
+					"SI-4: no decision event must be emitted without structured RCA data")
+			}
+		})
+	})
+
+	Describe("UT-AF-1407-003: AU-3 early RCA includes confidence and causal chain for FedRAMP audit", func() {
+		It("should serialize confidence and causal chain in the structured payload", func() {
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(context.Background(), queue, "task-1407-003", "ctx-1407-003", nil)
+
+			events := make(chan ka.InvestigationEvent, 5)
+			rcaPayload := map[string]interface{}{
+				"severity":     "warning",
+				"confidence":   0.78,
+				"causal_chain": []string{"High CPU from runaway goroutine", "Throttled response time"},
+				"target":       "Pod/api-gateway in staging",
+				"rca_summary":  "Runaway goroutine causing CPU throttling",
+			}
+			rcaJSON, _ := json.Marshal(rcaPayload)
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+				Data: rcaJSON,
+			}
+
+			_, _, _, _ = tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+
+			allEvents := queue.Events()
+			var decisionEvt *a2a.TaskStatusUpdateEvent
+			for _, evt := range allEvents {
+				statusEvt, ok := evt.(*a2a.TaskStatusUpdateEvent)
+				if !ok {
+					continue
+				}
+				metaType, _ := statusEvt.Metadata["type"].(string)
+				if metaType == launcher.MetaTypeDecision {
+					decisionEvt = statusEvt
+					break
+				}
+			}
+			Expect(decisionEvt).NotTo(BeNil(),
+				"AU-3: early RCA must be emitted for audit traceability")
+
+			textPart, ok := decisionEvt.Status.Message.Parts[0].(a2a.TextPart)
+			Expect(ok).To(BeTrue())
+			Expect(textPart.Text).To(ContainSubstring("0.78"),
+				"AU-3: confidence must appear in payload for auditable risk assessment")
+			Expect(textPart.Text).To(ContainSubstring("warning"))
+			Expect(textPart.Text).To(ContainSubstring("Runaway goroutine"))
+		})
+	})
+
+	Describe("UT-AF-1407-004: SI-4 early RCA emitted without EventBridge is no-op", func() {
+		It("should not panic when no bridge is in context", func() {
+			events := make(chan ka.InvestigationEvent, 5)
+			rcaPayload := map[string]interface{}{
+				"severity":    "critical",
+				"confidence":  0.95,
+				"rca_summary": "Should not panic",
+			}
+			rcaJSON, _ := json.Marshal(rcaPayload)
+			events <- ka.InvestigationEvent{
+				Type: ka.EventTypeComplete,
+				Data: rcaJSON,
+			}
+
+			ctx := context.Background()
+			summary, rca, _, _ := tools.BridgeEventsCollectSummary(ctx, events, 5*time.Second)
+			Expect(rca).NotTo(BeNil())
+			Expect(summary).To(ContainSubstring("Should not panic"))
+		})
+	})
+})

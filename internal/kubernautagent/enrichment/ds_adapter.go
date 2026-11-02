@@ -1,0 +1,409 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package enrichment
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// DSAdapter implements DataStorageClient by wrapping the ogen-generated DS client.
+type DSAdapter struct {
+	client HistoryContextClient
+}
+
+// HistoryContextClient is a narrow interface for the ogen DS client method we use.
+// Satisfied by *ogenclient.Client.
+type HistoryContextClient interface {
+	GetRemediationHistoryContext(
+		ctx context.Context,
+		params ogenclient.GetRemediationHistoryContextParams,
+	) (ogenclient.GetRemediationHistoryContextRes, error)
+}
+
+var _ DataStorageClient = (*DSAdapter)(nil)
+
+// NewDSAdapter creates a DSAdapter wrapping the given DS client.
+func NewDSAdapter(client HistoryContextClient) *DSAdapter {
+	return &DSAdapter{client: client}
+}
+
+// GetRemediationHistory queries DataStorage for remediation history and maps
+// ogen-generated types to enrichment domain types.
+// clusterID optionally scopes the query to a single fleet cluster (Issue
+// #1802, main only); pass "" for unscoped (release/v1.5 semantics).
+func (a *DSAdapter) GetRemediationHistory(ctx context.Context, kind, name, namespace, clusterID, specHash string) (*RemediationHistoryResult, error) {
+	specHash = strings.TrimSpace(specHash)
+	if specHash == "" {
+		status := historySourceStatus(kind, name, namespace, clusterID, correlationIDFromContext(ctx),
+			katypes.EvidenceOutcomeSkipped, katypes.EvidenceFailureCodeHashUnavailable)
+		return &RemediationHistoryResult{EvidenceStatus: historyAggregateStatus(status)}, nil
+	}
+	params := ogenclient.GetRemediationHistoryContextParams{
+		TargetKind:      kind,
+		TargetName:      name,
+		TargetNamespace: namespace,
+		CurrentSpecHash: specHash,
+	}
+	if clusterID != "" {
+		params.ClusterId = ogenclient.OptString{Value: clusterID, Set: true}
+	}
+
+	res, err := a.client.GetRemediationHistoryContext(ctx, params)
+	if err != nil {
+		outcome := katypes.EvidenceOutcomeTransportUnavailable
+		code := katypes.EvidenceFailureCodeTransport
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			outcome = katypes.EvidenceOutcomeCanceled
+			code = katypes.EvidenceFailureCodeCanceled
+		}
+		status := historySourceStatus(kind, name, namespace, clusterID, correlationIDFromContext(ctx), outcome, code)
+		return nil, newHistoryFetchError(fmt.Errorf("ds adapter: history query for %s/%s/%s: %w", namespace, kind, name, err), status)
+	}
+
+	if _, isBadRequest := res.(*ogenclient.GetRemediationHistoryContextBadRequest); isBadRequest {
+		status := historySourceStatus(kind, name, namespace, clusterID, correlationIDFromContext(ctx),
+			katypes.EvidenceOutcomeSchemaClientFailure, katypes.EvidenceFailureCodeSchema)
+		return nil, newHistoryFetchError(fmt.Errorf("%w: ds adapter: bad request for %s/%s/%s (spec_hash=%s)", ErrHistorySchema, namespace, kind, name, specHash), status)
+	}
+
+	historyCtx, ok := res.(*ogenclient.RemediationHistoryContext)
+	if !ok {
+		status := historySourceStatus(kind, name, namespace, clusterID, correlationIDFromContext(ctx),
+			katypes.EvidenceOutcomeSchemaClientFailure, katypes.EvidenceFailureCodeSchema)
+		return nil, newHistoryFetchError(fmt.Errorf("%w: ds adapter: unexpected response type %T", ErrHistorySchema, res), status)
+	}
+
+	return mapHistoryContext(historyCtx, kind, name, namespace, clusterID, correlationIDFromContext(ctx)), nil
+}
+
+func newHistoryFetchError(err error, status katypes.EvidenceSourceStatus) error {
+	return &HistoryFetchError{Err: err, Status: status}
+}
+
+func mapHistoryContext(historyCtx *ogenclient.RemediationHistoryContext, kind, name, namespace, clusterID, correlationID string) *RemediationHistoryResult {
+	result := &RemediationHistoryResult{
+		TargetResource:     historyCtx.TargetResource,
+		CurrentSpecHash:    historyCtx.CurrentSpecHash,
+		RegressionDetected: historyCtx.RegressionDetected,
+		Tier1Window:        historyCtx.Tier1.Window,
+		Tier2Window:        historyCtx.Tier2.Window,
+	}
+	result.Tier1 = make([]Tier1Entry, 0, len(historyCtx.Tier1.Chain))
+	for _, e := range historyCtx.Tier1.Chain {
+		result.Tier1 = append(result.Tier1, mapTier1Entry(e))
+	}
+	slices.SortFunc(result.Tier1, func(a, b Tier1Entry) int { return b.CompletedAt.Compare(a.CompletedAt) })
+	result.Tier2 = make([]Tier2Summary, 0, len(historyCtx.Tier2.Chain))
+	for _, e := range historyCtx.Tier2.Chain {
+		result.Tier2 = append(result.Tier2, mapTier2Summary(e))
+	}
+	slices.SortFunc(result.Tier2, func(a, b Tier2Summary) int { return b.CompletedAt.Compare(a.CompletedAt) })
+	outcome := katypes.EvidenceOutcomeSuccess
+	if len(result.Tier1) == 0 && len(result.Tier2) == 0 {
+		outcome = katypes.EvidenceOutcomeValidEmpty
+	}
+	status := historySourceStatus(kind, name, namespace, clusterID, correlationID, outcome, "")
+	result.EvidenceStatus = historyAggregateStatus(status)
+	return result
+}
+
+func correlationIDFromContext(ctx context.Context) string {
+	if correlationID, ok := audit.CorrelationIDFromContext(ctx); ok {
+		return correlationID
+	}
+	return ""
+}
+
+func mapTier1Entry(e ogenclient.RemediationHistoryEntry) Tier1Entry {
+	entry := Tier1Entry{
+		RemediationUID: e.RemediationUID,
+		CompletedAt:    e.CompletedAt,
+		WorkflowID:     e.WorkflowId.Or(""),
+		WorkflowName:   e.WorkflowName.Or(""),
+	}
+	entry.WorkflowRationale, entry.RepeatJustification = mapHistoricalDecisionContext(e.WorkflowRationale, e.RepeatJustification)
+	if confidence, known := e.WorkflowSelectionConfidence.Get(); known {
+		entry.WorkflowSelectionConfidence = &confidence
+	}
+	applyTier1Classification(&entry, e)
+	applyTier1Outcome(&entry, e)
+	applyTier1SpecHashes(&entry, e)
+	if e.HealthChecks.Set {
+		entry.HealthChecks = mapHealthChecks(e.HealthChecks.Value)
+	}
+	if e.MetricDeltas.Set {
+		entry.MetricDeltas = mapMetricDeltas(e.MetricDeltas.Value)
+	}
+	return entry
+}
+
+// applyTier1Classification copies the signal/action classification fields.
+func applyTier1Classification(entry *Tier1Entry, e ogenclient.RemediationHistoryEntry) {
+	if e.SignalType.Set {
+		entry.SignalType = e.SignalType.Value
+	}
+	if e.ActionType.Set && !e.ActionType.Null {
+		entry.ActionType = e.ActionType.Value
+	}
+}
+
+// applyTier1Outcome copies the outcome/effectiveness scoring fields.
+func applyTier1Outcome(entry *Tier1Entry, e ogenclient.RemediationHistoryEntry) {
+	if e.Outcome.Set {
+		entry.Outcome = e.Outcome.Value
+	}
+	if e.EffectivenessScore.Set && !e.EffectivenessScore.Null {
+		v := e.EffectivenessScore.Value
+		entry.EffectivenessScore = &v
+	}
+	if e.SignalResolved.Set && !e.SignalResolved.Null {
+		v := e.SignalResolved.Value
+		entry.SignalResolved = &v
+	}
+	if e.AssessmentReason.Set && !e.AssessmentReason.Null {
+		entry.AssessmentReason = string(e.AssessmentReason.Value)
+	}
+}
+
+// applyTier1SpecHashes copies the resource spec hash comparison fields.
+func applyTier1SpecHashes(entry *Tier1Entry, e ogenclient.RemediationHistoryEntry) {
+	if e.HashMatch.Set {
+		entry.HashMatch = string(e.HashMatch.Value)
+	}
+	if e.AppliedState.Set {
+		entry.AppliedState = string(e.AppliedState.Value)
+	}
+	if e.SpecChangeStatus.Set {
+		entry.SpecChangeStatus = string(e.SpecChangeStatus.Value)
+	}
+	if e.PreRemediationSpecHash.Set {
+		entry.PreRemediationSpecHash = e.PreRemediationSpecHash.Value
+	}
+	if e.PostRemediationSpecHash.Set {
+		entry.PostRemediationSpecHash = e.PostRemediationSpecHash.Value
+	}
+}
+
+func mapTier2Summary(e ogenclient.RemediationHistorySummary) Tier2Summary {
+	s := Tier2Summary{
+		RemediationUID: e.RemediationUID,
+		CompletedAt:    e.CompletedAt,
+		WorkflowID:     e.WorkflowId.Or(""),
+		WorkflowName:   e.WorkflowName.Or(""),
+	}
+	s.WorkflowRationale, s.RepeatJustification = mapHistoricalDecisionContext(e.WorkflowRationale, e.RepeatJustification)
+	if confidence, known := e.WorkflowSelectionConfidence.Get(); known {
+		s.WorkflowSelectionConfidence = &confidence
+	}
+	if e.SignalType.Set {
+		s.SignalType = e.SignalType.Value
+	}
+	if e.ActionType.Set && !e.ActionType.Null {
+		s.ActionType = e.ActionType.Value
+	}
+	if e.Outcome.Set {
+		s.Outcome = e.Outcome.Value
+	}
+	if e.EffectivenessScore.Set && !e.EffectivenessScore.Null {
+		v := e.EffectivenessScore.Value
+		s.EffectivenessScore = &v
+	}
+	if e.SignalResolved.Set && !e.SignalResolved.Null {
+		v := e.SignalResolved.Value
+		s.SignalResolved = &v
+	}
+	applyTier2SpecEvidence(&s, e)
+	if e.AssessmentReason.Set && !e.AssessmentReason.Null {
+		s.AssessmentReason = string(e.AssessmentReason.Value)
+	}
+	return s
+}
+
+func applyTier2SpecEvidence(summary *Tier2Summary, entry ogenclient.RemediationHistorySummary) {
+	if entry.HashMatch.Set {
+		summary.HashMatch = string(entry.HashMatch.Value)
+	}
+	if entry.AppliedState.Set {
+		summary.AppliedState = string(entry.AppliedState.Value)
+	}
+	if entry.SpecChangeStatus.Set {
+		summary.SpecChangeStatus = string(entry.SpecChangeStatus.Value)
+	}
+	if entry.PreRemediationSpecHash.Set {
+		summary.PreRemediationSpecHash = entry.PreRemediationSpecHash.Value
+	}
+	if entry.PostRemediationSpecHash.Set {
+		summary.PostRemediationSpecHash = entry.PostRemediationSpecHash.Value
+	}
+}
+
+func mapHistoricalDecisionContext(
+	rationale ogenclient.OptString,
+	justification ogenclient.OptRepeatJustification,
+) (string, *sharedtypes.RepeatJustification) {
+	decision := sharedtypes.HistoricalDecisionContext{WorkflowRationale: rationale.Or("")}
+	if value, known := justification.Get(); known {
+		decision.RepeatJustification = &sharedtypes.RepeatJustification{
+			EvidenceBasis:         value.EvidenceBasis,
+			PriorOutcomeRelevance: value.PriorOutcomeRelevance,
+			ExpectedMechanism:     value.ExpectedMechanism,
+		}
+	}
+	safe := sharedtypes.SafeHistoricalDecisionContext(decision)
+	return safe.WorkflowRationale, safe.RepeatJustification
+}
+
+func mapHealthChecks(hc ogenclient.RemediationHealthChecks) *HealthChecks {
+	result := &HealthChecks{}
+	if hc.PodRunning.Set {
+		v := hc.PodRunning.Value
+		result.PodRunning = &v
+	}
+	if hc.ReadinessPass.Set {
+		v := hc.ReadinessPass.Value
+		result.ReadinessPass = &v
+	}
+	if hc.RestartDelta.Set {
+		v := hc.RestartDelta.Value
+		result.RestartDelta = &v
+	}
+	if hc.CrashLoops.Set {
+		v := hc.CrashLoops.Value
+		result.CrashLoops = &v
+	}
+	if hc.OomKilled.Set {
+		v := hc.OomKilled.Value
+		result.OomKilled = &v
+	}
+	if hc.PendingCount.Set {
+		v := hc.PendingCount.Value
+		result.PendingCount = &v
+	}
+	return result
+}
+
+func mapMetricDeltas(md ogenclient.RemediationMetricDeltas) *MetricDeltas {
+	result := &MetricDeltas{}
+	if md.CpuBefore.Set {
+		v := md.CpuBefore.Value
+		result.CpuBefore = &v
+	}
+	if md.CpuAfter.Set {
+		v := md.CpuAfter.Value
+		result.CpuAfter = &v
+	}
+	if md.MemoryBefore.Set {
+		v := md.MemoryBefore.Value
+		result.MemoryBefore = &v
+	}
+	if md.MemoryAfter.Set {
+		v := md.MemoryAfter.Value
+		result.MemoryAfter = &v
+	}
+	if md.LatencyP95BeforeMs.Set {
+		v := md.LatencyP95BeforeMs.Value
+		result.LatencyP95BeforeMs = &v
+	}
+	if md.LatencyP95AfterMs.Set {
+		v := md.LatencyP95AfterMs.Value
+		result.LatencyP95AfterMs = &v
+	}
+	if md.ErrorRateBefore.Set {
+		v := md.ErrorRateBefore.Value
+		result.ErrorRateBefore = &v
+	}
+	if md.ErrorRateAfter.Set {
+		v := md.ErrorRateAfter.Value
+		result.ErrorRateAfter = &v
+	}
+	populateClusterScopedAndThroughputDeltas(result, md)
+	return result
+}
+
+// populateClusterScopedAndThroughputDeltas maps the throughput backfill and
+// the 6 cluster-scoped Node/PersistentVolume fields (Issue #193, DD-EM-005
+// v1.1) from the ogen-generated RemediationMetricDeltas into result. Extracted
+// from mapMetricDeltas to keep that function within the project's
+// line-length convention -- pure code motion alongside the new field
+// mappings, no behavior change to the existing fields mapped above.
+func populateClusterScopedAndThroughputDeltas(result *MetricDeltas, md ogenclient.RemediationMetricDeltas) {
+	if md.ThroughputBeforeRps.Set {
+		v := md.ThroughputBeforeRps.Value
+		result.ThroughputBeforeRps = &v
+	}
+	if md.ThroughputAfterRps.Set {
+		v := md.ThroughputAfterRps.Value
+		result.ThroughputAfterRps = &v
+	}
+	if md.NodeNotReadyBefore.Set {
+		v := md.NodeNotReadyBefore.Value
+		result.NodeNotReadyBefore = &v
+	}
+	if md.NodeNotReadyAfter.Set {
+		v := md.NodeNotReadyAfter.Value
+		result.NodeNotReadyAfter = &v
+	}
+	if md.NodeMemoryPressureBefore.Set {
+		v := md.NodeMemoryPressureBefore.Value
+		result.NodeMemoryPressureBefore = &v
+	}
+	if md.NodeMemoryPressureAfter.Set {
+		v := md.NodeMemoryPressureAfter.Value
+		result.NodeMemoryPressureAfter = &v
+	}
+	if md.NodeDiskPressureBefore.Set {
+		v := md.NodeDiskPressureBefore.Value
+		result.NodeDiskPressureBefore = &v
+	}
+	if md.NodeDiskPressureAfter.Set {
+		v := md.NodeDiskPressureAfter.Value
+		result.NodeDiskPressureAfter = &v
+	}
+	if md.PvPhaseFailedBefore.Set {
+		v := md.PvPhaseFailedBefore.Value
+		result.PvPhaseFailedBefore = &v
+	}
+	if md.PvPhaseFailedAfter.Set {
+		v := md.PvPhaseFailedAfter.Value
+		result.PvPhaseFailedAfter = &v
+	}
+	if md.PvPhasePendingBefore.Set {
+		v := md.PvPhasePendingBefore.Value
+		result.PvPhasePendingBefore = &v
+	}
+	if md.PvPhasePendingAfter.Set {
+		v := md.PvPhasePendingAfter.Value
+		result.PvPhasePendingAfter = &v
+	}
+	if md.PvUsageRatioBefore.Set {
+		v := md.PvUsageRatioBefore.Value
+		result.PvUsageRatioBefore = &v
+	}
+	if md.PvUsageRatioAfter.Set {
+		v := md.PvUsageRatioAfter.Value
+		result.PvUsageRatioAfter = &v
+	}
+}

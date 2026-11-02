@@ -1,0 +1,177 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package alert provides the alert resolution scorer for the Effectiveness Monitor.
+// It checks whether the original alert that triggered the remediation has resolved
+// after the remediation was applied.
+//
+// Business Requirements:
+// - BR-EM-002: Alert resolution check via AlertManager API
+//
+// Scoring Logic:
+//   - 1.0: Original alert has resolved (no longer active in AlertManager)
+//   - 0.0: Original alert is still active
+//   - nil: AlertManager unavailable or disabled
+package alert
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
+	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/jordigilh/kubernaut/pkg/shared/sizeutil"
+)
+
+// AlertContext contains the information needed to check alert resolution.
+type AlertContext struct {
+	// AlertName is the name of the original alert that triggered remediation.
+	AlertName string
+	// AlertLabels are the labels of the original alert for precise matching.
+	AlertLabels map[string]string
+	// Namespace is the namespace of the target resource.
+	Namespace string
+	// ActivePodNames is the list of currently running pod names for the signal
+	// target workload. When non-nil, alerts whose "pod" label does not match
+	// any active pod are filtered out (stale alert correlation, #269).
+	// Nil means no pod-level filtering is applied.
+	ActivePodNames []string
+	// ClusterID scopes the AlertManager query to a single fleet cluster
+	// (Issue #2274, BR-FLEET-054). Without it, a remote-cluster remediation's
+	// alert-resolution check can match an alert firing for a same-named
+	// resource on a different fleet cluster. Empty for hub/local
+	// remediations (backward compatible: no cluster matcher is added).
+	ClusterID string
+}
+
+// Scorer evaluates whether the original alert has resolved after remediation.
+type Scorer interface {
+	// Score checks AlertManager for the original alert and returns a ComponentResult.
+	// Returns 1.0 if resolved, 0.0 if still active, nil score if AM unavailable.
+	Score(ctx context.Context, amClient client.AlertManagerClient, alertCtx AlertContext) types.ComponentResult
+}
+
+// scorer is the concrete implementation of Scorer.
+type scorer struct{}
+
+// NewScorer creates a new alert resolution scorer.
+func NewScorer() Scorer {
+	return &scorer{}
+}
+
+// Score checks AlertManager for the original alert.
+//
+// Scoring Logic (BR-EM-002):
+//   - 1.0: Original alert has resolved (no longer active in AlertManager)
+//   - 0.0: Original alert is still active
+//   - nil: AlertManager unavailable or error
+func (s *scorer) Score(ctx context.Context, amClient client.AlertManagerClient, alertCtx AlertContext) types.ComponentResult {
+	result := types.ComponentResult{
+		Component: types.ComponentAlert,
+	}
+
+	// Build alert filters from context
+	filters := client.AlertFilters{
+		Matchers: buildMatchers(alertCtx),
+	}
+
+	// Query AlertManager
+	alerts, err := amClient.GetAlerts(ctx, filters)
+	if err != nil {
+		result.Assessed = false
+		result.Score = nil
+		result.Error = err
+		result.Details = "AlertManager unavailable: " + err.Error()
+		return result
+	}
+
+	result.Assessed = true
+
+	// #269: Filter out stale alerts for pods that no longer exist after rolling restart.
+	relevant := filterByActivePods(alerts, alertCtx.ActivePodNames)
+
+	activeCount := 0
+	for _, a := range relevant {
+		if a.State == "active" {
+			activeCount++
+		}
+	}
+
+	if activeCount > 0 {
+		score := 0.0
+		result.Score = &score
+		result.Details = fmt.Sprintf("alert %q still active (%d active alerts, %d filtered)",
+			alertCtx.AlertName, activeCount, len(alerts)-len(relevant))
+	} else {
+		score := 1.0
+		result.Score = &score
+		if filtered := len(alerts) - len(relevant); filtered > 0 {
+			result.Details = fmt.Sprintf("alert %q resolved (%d stale alerts filtered)", alertCtx.AlertName, filtered)
+		} else {
+			result.Details = fmt.Sprintf("alert %q resolved", alertCtx.AlertName)
+		}
+	}
+
+	return result
+}
+
+// buildMatchers constructs AlertManager filter matchers from an AlertContext.
+// #269: namespace is included when non-empty to scope queries to the signal target's namespace.
+// Issue #2274: cluster is included when non-empty to scope queries to a single fleet cluster.
+func buildMatchers(alertCtx AlertContext) []string {
+	// Issue #1684: sizeutil.SafeCap makes the overflow check on this capacity
+	// hint explicit (see its doc comment for why CodeQL flags raw "a+b").
+	matchers := make([]string, 0, sizeutil.SafeCap(len(alertCtx.AlertLabels), 3))
+	if alertCtx.AlertName != "" {
+		matchers = append(matchers, fmt.Sprintf("alertname=%q", alertCtx.AlertName))
+	}
+	if alertCtx.Namespace != "" {
+		matchers = append(matchers, fmt.Sprintf("namespace=%q", alertCtx.Namespace))
+	}
+	if alertCtx.ClusterID != "" {
+		matchers = append(matchers, fmt.Sprintf("cluster=%q", alertCtx.ClusterID))
+	}
+	for k, v := range alertCtx.AlertLabels {
+		matchers = append(matchers, fmt.Sprintf("%s=%q", k, v))
+	}
+	return matchers
+}
+
+// filterByActivePods removes alerts for pods that are no longer running (#269).
+// When activePodNames is nil, all alerts are returned (no filtering).
+// Alerts without a "pod" label are always kept (cannot be correlated).
+func filterByActivePods(alerts []client.Alert, activePodNames []string) []client.Alert {
+	if activePodNames == nil {
+		return alerts
+	}
+	activeSet := make(map[string]struct{}, len(activePodNames))
+	for _, name := range activePodNames {
+		activeSet[name] = struct{}{}
+	}
+
+	result := make([]client.Alert, 0, len(alerts))
+	for _, a := range alerts {
+		podName, hasPodLabel := a.Labels["pod"]
+		if !hasPodLabel {
+			result = append(result, a)
+			continue
+		}
+		if _, isActive := activeSet[podName]; isActive {
+			result = append(result, a)
+		}
+	}
+	return result
+}

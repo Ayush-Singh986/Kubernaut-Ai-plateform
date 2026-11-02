@@ -1,0 +1,1064 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package audit_test
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	aligned = "aligned"
+	rca     = "rca"
+)
+
+var _ = Describe("KA Audit Parity — TP-433-AUDIT-SOC2", func() {
+
+	// --- Phase 1: Foundation ---
+
+	Describe("UT-KA-433-AP-001: NewEvent auto-generates UUID event_id", func() {
+		It("should set Data[event_id] as a valid UUID", func() {
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "rem-001")
+
+			rawID, ok := event.Data["event_id"]
+			Expect(ok).To(BeTrue(), "event_id must be present in Data")
+			eventID, ok := rawID.(string)
+			Expect(ok).To(BeTrue(), "event_id must be a string")
+			Expect(eventID).NotTo(BeEmpty())
+
+			_, err := uuid.Parse(eventID)
+			Expect(err).NotTo(HaveOccurred(), "event_id must be a valid UUID")
+		})
+
+		It("should generate unique event_ids across calls", func() {
+			e1 := audit.NewEvent(audit.EventTypeLLMResponse, "rem-002")
+			e2 := audit.NewEvent(audit.EventTypeLLMResponse, "rem-002")
+
+			id1 := e1.Data["event_id"].(string)
+			id2 := e2.Data["event_id"].(string)
+			Expect(id1).NotTo(Equal(id2), "consecutive calls must produce different UUIDs")
+		})
+	})
+
+	Describe("UT-KA-433-AP-002: EventAction/EventOutcome constants defined", func() {
+		It("should define action constants for all 6 investigator event types", func() {
+			Expect(audit.ActionLLMRequest).To(Equal("llm_request"))
+			Expect(audit.ActionLLMResponse).To(Equal("llm_response"))
+			Expect(audit.ActionToolExecution).To(Equal("tool_execution"))
+			Expect(audit.ActionValidation).To(Equal("validation"))
+			Expect(audit.ActionResponseSent).To(Equal("response_sent"))
+			Expect(audit.ActionResponseFailed).To(Equal("response_failed"))
+		})
+
+		It("should define outcome constants matching ogen enum", func() {
+			Expect(audit.OutcomeSuccess).To(Equal("success"))
+			Expect(audit.OutcomeFailure).To(Equal("failure"))
+			Expect(audit.OutcomePending).To(Equal("pending"))
+		})
+	})
+
+	Describe("UT-KA-433-AP-003: StoreAudit sets ActorType and ActorID", func() {
+		It("should set ActorType=service and ActorID=kubernaut-agent on ogen request (ADR-034 lowercase convention)", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-actor")
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recorder.calls).To(HaveLen(1))
+
+			req := recorder.calls[0]
+			Expect(req.ActorType.Value).To(Equal("service"))
+			Expect(req.ActorID.Value).To(Equal("kubernaut-agent"))
+		})
+	})
+
+	// --- Phase 2: LLM Request ---
+
+	Describe("UT-KA-433-AP-004: buildEventData maps LLMRequestPayload", func() {
+		It("should populate event_id, model, prompt_length, prompt_preview, toolsets_enabled", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-llm-req")
+			event.Data["model"] = "claude-sonnet-4-20250514"
+			event.Data["phase"] = "workflow_discovery"
+			event.Data["prompt_length"] = 1234
+			event.Data["prompt_preview"] = "Analyze the following Kubernetes incident..."
+			event.Data["toolsets_enabled"] = []string{"get_pods", "get_logs"}
+			event.Data["workflow_discovery_enrichment_labels_present"] = true
+			event.Data["workflow_discovery_signal_labels_present"] = true
+			event.Data["workflow_discovery_prompt_labels_present"] = true
+			event.Data["workflow_discovery_detected_labels"] = map[string]string{
+				"gitOpsManaged": "true",
+				"gitOpsTool":    "argocd",
+			}
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventData.Type).To(Equal(ogenclient.LLMRequestPayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.EventID).NotTo(BeEmpty())
+			Expect(payload.Model).To(Equal("claude-sonnet-4-20250514"))
+			Expect(payload.Phase.Value).To(Equal("workflow_discovery"))
+			Expect(payload.WorkflowDiscoveryContext.Set).To(BeTrue())
+			Expect(payload.WorkflowDiscoveryContext.Value.EnrichmentLabelsPresent).To(BeTrue())
+			Expect(payload.WorkflowDiscoveryContext.Value.SignalLabelsPresent).To(BeTrue())
+			Expect(payload.WorkflowDiscoveryContext.Value.PromptLabelsPresent).To(BeTrue())
+			labels, ok := payload.WorkflowDiscoveryContext.Value.DetectedLabels.Get()
+			Expect(ok).To(BeTrue())
+			Expect(labels.GitOpsManaged.Value).To(BeTrue())
+			Expect(labels.GitOpsTool.Value).To(Equal(ogenclient.DetectedLabelsGitOpsTool_argocd))
+			Expect(payload.PromptLength).To(Equal(1234))
+			Expect(payload.PromptPreview).To(Equal("Analyze the following Kubernetes incident..."))
+			Expect(payload.ToolsetsEnabled).To(ConsistOf("get_pods", "get_logs"))
+		})
+	})
+
+	Describe("UT-KA-433-AP-005: prompt_preview truncates at 500 chars", func() {
+		It("should truncate long previews to 500 characters", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			longPrompt := make([]byte, 1000)
+			for i := range longPrompt {
+				longPrompt[i] = 'A'
+			}
+
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-trunc")
+			event.Data["model"] = testModel
+			event.Data["prompt_length"] = 1000
+			event.Data["prompt_preview"] = string(longPrompt)
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue())
+			Expect(len(payload.PromptPreview)).To(BeNumerically("<=", 500))
+		})
+	})
+
+	// --- Phase 3: LLM Response ---
+
+	Describe("UT-KA-433-AP-007: buildEventData maps LLMResponsePayload", func() {
+		It("should populate has_analysis, analysis_length, analysis_preview, analysis_full, tokens_used, tool_call_count", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			fullResponse := `{"root_cause_analysis":{"summary":"OOMKilled"},"confidence":0.9}`
+			event := audit.NewEvent(audit.EventTypeLLMResponse, "corr-llm-resp")
+			event.Data["has_analysis"] = true
+			event.Data["analysis_length"] = 500
+			event.Data["analysis_preview"] = "Root cause: OOMKilled..."
+			event.Data["analysis_full"] = fullResponse
+			event.Data["total_tokens"] = 800
+			event.Data["tool_call_count"] = 3
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventData.Type).To(Equal(ogenclient.LLMResponsePayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetLLMResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.HasAnalysis).To(BeTrue())
+			Expect(payload.AnalysisLength).To(Equal(500))
+			Expect(payload.AnalysisPreview).To(Equal("Root cause: OOMKilled..."))
+			Expect(payload.AnalysisFull.Value).To(Equal(fullResponse))
+			Expect(payload.TokensUsed.Value).To(Equal(800))
+			Expect(payload.ToolCallCount.Value).To(Equal(3))
+		})
+
+		It("should omit analysis_full when not provided (BR-TESTING-001)", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMResponse, "corr-llm-no-full")
+			event.Data["has_analysis"] = true
+			event.Data["analysis_length"] = 100
+			event.Data["analysis_preview"] = "short preview"
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.AnalysisFull.Set).To(BeFalse(), "analysis_full should not be set when absent from event data")
+		})
+	})
+
+	Describe("UT-KA-433-AP-008: analysis_preview truncates at 500 chars", func() {
+		It("should truncate long analysis to 500 characters", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			longAnalysis := make([]byte, 1000)
+			for i := range longAnalysis {
+				longAnalysis[i] = 'B'
+			}
+
+			event := audit.NewEvent(audit.EventTypeLLMResponse, "corr-trunc-resp")
+			event.Data["has_analysis"] = true
+			event.Data["analysis_length"] = 1000
+			event.Data["analysis_preview"] = string(longAnalysis)
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(len(payload.AnalysisPreview)).To(BeNumerically("<=", 500))
+		})
+	})
+
+	// --- Phase 4: Tool Calls ---
+
+	Describe("UT-KA-433-AP-009: buildEventData maps LLMToolCallPayload", func() {
+		It("should populate tool_call_index, tool_name, tool_result, tool_result_preview", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMToolCall, "corr-tool")
+			event.Data["tool_call_index"] = 0
+			event.Data["tool_name"] = "get_pods"
+			event.Data["tool_arguments"] = `{"namespace":"default"}`
+			event.Data["tool_result"] = `{"items":[{"name":"web-abc"}]}`
+			event.Data["tool_result_preview"] = `{"items":[{"name":"web-abc"}]}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventData.Type).To(Equal(ogenclient.LLMToolCallPayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetLLMToolCallPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ToolCallIndex).To(Equal(0))
+			Expect(payload.ToolName).To(Equal("get_pods"))
+			Expect(payload.ToolResult).NotTo(BeEmpty(), "tool_result (jx.Raw) must be populated")
+			Expect(payload.ToolResultPreview.Value).To(ContainSubstring("web-abc"))
+		})
+	})
+
+	Describe("UT-KA-433-AP-010: tool_result_preview truncates at 500 chars", func() {
+		It("should truncate long tool results to 500 characters", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			longResult := make([]byte, 1000)
+			for i := range longResult {
+				longResult[i] = 'C'
+			}
+
+			event := audit.NewEvent(audit.EventTypeLLMToolCall, "corr-tool-trunc")
+			event.Data["tool_name"] = "get_logs"
+			event.Data["tool_result"] = `"` + string(longResult) + `"`
+			event.Data["tool_result_preview"] = string(longResult)
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMToolCallPayload()
+			Expect(ok).To(BeTrue())
+			Expect(len(payload.ToolResultPreview.Value)).To(BeNumerically("<=", 500))
+		})
+	})
+
+	Describe("UT-KA-929-001: tool_result is required even when tool returns empty string (#929)", func() {
+		It("should include tool_result in payload when tool_result is empty", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMToolCall, "corr-929")
+			event.Data["tool_call_index"] = 1
+			event.Data["tool_name"] = "kubectl_logs"
+			event.Data["tool_arguments"] = `{"name":"log-collector"}`
+			event.Data["tool_result"] = ""
+			event.Data["tool_result_preview"] = ""
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMToolCallPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ToolResult).NotTo(BeNil(), "tool_result must be present (required by OpenAPI schema)")
+			Expect(payload.ToolResult).NotTo(BeEmpty(), "tool_result must not be empty jx.Raw")
+		})
+	})
+
+	Describe("UT-KA-1303-001: tool_result literal 'null' must not serialize as JSON null (#1303)", func() {
+		It("should wrap the literal null string as a JSON string, not JSON null", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeLLMToolCall, "corr-1303")
+			event.Data["tool_call_index"] = 0
+			event.Data["tool_name"] = "kubectl_get"
+			event.Data["tool_arguments"] = `{"kind":"ConfigMap"}`
+			event.Data["tool_result"] = "null"
+			event.Data["tool_result_preview"] = "null"
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMToolCallPayload()
+			Expect(ok).To(BeTrue())
+			Expect(string(payload.ToolResult)).NotTo(Equal("null"),
+				"literal 'null' tool result must be JSON-string-encoded, not bare JSON null — "+
+					"bare null fails OpenAPI validation: 'Value is not nullable' (#1303)")
+			Expect(payload.ToolResult).NotTo(BeNil())
+		})
+	})
+
+	// --- Phase 4b: Alignment Events (#942) ---
+
+	Describe("UT-KA-942-001: buildEventData maps AlignmentStepPayload (#942)", func() {
+		It("should populate step_index, step_kind, tool, explanation for suspicious step", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeAlignmentStep, "corr-align-step")
+			event.Data["step_index"] = 3
+			event.Data["step_kind"] = "tool_result"
+			event.Data["tool"] = "kubectl_get"
+			event.Data["explanation"] = "step attempts to read secrets outside scope"
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventData.Type).To(Equal(ogenclient.AIAgentAlignmentStepPayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetAIAgentAlignmentStepPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.StepIndex).To(Equal(3))
+			Expect(payload.StepKind).To(Equal("tool_result"))
+			Expect(payload.Tool.Value).To(Equal("kubectl_get"))
+			Expect(payload.Explanation).To(ContainSubstring("secrets outside scope"))
+		})
+	})
+
+	Describe("UT-KA-942-002: buildEventData maps AlignmentVerdictPayload (#942)", func() {
+		It("should populate result, summary, flagged, total for suspicious verdict", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeAlignmentVerdict, "corr-align-verdict")
+			event.Data["result"] = "suspicious"
+			event.Data["summary"] = "2 steps flagged as suspicious out of 15 total"
+			event.Data["flagged"] = 2
+			event.Data["total"] = 15
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventData.Type).To(Equal(ogenclient.AIAgentAlignmentVerdictPayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetAIAgentAlignmentVerdictPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.Result).To(Equal("suspicious"))
+			Expect(payload.Summary.Value).To(ContainSubstring("2 steps flagged"))
+			Expect(payload.Flagged).To(Equal(2))
+			Expect(payload.Total).To(Equal(15))
+		})
+	})
+
+	Describe("UT-KA-942-003: alignment verdict with aligned result (#942)", func() {
+		It("should map aligned result correctly", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeAlignmentVerdict, "corr-align-ok")
+			event.Data["result"] = aligned
+			event.Data["summary"] = "all steps aligned"
+			event.Data["flagged"] = 0
+			event.Data["total"] = 10
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentAlignmentVerdictPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.Result).To(Equal(aligned))
+			Expect(payload.Flagged).To(Equal(0))
+			Expect(payload.Total).To(Equal(10))
+		})
+	})
+
+	// --- Phase 5: Response Failed ---
+
+	Describe("UT-KA-433-AP-011: buildEventData maps AIAgentResponseFailedPayload", func() {
+		It("should populate error_message, phase, duration_seconds, and error_details", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseFailed, "corr-fail")
+			event.Data["error_message"] = "LLM timeout after 30s"
+			event.Data["phase"] = rca
+			event.Data["duration_seconds"] = 30.5
+			event.Data["error_details"] = sharedaudit.NewErrorDetails(
+				"kubernautagent", "ERR_UPSTREAM_TIMEOUT", "LLM timeout after 30s", true,
+			)
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			payload, ok := req.EventData.GetAIAgentResponseFailedPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ErrorMessage).To(Equal("LLM timeout after 30s"))
+			Expect(payload.Phase).To(Equal(rca))
+			Expect(payload.DurationSeconds.Value).To(BeNumerically("~", 30.5, 0.01))
+			Expect(payload.ErrorDetails.Message).To(Equal("LLM timeout after 30s"))
+			Expect(payload.ErrorDetails.Code).To(Equal("ERR_UPSTREAM_TIMEOUT"))
+			Expect(payload.ErrorDetails.Component).To(Equal(ogenclient.ErrorDetailsComponentKubernautagent))
+			Expect(payload.ErrorDetails.RetryPossible).To(BeTrue())
+		})
+	})
+
+	// --- Phase 6: Validation ---
+
+	Describe("UT-KA-433-AP-012: buildEventData maps WorkflowValidationPayload", func() {
+		It("should populate attempt, max_attempts, is_valid, errors, workflow_id, is_final_attempt", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeValidationAttempt, "corr-val")
+			event.Data["attempt"] = 2
+			event.Data["max_attempts"] = 3
+			event.Data["is_valid"] = false
+			event.Data["errors"] = []string{"workflow_id not found in catalog"}
+			event.Data["workflow_id"] = "wf-123"
+			event.Data["is_final_attempt"] = false
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetWorkflowValidationPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.Attempt).To(Equal(2))
+			Expect(payload.MaxAttempts).To(Equal(3))
+			Expect(payload.IsValid).To(BeFalse())
+			Expect(payload.Errors).To(ContainElement("workflow_id not found in catalog"))
+			Expect(payload.WorkflowID.Value).To(Equal("wf-123"))
+			Expect(payload.IsFinalAttempt.Value).To(BeFalse())
+		})
+	})
+
+	Describe("UT-KA-433-AP-013: Validation failure sets EventOutcome=failure", func() {
+		It("should pass through EventOutcome=failure to ogen request", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeValidationAttempt, "corr-val-fail")
+			event.EventAction = audit.ActionValidation
+			event.EventOutcome = audit.OutcomeFailure
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(string(req.EventOutcome)).To(Equal("failure"))
+		})
+	})
+
+	// --- Phase 7: Response Complete ---
+
+	Describe("UT-KA-433-AP-014: buildEventData maps AIAgentResponsePayload with IncidentResponseData", func() {
+		It("should populate response_data with full IncidentResponseData and cumulative tokens", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-complete")
+			event.Data["response_data"] = `{
+				"rca_summary": "OOMKilled due to memory leak",
+				"severity": "high",
+				"contributing_factors": ["memory leak", "no limits set"],
+				"workflow_id": "wf-oom-recovery",
+				"execution_bundle": "oom-recovery-v1",
+				"confidence": 0.92,
+				"needs_human_review": false,
+				"parameters": {"replicas": 3},
+				"alternative_workflows": [{"workflow_id": "wf-restart", "rationale": "simple restart"}],
+				"remediation_target": {"kind": "Deployment", "name": "api-server", "namespace": "production"}
+			}`
+			event.Data["total_prompt_tokens"] = 1500
+			event.Data["total_completion_tokens"] = 800
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			payload, ok := req.EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ResponseData.RootCauseAnalysis.Summary).NotTo(BeEmpty())
+			Expect(payload.TotalPromptTokens.Value).To(Equal(1500))
+			Expect(payload.TotalCompletionTokens.Value).To(Equal(800))
+		})
+	})
+
+	Describe("UT-KA-433-AP-015: toIncidentResponseData maps severity to ogen enum", func() {
+		It("should map known severities and default unknown values to unknown", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			for _, tc := range []struct {
+				input    string
+				expected string
+			}{
+				{"critical", "critical"},
+				{"high", "high"},
+				{"warning", "warning"},
+				{"medium", "warning"},
+				{"low", "info"},
+				{"unknown", "unknown"},
+				{"invalid_value", "unknown"},
+				{"", "unknown"},
+			} {
+				event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-sev")
+				event.Data["response_data"] = `{"rca_summary":"test","severity":"` + tc.input + `","confidence":0.5}`
+				event.Data["total_prompt_tokens"] = 100
+				event.Data["total_completion_tokens"] = 50
+
+				err := store.StoreAudit(context.Background(), event)
+				Expect(err).NotTo(HaveOccurred(), "severity=%s", tc.input)
+			}
+		})
+	})
+
+	Describe("UT-KA-433-AP-019: toIncidentResponseData handles nil/empty optionals", func() {
+		It("should not panic with minimal response_data", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-minimal")
+			event.Data["response_data"] = `{"rca_summary":"minimal","severity":"info","confidence":0.5}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	// --- AP-006: prompt_preview content fidelity ---
+
+	Describe("UT-KA-433-AP-006: prompt_preview maps last role=user message content", func() {
+		It("should map prompt_preview content faithfully to LLMRequestPayload.PromptPreview", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			lastUserContent := "You are investigating a Kubernetes incident. The pod web-abc in namespace production is OOMKilled."
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-ap-006")
+			event.Data["model"] = testModel
+			event.Data["prompt_length"] = len(lastUserContent)
+			event.Data["prompt_preview"] = lastUserContent
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.PromptPreview).To(Equal(lastUserContent),
+				"prompt_preview must faithfully carry the last user message content through the audit mapping")
+		})
+
+		It("should preserve content containing special characters", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			specialContent := `Analyze: {"pod":"web-abc","signals":["OOMKilled","CrashLoopBackOff"]}`
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-ap-006-special")
+			event.Data["model"] = testModel
+			event.Data["prompt_length"] = len(specialContent)
+			event.Data["prompt_preview"] = specialContent
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.PromptPreview).To(Equal(specialContent))
+		})
+	})
+
+	// --- AP-016: parameters mapped to jx.Raw ---
+
+	Describe("UT-KA-433-AP-016: toIncidentResponseData maps parameters to jx.Raw", func() {
+		It("should serialize parameters map into SelectedWorkflow.Parameters as jx.Raw entries", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-ap-016")
+			event.Data["response_data"] = `{
+				"rca_summary": "Scale issue",
+				"severity": "medium",
+				"confidence": 0.85,
+				"workflow_id": "wf-scale",
+				"parameters": {"replicas": 5, "target_cpu": 80, "namespace": "production"}
+			}`
+			event.Data["total_prompt_tokens"] = 100
+			event.Data["total_completion_tokens"] = 50
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+
+			sw, swOk := payload.ResponseData.SelectedWorkflow.Get()
+			Expect(swOk).To(BeTrue(), "SelectedWorkflow must be set when workflow_id is present")
+
+			params, pOk := sw.Parameters.Get()
+			Expect(pOk).To(BeTrue(), "Parameters must be set when parameters map is non-empty")
+			Expect(params).To(HaveLen(3))
+			Expect(string(params["replicas"])).To(Equal("5"))
+			Expect(string(params["target_cpu"])).To(Equal("80"))
+			Expect(string(params["namespace"])).To(Equal(`"production"`))
+		})
+	})
+
+	// --- AP-017: alternatives with executionBundle + confidence ---
+
+	Describe("UT-KA-433-AP-017: toIncidentResponseData maps alternatives with extended schema fields", func() {
+		It("should map executionBundle and confidence on alternative workflows without data loss", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-ap-017")
+			event.Data["response_data"] = `{
+				"rca_summary": "Multi-workflow scenario",
+				"severity": "high",
+				"confidence": 0.9,
+				"workflow_id": "wf-primary",
+				"alternative_workflows": [
+					{
+						"workflow_id": "wf-alt-1",
+						"rationale": "Simpler approach",
+						"execution_bundle": "bundle-alt-1-v2",
+						"confidence": 0.75
+					},
+					{
+						"workflow_id": "wf-alt-2",
+						"rationale": "Conservative approach",
+						"execution_bundle": "bundle-alt-2-v1",
+						"confidence": 0.6
+					}
+				]
+			}`
+			event.Data["total_prompt_tokens"] = 200
+			event.Data["total_completion_tokens"] = 100
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+
+			alts := payload.ResponseData.AlternativeWorkflows
+			Expect(alts).To(HaveLen(2))
+
+			alt1 := alts[0]
+			Expect(alt1.WorkflowId.Value).To(Equal("wf-alt-1"))
+			Expect(alt1.Rationale.Value).To(Equal("Simpler approach"))
+			Expect(alt1.ExecutionBundle.Value).To(Equal("bundle-alt-1-v2"))
+			Expect(alt1.Confidence.Value).To(BeNumerically("~", 0.75, 0.01))
+
+			alt2 := alts[1]
+			Expect(alt2.WorkflowId.Value).To(Equal("wf-alt-2"))
+			Expect(alt2.ExecutionBundle.Value).To(Equal("bundle-alt-2-v1"))
+			Expect(alt2.Confidence.Value).To(BeNumerically("~", 0.6, 0.01))
+		})
+	})
+
+	// --- AP-018: cumulative token totals ---
+
+	Describe("UT-KA-433-AP-018: toIncidentResponseData maps cumulative token totals", func() {
+		It("should map total_prompt_tokens and total_completion_tokens for cost tracking", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-ap-018")
+			event.Data["response_data"] = `{"rca_summary":"token test","severity":"info","confidence":0.5}`
+			event.Data["total_prompt_tokens"] = 4500
+			event.Data["total_completion_tokens"] = 2100
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.TotalPromptTokens.Value).To(Equal(4500))
+			Expect(payload.TotalCompletionTokens.Value).To(Equal(2100))
+		})
+
+		It("should omit token fields when zero (cost tracking not applicable)", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-ap-018-zero")
+			event.Data["response_data"] = `{"rca_summary":"no tokens","severity":"info","confidence":0.5}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.TotalPromptTokens.Set).To(BeFalse(),
+				"TotalPromptTokens should not be set when zero")
+			Expect(payload.TotalCompletionTokens.Set).To(BeFalse(),
+				"TotalCompletionTokens should not be set when zero")
+		})
+	})
+
+	// --- Phase 8: RCA Complete (Phase 1 forensic audit — #847/#851) ---
+
+	Describe("UT-KA-851-AP-001: buildEventData maps AIAgentRCACompletePayload for aiagent.rca.complete", func() {
+		It("should produce AIAgentRCACompletePayload with response_data and token totals", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeRCAComplete, "corr-rca-complete")
+			event.EventAction = "llm_response"
+			event.EventOutcome = audit.OutcomeSuccess
+			event.Data["response_data"] = `{
+				"rca_summary": "DiskPressure caused by emptyDir overuse",
+				"severity": "critical",
+				"confidence": 0.92,
+				"contributing_factors": ["unbounded emptyDir", "no ephemeral-storage limits"],
+				"remediation_target": {"kind": "Deployment", "name": "postgres-emptydir", "namespace": "demo-disk"},
+				"causal_chain": ["DiskPressure alert fired", "emptyDir writes exceed node capacity"],
+				"due_diligence": {
+					"causal_completeness": "Traced to emptyDir sizing",
+					"target_accuracy": "postgres-emptydir is primary writer",
+					"evidence_sufficiency": "Backed by container_fs_writes_bytes_total",
+					"alternative_hypotheses": "Considered image layers; ruled out",
+					"scope_completeness": "All 4 deployments investigated",
+					"proportionality": "Single primary offender",
+					"regression_awareness": "N/A - first incident",
+					"confidence_calibration": "0.92 - reduced for multi-contributor"
+				}
+			}`
+			event.Data["total_prompt_tokens"] = 2000
+			event.Data["total_completion_tokens"] = 900
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := recorder.calls[0]
+			Expect(req.EventType).To(Equal("aiagent.rca.complete"))
+			Expect(req.EventData.Type).To(Equal(ogenclient.AIAgentRCACompletePayloadAuditEventRequestEventData))
+
+			payload, ok := req.EventData.GetAIAgentRCACompletePayload()
+			Expect(ok).To(BeTrue(), "must deserialize as AIAgentRCACompletePayload")
+			Expect(payload.EventID).NotTo(BeEmpty())
+			Expect(payload.IncidentID).To(Equal("corr-rca-complete"))
+			Expect(payload.ResponseData.RootCauseAnalysis.Summary).To(Equal("DiskPressure caused by emptyDir overuse"))
+			Expect(payload.TotalPromptTokens.Value).To(Equal(2000))
+			Expect(payload.TotalCompletionTokens.Value).To(Equal(900))
+		})
+	})
+
+	Describe("UT-KA-851-AP-002: RCA complete payload includes causal_chain and due_diligence in response_data", func() {
+		It("should map causal_chain array and due_diligence object from response_data JSON", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeRCAComplete, "corr-rca-forensic")
+			event.Data["response_data"] = `{
+				"rca_summary": "OOMKilled",
+				"severity": "high",
+				"confidence": 0.88,
+				"causal_chain": ["OOMKilled signal", "container exceeded 256Mi limit", "connection pool leak"],
+				"due_diligence": {
+					"causal_completeness": "full",
+					"target_accuracy": "correct",
+					"evidence_sufficiency": "sufficient",
+					"alternative_hypotheses": "none remaining",
+					"scope_completeness": "all checked",
+					"proportionality": "single target",
+					"regression_awareness": "N/A",
+					"confidence_calibration": "0.88"
+				}
+			}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentRCACompletePayload()
+			Expect(ok).To(BeTrue())
+
+			rca := payload.ResponseData.RootCauseAnalysis
+			Expect(rca.CausalChain).To(HaveLen(3),
+				"causal_chain must carry all entries from Phase 1 RCA")
+			Expect(rca.CausalChain[0]).To(Equal("OOMKilled signal"))
+			Expect(rca.CausalChain[2]).To(Equal("connection pool leak"))
+
+			dd, ddOk := rca.DueDiligence.Get()
+			Expect(ddOk).To(BeTrue(), "due_diligence must be present for forensic investigation")
+			Expect(dd.CausalCompleteness.Value).To(Equal("full"))
+			Expect(dd.TargetAccuracy.Value).To(Equal("correct"))
+			Expect(dd.EvidenceSufficiency.Value).To(Equal("sufficient"))
+			Expect(dd.ConfidenceCalibration.Value).To(Equal("0.88"))
+		})
+	})
+
+	Describe("UT-KA-851-AP-003: RCA complete handles minimal response_data without panic", func() {
+		It("should not panic when causal_chain and due_diligence are absent", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeRCAComplete, "corr-rca-minimal")
+			event.Data["response_data"] = `{"rca_summary":"minimal RCA","severity":"info","confidence":0.5}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentRCACompletePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ResponseData.RootCauseAnalysis.Summary).To(Equal("minimal RCA"))
+			Expect(payload.ResponseData.RootCauseAnalysis.CausalChain).To(BeEmpty())
+		})
+	})
+
+	Describe("UT-KA-851-AP-004: RCA complete omits token fields when zero", func() {
+		It("should not set token fields when not provided", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeRCAComplete, "corr-rca-no-tokens")
+			event.Data["response_data"] = `{"rca_summary":"test","severity":"info","confidence":0.5}`
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentRCACompletePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.TotalPromptTokens.Set).To(BeFalse(),
+				"TotalPromptTokens should not be set when zero")
+			Expect(payload.TotalCompletionTokens.Set).To(BeFalse(),
+				"TotalCompletionTokens should not be set when zero")
+		})
+	})
+
+	// --- AP-022: warnings default ---
+
+	Describe("UT-KA-433-AP-022: toIncidentResponseData defaults warnings to empty array", func() {
+		It("should return non-nil Warnings when InvestigationResult has no warnings", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+
+			event := audit.NewEvent(audit.EventTypeResponseComplete, "corr-warn")
+			event.Data["response_data"] = `{"rca_summary":"test","severity":"info","confidence":0.9}`
+			event.Data["total_prompt_tokens"] = 100
+			event.Data["total_completion_tokens"] = 50
+
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recorder.calls).To(HaveLen(1))
+
+			payload, ok := recorder.calls[0].EventData.GetAIAgentResponsePayload()
+			Expect(ok).To(BeTrue())
+			Expect(payload.ResponseData.Warnings).NotTo(BeNil(),
+				"Warnings must be non-nil empty slice, not nil, so AA IT nil-checks pass")
+			Expect(payload.ResponseData.Warnings).To(BeEmpty())
+		})
+	})
+
+	// --- BUG-5: Workflow retry event completeness ---
+
+	Describe("UT-KA-967-005: LLM retry events must include prompt_length and prompt_preview", func() {
+		It("should have prompt_length and prompt_preview on workflow retry audit event", func() {
+			event := audit.NewEvent(audit.EventTypeLLMRequest, "corr-retry-wf")
+			event.EventAction = audit.ActionLLMRequest
+			event.EventOutcome = audit.OutcomeSuccess
+
+			event.Data["model"] = testModel
+			event.Data["retry_attempt"] = 1
+			event.Data["retry_max"] = 3
+			event.Data["phase"] = "workflow_discovery"
+			event.Data["retry_reason"] = "parse_level_correction"
+			event.Data["prompt_length"] = 1500
+			event.Data["prompt_preview"] = "Please correct the JSON output..."
+
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+			err := store.StoreAudit(context.Background(), event)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(recorder.calls).To(HaveLen(1))
+
+			payload, ok := recorder.calls[0].EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue(), "must map to LLMRequestPayload")
+			Expect(payload.Model).To(Equal(testModel))
+			Expect(payload.PromptLength).To(Equal(1500),
+				"prompt_length must be populated for retry audit events (BUG-5)")
+			Expect(payload.PromptPreview).To(Equal("Please correct the JSON output..."),
+				"prompt_preview must be populated for retry audit events (BUG-5)")
+		})
+	})
+
+	Describe("UT-KA-2459-003: event-specific workflow discovery payloads preserve result evidence", func() {
+		It("should persist the exact action choices and actual page counts for Step 1", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+			event := audit.NewEvent(audit.EventTypeActionsListed, "rr-2459-actions")
+			event.Data["total_count"] = 5
+			event.Data["returned"] = 2
+			event.Data["offset"] = 2
+			event.Data["limit"] = 2
+			event.Data["duration_ms"] = 7
+			event.Data["actions"] = []audit.WorkflowActionAuditResult{
+				{
+					ActionType: "IncreaseMemoryLimits",
+					Description: audit.WorkflowActionAuditDescription{
+						What: "Increase pod memory limits", WhenToUse: "Pods are OOMKilled",
+						WhenNotToUse: "The issue is a memory leak", Preconditions: "Controller-managed pod",
+					},
+					WorkflowCount: 3,
+				},
+				{ActionType: "RestartPod", Description: audit.WorkflowActionAuditDescription{What: "Restart pod", WhenToUse: "Pod is unhealthy"}, WorkflowCount: 2},
+			}
+
+			Expect(store.StoreAudit(context.Background(), event)).To(Succeed())
+			Expect(recorder.calls).To(HaveLen(1))
+			payload, err := json.Marshal(recorder.calls[0].EventData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(payload).To(MatchJSON(`{
+				"event_type":"workflow.catalog.actions_listed",
+				"query":{"top_k":2,"offset":2},
+				"results":{"total_found":5,"returned":2,"actions":[
+					{"action_type":"IncreaseMemoryLimits","description":{"what":"Increase pod memory limits","when_to_use":"Pods are OOMKilled","when_not_to_use":"The issue is a memory leak","preconditions":"Controller-managed pod"},"workflow_count":3},
+					{"action_type":"RestartPod","description":{"what":"Restart pod","when_to_use":"Pod is unhealthy"},"workflow_count":2}
+				]},
+				"search_metadata":{"duration_ms":7}
+			}`))
+		})
+
+		It("should persist action type, ordered candidates, version, actual score, and the legacy score alias for Step 2", func() {
+			recorder := &fakeOgenClient{}
+			store := audit.NewDSAuditStore(recorder)
+			event := audit.NewEvent(audit.EventTypeWorkflowsListed, "rr-2459-workflows")
+			event.Data["action_type"] = "IncreaseMemoryLimits"
+			event.Data["total_count"] = 4
+			event.Data["returned"] = 2
+			event.Data["offset"] = 1
+			event.Data["limit"] = 2
+			event.Data["duration_ms"] = 9
+			event.Data["workflows"] = []audit.WorkflowCandidateAuditResult{
+				{WorkflowID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), Title: "oomkill-increase-memory-v1", Version: "1.2.3", Rank: 2, FinalScore: 0.81},
+				{WorkflowID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"), Title: "oomkill-increase-memory-v2", Version: "2.0.0", Rank: 3, FinalScore: 0.72},
+			}
+
+			Expect(store.StoreAudit(context.Background(), event)).To(Succeed())
+			Expect(recorder.calls).To(HaveLen(1))
+			payload, err := json.Marshal(recorder.calls[0].EventData)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(payload).To(MatchJSON(`{
+				"event_type":"workflow.catalog.workflows_listed",
+				"action_type":"IncreaseMemoryLimits",
+				"query":{"top_k":2,"offset":1},
+				"results":{"total_found":4,"returned":2,"workflows":[
+					{"workflow_id":"550e8400-e29b-41d4-a716-446655440000","title":"oomkill-increase-memory-v1","version":"1.2.3","rank":2,"final_score":0.81,"scoring":{"confidence":0.81}},
+					{"workflow_id":"550e8400-e29b-41d4-a716-446655440001","title":"oomkill-increase-memory-v2","version":"2.0.0","rank":3,"final_score":0.72,"scoring":{"confidence":0.72}}
+				]},
+				"search_metadata":{"duration_ms":9}
+			}`))
+			Expect(payload).NotTo(ContainSubstring("execution_bundle"))
+			Expect(payload).NotTo(ContainSubstring("parameters"))
+		})
+
+		It("should decode historical Step 1 and Step 2 event data through the new request and response unions", func() {
+			legacyActions := []byte(`{
+				"event_type":"workflow.catalog.actions_listed",
+				"query":{"top_k":5},
+				"results":{"total_found":5,"returned":5,"workflows":[]},
+				"search_metadata":{"duration_ms":4}
+			}`)
+			var actionResponse ogenclient.AuditEventEventData
+			Expect(json.Unmarshal(legacyActions, &actionResponse)).To(Succeed())
+			actions, ok := actionResponse.GetWorkflowActionsListedAuditPayload()
+			Expect(ok).To(BeTrue(), "old Step 1 payload must decode to the event-specific response variant")
+			Expect(actions.Results.TotalFound).To(Equal(int32(5)))
+
+			var actionRequest ogenclient.AuditEventRequestEventData
+			Expect(json.Unmarshal(legacyActions, &actionRequest)).To(Succeed())
+			_, ok = actionRequest.GetWorkflowActionsListedAuditPayload()
+			Expect(ok).To(BeTrue(), "old Step 1 payload must decode to the event-specific request variant")
+
+			legacyWorkflows := []byte(`{
+				"event_type":"workflow.catalog.workflows_listed",
+				"query":{"top_k":5},
+				"results":{"total_found":1,"returned":1,"workflows":[
+					{"workflow_id":"550e8400-e29b-41d4-a716-446655440000","title":"legacy-workflow","rank":1,"scoring":{"confidence":0.7}}
+				]},
+				"search_metadata":{"duration_ms":5}
+			}`)
+			var workflowResponse ogenclient.AuditEventEventData
+			Expect(json.Unmarshal(legacyWorkflows, &workflowResponse)).To(Succeed())
+			workflows, ok := workflowResponse.GetWorkflowCandidatesListedAuditPayload()
+			Expect(ok).To(BeTrue(), "old Step 2 payload must decode to the event-specific response variant")
+			Expect(workflows.Results.Workflows).To(HaveLen(1))
+			Expect(workflows.Results.Workflows[0].FinalScore.Set).To(BeFalse(),
+				"historical records need not have the explicit final_score field")
+			Expect(workflows.Results.Workflows[0].Scoring.Confidence).To(Equal(0.7))
+
+			var workflowRequest ogenclient.AuditEventRequestEventData
+			Expect(json.Unmarshal(legacyWorkflows, &workflowRequest)).To(Succeed())
+			_, ok = workflowRequest.GetWorkflowCandidatesListedAuditPayload()
+			Expect(ok).To(BeTrue(), "old Step 2 payload must decode to the event-specific request variant")
+		})
+
+		DescribeTable("should round-trip supported GitOps filters and detection failures",
+			func(tool string) {
+				recorder := &fakeOgenClient{}
+				store := audit.NewDSAuditStore(recorder)
+				event := audit.NewEvent(audit.EventTypeActionsListed, "rr-2459-labels")
+				event.Data["total_count"] = 1
+				event.Data["returned"] = 1
+				event.Data["limit"] = 10
+				event.Data["severity"] = string(ogenclient.WorkflowSearchFiltersSeverityCritical)
+				event.Data["detected_labels_present"] = true
+				event.Data["detected_labels_json"] = `{"gitOpsManaged":true,"gitOpsTool":"` + tool + `","failedDetections":["networkIsolated"]}`
+				Expect(store.StoreAudit(context.Background(), event)).To(Succeed())
+				payload, ok := recorder.calls[0].EventData.GetWorkflowActionsListedAuditPayload()
+				Expect(ok).To(BeTrue())
+				filters, ok := payload.Query.Filters.Get()
+				Expect(ok).To(BeTrue())
+				labels, ok := filters.DetectedLabels.Get()
+				Expect(ok).To(BeTrue())
+				Expect(labels.GitOpsTool.Value).To(Equal(ogenclient.DetectedLabelsGitOpsTool(tool)))
+				Expect(labels.FailedDetections).To(ContainElement(ogenclient.DetectedLabelsFailedDetectionsItemNetworkIsolated))
+			},
+			Entry("ArgoCD", "argocd"),
+			Entry("Flux", "flux"),
+		)
+	})
+})

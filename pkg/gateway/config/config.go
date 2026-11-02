@@ -1,0 +1,527 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+)
+
+// DefaultConfigPath is the standard Kubernetes ConfigMap mount path for this service.
+// ADR-030: All services MUST use /etc/{service}/config.yaml as the default.
+const DefaultConfigPath = "/etc/gateway/config.yaml"
+
+// configDocumentationURL is the shared reference link included in validation
+// errors returned by this package.
+const configDocumentationURL = "https://jordigilh.github.io/kubernaut-docs/user-guide/configuration/#gateway"
+
+// ServerConfig is the top-level configuration for the Gateway service.
+// Organized by Single Responsibility Principle for better maintainability.
+type ServerConfig struct {
+	// HTTP Server configuration
+	Server ServerSettings `yaml:"server"`
+
+	// Middleware configuration
+	Middleware MiddlewareSettings `yaml:"middleware"`
+
+	// CORS configuration (Issue #1215: moved from env vars to config YAML)
+	CORS CORSConfig `yaml:"cors"`
+
+	// DataStorage connectivity (ADR-030: audit trail + workflow catalog)
+	DataStorage sharedconfig.DataStorageConfig `yaml:"datastorage"`
+
+	// Business logic configuration
+	Processing ProcessingSettings `yaml:"processing"`
+
+	// Logging configuration (Issue #877: config-file-only log level with hot-reload)
+	Logging sharedconfig.LoggingConfig `yaml:"logging"`
+
+	// TLSProfile selects the TLS security profile (Old/Intermediate/Modern).
+	// Issue #748: OCP-only — set by kubernaut-operator from the cluster APIServer CR.
+	TLSProfile string `yaml:"tlsProfile,omitempty"`
+
+	// TLSCAFile is the ambient inter-service CA trust bundle path, injected
+	// in-process via sharedtls.InjectAmbientCACerts (Issue #2276) instead of
+	// a deployer-declared static Pod-spec env: TLS_CA_FILE entry.
+	TLSCAFile string `yaml:"tlsCaFile,omitempty"`
+
+	// Telemetry configures OTel distributed tracing (GAP-14 / Issue #1519).
+	// Both Endpoint (OTLP export) and LogSink (span summaries via this
+	// service's logger) are opt-in and off by default (BYO-collector).
+	Telemetry sharedconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	// Fleet enables multi-cluster federation scope checking (ADR-065, ADR-068).
+	// When enabled, GW uses FederatedScopeChecker via the configured backend adapter.
+	Fleet fleet.FleetConfig `yaml:"fleet,omitempty"`
+
+	// Debug holds developer/operator diagnostic toggles (BR-PLATFORM-012,
+	// Issue #2275). Defaults to profiling OFF (AC-6) -- was previously
+	// Server.DisableProfiling defaulting to profiling ON.
+	Debug sharedconfig.DebugConfig `yaml:"debug"`
+}
+
+// CORSConfig contains CORS settings for the Gateway HTTP API.
+// Issue #1215: Moved from CORS_* env vars to config YAML for consistency
+// with all other Gateway configuration. Env vars are still read as fallback.
+type CORSConfig struct {
+	AllowedOrigins   []string `yaml:"allowedOrigins"`
+	AllowedMethods   []string `yaml:"allowedMethods"`
+	AllowedHeaders   []string `yaml:"allowedHeaders"`
+	ExposedHeaders   []string `yaml:"exposedHeaders"`
+	AllowCredentials bool     `yaml:"allowCredentials"`
+	MaxAge           int      `yaml:"maxAge"`
+}
+
+// ServerSettings contains HTTP server configuration.
+// Single Responsibility: HTTP server behavior
+type ServerSettings struct {
+	ListenAddr            string              `yaml:"listenAddr"`            // Default: ":8080"
+	HealthAddr            string              `yaml:"healthAddr"`            // Default: ":8081" (Issue #753: dedicated health probe port)
+	MetricsAddr           string              `yaml:"metricsAddr"`           // Default: ":9090" (Issue #753: dedicated metrics port)
+	AuthenticationEnabled bool                `yaml:"authenticationEnabled"` // Default: false; opt-in TokenReview/SAR auth for signal endpoints
+	MaxConcurrentRequests int                 `yaml:"maxConcurrentRequests"` // Default: 100 (0 = unlimited)
+	ReadTimeout           time.Duration       `yaml:"readTimeout"`           // Default: 30s
+	WriteTimeout          time.Duration       `yaml:"writeTimeout"`          // Default: 30s
+	IdleTimeout           time.Duration       `yaml:"idleTimeout"`           // Default: 120s
+	K8sRequestTimeout     time.Duration       `yaml:"k8sRequestTimeout"`     // Default: 15s -- per-handler deadline for K8s API ops (BR-GATEWAY-102)
+	TLS                   sharedtls.TLSConfig `yaml:"tls,omitempty"`         // Issue #493: Optional TLS
+}
+
+// validateAddrAndConcurrency checks the listen address and throttle bounds.
+// Extracted from ServerConfig.Validate to keep its cyclomatic complexity low.
+func (s *ServerSettings) validateAddrAndConcurrency() error {
+	if s.ListenAddr == "" {
+		err := NewConfigError(
+			"server.listenAddr",
+			"(empty)",
+			"is required",
+			"Use ':8080' or '0.0.0.0:8080'",
+		)
+		err.Impact = "Gateway server will fail to start"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+
+	// MaxConcurrentRequests validation (0 = unlimited, >0 = throttle enabled)
+	// ADR-048-ADDENDUM-001: Defense-in-depth with Nginx/HAProxy
+	if s.MaxConcurrentRequests < 0 {
+		err := NewConfigError(
+			"server.maxConcurrentRequests",
+			fmt.Sprintf("%d", s.MaxConcurrentRequests),
+			"must be >= 0",
+			"Use 100 (recommended), 0 for unlimited",
+		)
+		err.Impact = "Invalid throttle configuration"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if s.MaxConcurrentRequests > 10000 {
+		err := NewConfigError(
+			"server.maxConcurrentRequests",
+			fmt.Sprintf("%d", s.MaxConcurrentRequests),
+			"exceeds recommended maximum (10000)",
+			"Use 100-1000 for production (recommended: 100)",
+		)
+		err.Impact = "May not provide effective overload protection"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	return nil
+}
+
+// validateTimeouts checks HTTP server timeouts and the BR-GATEWAY-102 K8s
+// request timeout invariant (must leave room for a 504 to be written before
+// WriteTimeout kills the connection). Extracted from ServerConfig.Validate to
+// keep its cyclomatic complexity low.
+func (s *ServerSettings) validateTimeouts() error {
+	if s.ReadTimeout > 0 && s.ReadTimeout < 5*time.Second {
+		err := NewConfigError(
+			"server.readTimeout",
+			s.ReadTimeout.String(),
+			"is too low (< 5s)",
+			"Use 30s (recommended) to prevent webhook timeouts",
+		)
+		err.Impact = "Webhook requests may timeout prematurely"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if s.WriteTimeout > 0 && s.WriteTimeout < 5*time.Second {
+		err := NewConfigError(
+			"server.writeTimeout",
+			s.WriteTimeout.String(),
+			"is too low (< 5s)",
+			"Use 30s (recommended) to prevent response failures",
+		)
+		err.Impact = "Response writes may fail prematurely"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if s.IdleTimeout > 0 && s.IdleTimeout < 30*time.Second {
+		err := NewConfigError(
+			"server.idleTimeout",
+			s.IdleTimeout.String(),
+			"is too low (< 30s)",
+			"Use 120s (recommended) to reduce connection churn",
+		)
+		err.Impact = "May increase connection establishment overhead"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+
+	// BR-GATEWAY-102: K8s request timeout validation
+	// Must be > 0 (0 disables the safety control) and < WriteTimeout (to allow writing 504 before connection kill)
+	if s.K8sRequestTimeout <= 0 {
+		return nil
+	}
+	if s.K8sRequestTimeout < 1*time.Second {
+		err := NewConfigError(
+			"server.k8sRequestTimeout",
+			s.K8sRequestTimeout.String(),
+			"is too low (< 1s)",
+			"Use 15s (recommended) to allow K8s API operations to complete",
+		)
+		err.Impact = "K8s operations will fail prematurely with 504"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if s.WriteTimeout > 0 && s.K8sRequestTimeout >= s.WriteTimeout {
+		err := NewConfigError(
+			"server.k8sRequestTimeout",
+			s.K8sRequestTimeout.String(),
+			fmt.Sprintf("must be less than writeTimeout (%s)", s.WriteTimeout),
+			"K8s timeout must leave room for the 504 response to be written",
+		)
+		err.Impact = "Server may kill connection before 504 error reaches client"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	return nil
+}
+
+// MiddlewareSettings contains middleware configuration.
+// Single Responsibility: Request processing middleware
+//
+// Note: Redis-based RateLimitSettings removed (2025-12-07, ADR-048).
+// Concurrency limiting is now handled by chi Throttle via ServerSettings.MaxConcurrentRequests (ADR-048-ADDENDUM-001).
+type MiddlewareSettings struct {
+	// Issue #673 L-1, DD-AUTH-003: Trusted proxy CIDRs for RealIP extraction.
+	// Only connections from these CIDRs will have X-Forwarded-For / X-Real-IP /
+	// True-Client-IP honoured. Empty = fail-closed (proxy headers never trusted).
+	TrustedProxyCIDRs []string `yaml:"trustedProxyCIDRs"`
+}
+
+// ProcessingSettings contains business logic configuration.
+// Single Responsibility: Signal processing behavior
+//
+// Note: Environment and Priority settings removed (2025-12-06)
+// Environment/Priority classification now owned by Signal Processing per DD-CATEGORIZATION-001.
+type ProcessingSettings struct {
+	Deduplication DeduplicationSettings `yaml:"deduplication"`
+	CRD           CRDSettings           `yaml:"crd"`
+	Retry         RetrySettings         `yaml:"retry"` // BR-GATEWAY-111: K8s API retry configuration
+}
+
+// DefaultCooldownPeriod is the default post-completion cooldown duration.
+// Signals arriving within this window after a successful remediation are
+// deduplicated to prevent wasted LLM calls on stale data.
+// Aligned with DD-WE-001 (5-minute cooldown) and ADR-EM-001 (EM stabilization window).
+const DefaultCooldownPeriod = 5 * time.Minute
+
+// DeduplicationSettings contains deduplication configuration.
+//
+// DD-GATEWAY-011: Gateway uses status-based deduplication via RemediationRequest CRD phase.
+// TTL-based deduplication was removed; deduplication window = CRD lifecycle.
+type DeduplicationSettings struct {
+	// CooldownPeriod is the duration after a successful remediation during which
+	// new signals for the same fingerprint are deduplicated. This prevents
+	// creating RRs from stale alert re-fires and avoids wasted LLM calls.
+	// Default: 5 minutes (aligned with DD-WE-001 and ADR-EM-001).
+	// Set to 0 to disable post-completion cooldown.
+	CooldownPeriod time.Duration `yaml:"cooldownPeriod"`
+}
+
+// Note: EnvironmentSettings struct removed (2025-12-06)
+// Environment classification now owned by Signal Processing per DD-CATEGORIZATION-001
+
+// CRDSettings contains CRD creation configuration.
+//
+// Note: FallbackNamespace field removed (February 2026).
+// Namespace fallback is deprecated per DD-GATEWAY-007 (DEPRECATED).
+// ADR-053 scope validation now rejects signals to unmanaged namespaces upstream,
+// making CRD namespace fallback redundant.
+type CRDSettings struct {
+	// Reserved for future CRD creation configuration
+	// FallbackNamespace was removed - see DD-GATEWAY-007 deprecation notice
+}
+
+// RetrySettings configures retry behavior for transient K8s API errors.
+// BR-GATEWAY-111: Retry Configuration
+// BR-GATEWAY-112: Error Classification
+// BR-GATEWAY-113: Exponential Backoff
+type RetrySettings struct {
+	// Maximum number of retry attempts for transient K8s API errors
+	// Example: MaxAttempts=3 means 1 original attempt + 2 retries
+	// Default: 3
+	// Reliability-First: Always retry transient errors (429, 503, 504, timeouts, network errors)
+	MaxAttempts int `yaml:"maxAttempts"`
+
+	// Initial backoff duration (doubles with each retry)
+	// Example: 100ms → 200ms → 400ms → 800ms (exponential backoff)
+	// Default: 100ms
+	// Reliability-First: Fast initial retry, exponential backoff for persistent failures
+	InitialBackoff time.Duration `yaml:"initialBackoff"`
+
+	// Maximum backoff duration (cap for exponential backoff)
+	// Prevents excessive wait times during retry storms
+	// Default: 5s
+	// Reliability-First: Reasonable cap to avoid blocking too long
+	MaxBackoff time.Duration `yaml:"maxBackoff"`
+}
+
+// DefaultRetrySettings returns sensible defaults for Phase 1 (synchronous retry).
+// BR-GATEWAY-111: Default Configuration (Reliability-First Design)
+//
+// Design Philosophy: Maximize reliability by default. These defaults work for 99% of use cases.
+// Only tune if you have specific performance requirements or constraints.
+func DefaultRetrySettings() RetrySettings {
+	return RetrySettings{
+		MaxAttempts:    3,                      // 1 original + 2 retries
+		InitialBackoff: 100 * time.Millisecond, // Fast initial retry
+		MaxBackoff:     5 * time.Second,        // Reasonable cap
+	}
+}
+
+// Validate checks if retry settings are valid.
+// GAP-8: Enhanced Configuration Validation (Reliability-First Design)
+// Provides comprehensive validation with actionable error messages using structured errors
+func (r *RetrySettings) Validate() error {
+	if err := r.validateMaxAttempts(); err != nil {
+		return err
+	}
+	return r.validateBackoffBounds()
+}
+
+// validateMaxAttempts checks the retry attempt count is within a sane
+// production range. Extracted from RetrySettings.Validate (funlen).
+func (r *RetrySettings) validateMaxAttempts() error {
+	if r.MaxAttempts < 1 {
+		err := NewConfigError(
+			"processing.retry.maxAttempts",
+			fmt.Sprintf("%d", r.MaxAttempts),
+			"must be >= 1",
+			"Use 3-5 for production (recommended: 3)",
+		)
+		err.Impact = "Retry logic will not function properly"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if r.MaxAttempts > 10 {
+		err := NewConfigError(
+			"processing.retry.maxAttempts",
+			fmt.Sprintf("%d", r.MaxAttempts),
+			"exceeds recommended maximum (10)",
+			"Reduce to 3-5 to avoid excessive retry delays",
+		)
+		err.Impact = "May cause slow request processing during failures"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	return nil
+}
+
+// validateBackoffBounds checks the initial/max exponential backoff bounds
+// are sane and internally consistent. Extracted from RetrySettings.Validate
+// (funlen).
+func (r *RetrySettings) validateBackoffBounds() error {
+	if r.InitialBackoff < 0 {
+		err := NewConfigError(
+			"processing.retry.initialBackoff",
+			r.InitialBackoff.String(),
+			"must be >= 0",
+			"Use 100ms-500ms (recommended: 100ms)",
+		)
+		err.Impact = "Negative backoff is invalid"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if r.InitialBackoff > 5*time.Second {
+		err := NewConfigError(
+			"processing.retry.initialBackoff",
+			r.InitialBackoff.String(),
+			"exceeds recommended maximum (5s)",
+			"Reduce to 100ms-500ms for faster failure detection",
+		)
+		err.Impact = "High initial backoff may cause slow failure detection"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+
+	if r.MaxBackoff < r.InitialBackoff {
+		err := NewConfigError(
+			"processing.retry.maxBackoff",
+			fmt.Sprintf("%v (initial: %v)", r.MaxBackoff, r.InitialBackoff),
+			"must be >= initialBackoff",
+			fmt.Sprintf("Set maxBackoff to at least %v", r.InitialBackoff),
+		)
+		err.Impact = "Invalid exponential backoff configuration"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+	if r.MaxBackoff > 30*time.Second {
+		err := NewConfigError(
+			"processing.retry.maxBackoff",
+			r.MaxBackoff.String(),
+			"exceeds recommended maximum (30s)",
+			"Reduce to 5s (recommended) to avoid long request delays",
+		)
+		err.Impact = "Excessive backoff may cause long request delays"
+		err.Documentation = configDocumentationURL
+		return err
+	}
+
+	return nil
+}
+
+// DefaultServerConfig returns safe defaults for the Gateway service.
+// ADR-030: Used when no --config file is specified.
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
+		Server: ServerSettings{
+			ListenAddr:            ":8080",
+			HealthAddr:            ":8081",
+			MetricsAddr:           ":9090",
+			AuthenticationEnabled: false,
+			MaxConcurrentRequests: 100,
+			ReadTimeout:           30 * time.Second,
+			WriteTimeout:          30 * time.Second,
+			IdleTimeout:           120 * time.Second,
+			K8sRequestTimeout:     15 * time.Second,
+		},
+		DataStorage: sharedconfig.DefaultDataStorageConfig(),
+		Processing: ProcessingSettings{
+			Deduplication: DeduplicationSettings{
+				CooldownPeriod: DefaultCooldownPeriod,
+			},
+			Retry: DefaultRetrySettings(),
+		},
+		Logging:   sharedconfig.DefaultLoggingConfig(),
+		Telemetry: sharedconfig.DefaultTelemetryConfig(),
+		Debug:     sharedconfig.DefaultDebugConfig(),
+	}
+}
+
+// LoadFromFile loads configuration from a YAML file with defaults.
+// ADR-030: Service Configuration Management pattern.
+// Graceful degradation: Falls back to defaults if file not found or invalid.
+func LoadFromFile(path string) (*ServerConfig, error) {
+	cfg := DefaultServerConfig()
+
+	if path == "" {
+		return cfg, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
+	}
+
+	// Apply retry defaults if not configured
+	if cfg.Processing.Retry.MaxAttempts == 0 {
+		cfg.Processing.Retry = DefaultRetrySettings()
+	}
+
+	// Apply server defaults for concurrency limiting
+	if cfg.Server.MaxConcurrentRequests == 0 {
+		cfg.Server.MaxConcurrentRequests = 100
+	}
+
+	return cfg, nil
+}
+
+// LoadFromEnv overrides configuration values with environment variables.
+// ADR-030: Environment variables ONLY for secrets (never for functional config).
+func (c *ServerConfig) LoadFromEnv() {
+	// ADR-030: DataStorage URL now comes from YAML ConfigMap only (not env vars).
+	// GATEWAY_DATA_STORAGE_URL env override removed -- use datastorage.url in YAML.
+	// GATEWAY_DEDUP_TTL removed (DD-GATEWAY-011: TTL-based deduplication deprecated).
+
+	// Issue #673 L-1: Trusted proxy CIDRs from environment (comma-separated).
+	// Overrides YAML config when set. Empty = fail-closed (proxy headers never trusted).
+	if cidrs := os.Getenv("TRUSTED_PROXY_CIDRS"); cidrs != "" {
+		c.Middleware.TrustedProxyCIDRs = strings.Split(cidrs, ",")
+		for i := range c.Middleware.TrustedProxyCIDRs {
+			c.Middleware.TrustedProxyCIDRs[i] = strings.TrimSpace(c.Middleware.TrustedProxyCIDRs[i])
+		}
+	}
+}
+
+// Validate checks if the configuration is valid.
+// GAP-8: Enhanced Configuration Validation (Production-Ready)
+// Provides comprehensive validation with actionable error messages using structured errors
+func (c *ServerConfig) Validate() error {
+	if err := c.Server.validateAddrAndConcurrency(); err != nil {
+		return err
+	}
+	if err := c.Server.validateTimeouts(); err != nil {
+		return err
+	}
+
+	// ADR-030: Validate DataStorage section
+	if err := sharedconfig.ValidateDataStorageConfig(&c.DataStorage); err != nil {
+		return err
+	}
+
+	// Middleware validation
+	// Concurrency limiting via chi Throttle (ADR-048-ADDENDUM-001) is configured
+	// in ServerSettings.MaxConcurrentRequests, validated above
+
+	// Retry validation (GAP-8: Enhanced Configuration Validation)
+	if err := c.Processing.Retry.Validate(); err != nil {
+		return err // Already a structured ConfigError
+	}
+
+	// Issue #877: Logging validation
+	if err := c.Logging.Validate(); err != nil {
+		return err
+	}
+
+	// ADR-068/BR-INTEGRATION-065: When fleet is enabled, GW needs BOTH the
+	// Backend/Endpoint scope-check adapter (owner-chain resolution needs to
+	// know a resource is fleet-managed) AND MCPGatewayEndpoint (to actually
+	// read remote owner-chain metadata). Configuring only one silently
+	// degrades GW to local-only behavior for fleet-routed signals.
+	if err := c.Fleet.Validate(); err != nil {
+		return err
+	}
+	if err := c.Fleet.ValidateFullFederation(); err != nil {
+		return err
+	}
+
+	return nil
+}

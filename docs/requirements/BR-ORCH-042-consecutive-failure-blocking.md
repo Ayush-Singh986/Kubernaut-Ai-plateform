@@ -1,0 +1,542 @@
+# BR-ORCH-042: Consecutive Failure Blocking with Cooldown
+
+**ID**: BR-ORCH-042
+**Title**: Consecutive Failure Blocking with Automatic Cooldown
+**Category**: ORCH (Remediation Orchestrator)
+**Priority**: 🔴 P0 (V1.0)
+**Version**: 1.7
+**Date**: July 31, 2026
+**Status**: 🚧 IN PROGRESS
+**Related**: DD-GATEWAY-011, BR-GATEWAY-184 (superseded), BR-GATEWAY-185 (field selectors)
+
+---
+
+## Business Context
+
+### Problem Statement
+
+When a signal repeatedly fails remediation (e.g., due to missing RBAC, persistent infrastructure issues, or unresolvable problems), the system would continuously:
+1. Create new RemediationRequests
+2. Spawn child CRDs (SP, AI, WE)
+3. Fail again
+4. Repeat indefinitely
+
+This wastes resources, creates noise, and masks the underlying issue requiring human intervention.
+
+### Previous Design (Superseded)
+
+BR-GATEWAY-184 placed this logic at Gateway:
+- Gateway counted consecutive failures
+- Gateway created RR with `OverallPhase=Blocked`
+- **Problems**: Gateway made routing decisions, needed historical RR queries, mixed concerns
+
+### New Design (This BR)
+
+RO owns blocking logic because:
+- RO knows *why* failures happened (timeout, workflow failure, approval rejection)
+- RO already tracks recovery attempts
+- Routing decisions are orchestration responsibility
+- Gateway should be a "dumb pipe" for signal ingestion
+
+---
+
+## Requirements
+
+### BR-ORCH-042.1: Consecutive Failure Detection
+
+**MUST**: RO SHALL detect when a RemediationRequest completes as `Failed` and check if this is the 3rd or more consecutive failure for the same signal fingerprint.
+
+**Fingerprint Lookup Strategy**:
+
+> **IMPORTANT**: RO SHALL use **field selectors on `spec.signalFingerprint`** (not labels) for RR lookup.
+>
+> | Aspect | Label-Based (❌ Avoid) | Field Selector (✅ Required) |
+> |--------|------------------------|------------------------------|
+> | **Field** | `metadata.labels.kubernaut.ai/signal-fingerprint` | `spec.signalFingerprint` |
+> | **Length** | 63 chars (K8s label limit) | **64 chars (full SHA256)** |
+> | **Mutability** | Mutable (can be changed) | **Immutable** (kubebuilder validation) |
+> | **Source** | Copy of fingerprint | **Authoritative source** |
+>
+> **Rationale**: `spec.signalFingerprint` is immutable (enforced by kubebuilder), supports the full 64-char SHA256, and is the authoritative source of truth. Labels are mutable and truncated.
+
+**Implementation**:
+```go
+// SetupWithManager - create field index for O(1) fingerprint lookup
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+    // BR-ORCH-042: Index on spec.signalFingerprint for consecutive failure counting
+    if err := mgr.GetFieldIndexer().IndexField(
+        context.Background(),
+        &remediationv1.RemediationRequest{},
+        "spec.signalFingerprint",
+        func(obj client.Object) []string {
+            rr := obj.(*remediationv1.RemediationRequest)
+            return []string{rr.Spec.SignalFingerprint}
+        },
+    ); err != nil {
+        return fmt.Errorf("failed to create field index on spec.signalFingerprint: %w", err)
+    }
+    // ...
+}
+
+// countConsecutiveFailures - use field selector (not labels)
+func (r *Reconciler) countConsecutiveFailures(ctx context.Context, fingerprint string) int {
+    rrList := &remediationv1.RemediationRequestList{}
+
+    // Use field selector on immutable spec field (not mutable labels)
+    r.client.List(ctx, rrList,
+        client.MatchingFields{"spec.signalFingerprint": fingerprint}, // Full 64-char fingerprint
+    )
+
+    // Sort by creation time, count consecutive Failed phases
+    // ...
+}
+
+func (r *Reconciler) transitionToFailed(ctx context.Context, rr *remediationv1.RemediationRequest, ...) {
+    // After marking as Failed, check consecutive failure count
+    consecutiveFailures := r.countConsecutiveFailures(ctx, rr.Spec.SignalFingerprint)
+
+    if consecutiveFailures >= 3 {
+        // Don't transition to terminal Failed - hold in Blocked with cooldown
+        return r.transitionToBlocked(ctx, rr, "consecutive_failures_exceeded", 1*time.Hour)
+    }
+
+    // Normal terminal Failed transition
+    // ...
+}
+```
+
+**Acceptance Criteria**:
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-1-1 | RO counts consecutive Failed RRs for same fingerprint | Unit |
+| AC-042-1-2 | Count resets on any Completed RR | Unit |
+| AC-042-1-3 | Count uses chronological order (most recent first) | Unit |
+| AC-042-1-4 | RO uses field selector on `spec.signalFingerprint` (not labels) | Unit |
+| AC-042-1-5 | Field index created in SetupWithManager | Unit |
+
+---
+
+### BR-ORCH-042.2: Blocked Phase (Non-Terminal)
+
+**MUST**: `Blocked` SHALL be a **non-terminal** phase, preventing Gateway from creating new RRs.
+
+**Phase Classification Update**:
+```go
+// Terminal phases - Gateway can create new RR
+var TerminalPhases = []Phase{Completed, Failed, Timeout}
+
+// Active phases - Gateway updates dedup, doesn't create new RR
+var ActivePhases = []Phase{Pending, Processing, Analyzing, Approving, Executing, Recovering, Blocked}
+```
+
+**Acceptance Criteria**:
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-2-1 | `IsTerminal(Blocked)` returns `false` | Unit |
+| AC-042-2-2 | Gateway seeing active `Blocked` RR updates dedup, doesn't create new | Integration |
+
+---
+
+### BR-ORCH-042.3: Automatic Cooldown Expiry
+
+**MUST**: RO SHALL automatically transition `Blocked` RRs to terminal `Failed` after the cooldown period (default: 1 hour).
+
+**New Status Fields**:
+```go
+type RemediationRequestStatus struct {
+    // ... existing fields ...
+
+    // BlockedUntil specifies when this fingerprint can be retried
+    // Set when OverallPhase=Blocked due to consecutive failures
+    // +optional
+    BlockedUntil *metav1.Time `json:"blockedUntil,omitempty"`
+
+    // BlockReason explains why this RR is blocked
+    // Values: "consecutive_failures_exceeded", "manual_block"
+    // +optional
+    BlockReason *string `json:"blockReason,omitempty"`
+}
+```
+
+**Reconciliation Logic**:
+```go
+func (r *Reconciler) handleBlockedPhase(ctx context.Context, rr *remediationv1.RemediationRequest) (ctrl.Result, error) {
+    if rr.Status.BlockedUntil == nil {
+        // Manual block - no auto-expiry
+        return ctrl.Result{}, nil
+    }
+
+    if time.Now().After(rr.Status.BlockedUntil.Time) {
+        logger.Info("Blocked cooldown expired, transitioning to Failed")
+        return r.transitionToFailed(ctx, rr, "blocked", "Cooldown expired after consecutive failures")
+    }
+
+    // Requeue at expiry time
+    requeueAfter := time.Until(rr.Status.BlockedUntil.Time)
+    return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+```
+
+**Acceptance Criteria**:
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-3-1 | RO sets `BlockedUntil` = now + 1h when blocking | Unit |
+| AC-042-3-2 | RO transitions to Failed when cooldown expires | Unit |
+| AC-042-3-3 | RO requeues at exact expiry time (efficient) | Unit |
+| AC-042-3-4 | After expiry, Gateway can create new RR for fingerprint | E2E |
+
+---
+
+### BR-ORCH-042.4: Manual Unblock
+
+**SHOULD**: Operators SHALL be able to manually unblock a fingerprint by deleting the Blocked RR or updating its phase.
+
+**Acceptance Criteria**:
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-4-1 | Deleting Blocked RR allows Gateway to create new | Integration |
+| AC-042-4-2 | Updating phase to Failed allows Gateway to create new | Integration |
+
+---
+
+### BR-ORCH-042.5: Notification on Block
+
+**SHOULD**: RO SHALL create a NotificationRequest when blocking a signal fingerprint.
+
+**Notification Type**: `consecutive_failures_blocked`
+
+**Acceptance Criteria**:
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-5-1 | NotificationRequest created when RR enters Blocked | Unit |
+| AC-042-5-2 | Notification includes fingerprint, failure count, cooldown expiry | Unit |
+
+---
+
+## Metrics
+
+> **Note**: `BlockedCooldownExpiredTotal` was removed per GitHub issue #294.
+
+```go
+// New metrics for blocking feature
+var (
+    BlockedTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "remediationorchestrator_blocked_total",
+            Help: "Total RemediationRequests blocked due to consecutive failures",
+        },
+        []string{"namespace", "reason"},
+    )
+
+    CurrentBlockedGauge = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "remediationorchestrator_blocked_current",
+            Help: "Current number of blocked RRs per fingerprint",
+        },
+        []string{"namespace"},
+    )
+)
+```
+
+---
+
+## Configuration
+
+Routing thresholds are configured in the RO ConfigMap under the `routing:` key
+(ADR-030). All fields fall back to `DefaultConfig()` defaults when omitted.
+
+```yaml
+# remediationorchestrator.yaml ConfigMap (ADR-030)
+routing:
+  consecutiveFailureThreshold: 3        # Block after N consecutive failures (BR-ORCH-042)
+  consecutiveFailureCooldown: "1h"      # How long to block before auto-retry
+  recentlyRemediatedCooldown: "5m"      # Min interval between same-target remediations
+  exponentialBackoffBase: "1m"          # Base cooldown for exponential backoff (DD-WE-004)
+  exponentialBackoffMax: "10m"          # Max cooldown for exponential backoff
+  exponentialBackoffMaxExponent: 4      # 2^4 = 16x multiplier cap
+  scopeBackoffBase: "5s"               # Initial backoff for unmanaged resources (ADR-053)
+  scopeBackoffMax: "5m"                # Max backoff for unmanaged resources
+  ineffectiveChainThreshold: 3          # Consecutive ineffective remediations before block (Issue #214)
+  recurrenceCountThreshold: 5           # Safety net: total entries in time window
+  ineffectiveTimeWindow: "4h"           # Lookback window for ineffective chain detection
+  forwardChainThreshold: 2             # Forward-linked failed entries before block (Issue #525)
+  forwardChainWindow: "1h"             # Time window for forward chain detection (Issue #525)
+```
+
+---
+
+## Gateway Impact (DD-GATEWAY-011 Update)
+
+Gateway logic simplifies to:
+
+```go
+func (g *Gateway) HandleSignal(ctx context.Context, signal Signal) error {
+    fingerprint := signal.Fingerprint()
+
+    // Check for ANY active (non-terminal) RR with this fingerprint
+    activeRR := g.findActiveRR(ctx, fingerprint)
+
+    if activeRR != nil {
+        // Active RR exists - update deduplication, don't create new
+        return g.updateDeduplication(ctx, activeRR, signal)
+    }
+
+    // No active RR - create new one
+    return g.createRemediationRequest(ctx, signal)
+}
+
+func (g *Gateway) findActiveRR(ctx context.Context, fingerprint string) *remediationv1.RemediationRequest {
+    rrList := &remediationv1.RemediationRequestList{}
+
+    // Use field selector on immutable spec.signalFingerprint (not mutable labels)
+    // See BR-GATEWAY-185 v1.1 for rationale
+    g.client.List(ctx, rrList,
+        client.MatchingFields{"spec.signalFingerprint": fingerprint}, // Full 64-char fingerprint
+    )
+
+    for _, rr := range rrList.Items {
+        if !phase.IsTerminal(phase.Phase(rr.Status.OverallPhase)) {
+            return &rr
+        }
+    }
+    return nil
+}
+```
+
+**Note**: Gateway NO LONGER counts consecutive failures or creates Blocked RRs.
+
+**Note**: Gateway SHOULD use field selectors on `spec.signalFingerprint` (not labels) per BR-GATEWAY-185 v1.1.
+
+---
+
+### BR-ORCH-042.5: Ineffective Remediation Chain Detection (Issue #214)
+
+**MUST**: RO SHALL detect consecutive remediations that complete successfully but are ineffective (resource keeps reverting or health does not improve).
+
+**Detection Algorithm** (three layers, applied in `CheckPostAnalysisConditions` after all other checks):
+
+1. **Layer 1+2 (Hash chain + spec_drift)**: Walk DataStorage `Tier1.Chain` entries backwards. An entry is ineffective if:
+   - Its `PreRemediationSpecHash` matches the current RR's `preRemediationSpecHash` (hash chain continuity -- resource reverted to same bad state), OR
+   - Its `HashMatch == "preRemediation"` (regression/spec_drift detected by EffectivenessMonitor)
+   - Block when consecutive ineffective entries >= `IneffectiveChainThreshold` (default: 3)
+
+2. **Layer 3 (Safety net)**: Count total DS entries within `IneffectiveTimeWindow` (default: 4h). Block when count >= `RecurrenceCountThreshold` (default: 5), even without conclusive hash data.
+
+**Error handling**: DataStorage query failures fail-open (log and return nil).
+
+**Escalation**: On detection, RR transitions to `PhaseBlocked` with `BlockReasonIneffectiveChain`, `Outcome = "ManualReviewRequired"`, `RequiresManualReview = true`. `RequeueAfter` = `IneffectiveTimeWindow`.
+
+**Pre-remediation hash**: `CapturePreRemediationHash` is called BEFORE routing. If `hashErr != nil`, the RR transitions to `Failed` (terminal). If `preHash == ""` with no error, hash-based checks are skipped but the RR proceeds.
+
+**Target-resource and cluster scoping (Issue #1802)**: All three detection layers operate on a DataStorage remediation-history query (`GetRemediationHistory`/`QueryROEventsBySpecHash`) that MUST be scoped by **target resource** (namespace/kind/name) in addition to spec hash — matching purely on spec-hash equality is insufficient, because two unrelated resources (e.g., templated `Deployment`s from the same Helm chart or GitOps repo) commonly share an identical Pod spec and therefore an identical hash. Without target-resource scoping, an unrelated target's remediation chain incorrectly counts toward this target's threshold, producing a false-positive block. On `main`, the query is additionally scoped by `cluster_id` (optional filter, defaulting to unscoped when absent) since fleet deployments can have identically-named/namespaced resources across clusters; `release/v1.5` has no `cluster_id` concept on `RemediationRequest` and scopes by target resource only.
+
+**Acceptance Criteria**:
+
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-5-1 | Hash chain match across N entries triggers IneffectiveChain block | UT-RO-214-001 |
+| AC-042-5-2 | Spec drift (HashMatch == preRemediation) triggers IneffectiveChain block | UT-RO-214-002 |
+| AC-042-5-3 | Chain broken by effective entry returns nil | UT-RO-214-003 |
+| AC-042-5-4 | Missing hash data breaks chain | UT-RO-214-004 |
+| AC-042-5-5 | Below threshold returns nil | UT-RO-214-005 |
+| AC-042-5-6 | Safety net triggers on recurrence count | UT-RO-214-006 |
+| AC-042-5-7 | Stale entries outside window ignored | UT-RO-214-007 |
+| AC-042-5-8 | DS query failures fail-open | DS fail-open test |
+| AC-042-5-9 | CapturePreRemediationHash hashErr terminal | UT-RO-214-010 |
+| AC-042-5-10 | A same-hash entry belonging to a *different* target resource does not count toward this target's chain (Issue #1802) | IT-RO-1802-001, E2E-RO-1802-001 |
+| AC-042-5-11 | (`main` only) A same-hash, same-target entry from a *different* cluster does not count toward this target's chain | IT-RO-1802-002 |
+
+---
+
+### BR-ORCH-042.6: Completed-but-Ineffective Remediation Handling (Option C Decision + Inconclusive Exception)
+
+**Decision**: Completed-but-ineffective remediations (resource keeps reverting, health does not improve) are handled via **Option C: LLM-driven escalation**, with one exception: **Inconclusive outcomes** are treated as functional failures for backoff and chain-counting purposes.
+
+**Background**: `CheckConsecutiveFailures` counts RRs with OverallPhase `Failed` or `Blocked`, and additionally counts `Completed` RRs with `Outcome == "Inconclusive"` as functional failures. An RR that completes with a successful outcome (e.g., `Remediated`, `NoActionRequired`) breaks the consecutive failure chain. This is by design — the orchestrator should not penalize successful execution, but should prevent unbounded retries when EA confirms the alert is still firing.
+
+**Inconclusive Exception (Issue #1091)**:
+
+`Inconclusive` (`alertScore=0`) is a definitive signal from the Effectiveness Monitor that the alert persists after remediation. Unlike general "completed but ineffective" scenarios (where the resource may have changed but the EM cannot assess impact), `Inconclusive` means:
+- The workflow executed successfully
+- EA completed its assessment
+- AlertManager confirms the alert is **still firing**
+
+Automatic retry without changed conditions is futile. Therefore:
+
+1. **Backoff on completion**: When `completeVerificationIfNeeded` sets `Outcome == "Inconclusive"`, RO also increments `ConsecutiveFailureCount` and sets `NextAllowedExecution` with exponential backoff (same curve as `transitionToFailed`: 1m, 2m, 4m, 8m, 10m cap). This delays GW from creating the next RR.
+
+2. **Chain-counting**: `CheckConsecutiveFailures` treats `Completed + Inconclusive` as a functional failure (counts it) instead of a chain-breaker (breaking the loop). After 3 consecutive Inconclusive outcomes, the routing engine blocks the signal with `BlockReasonConsecutiveFailures` and 1-hour cooldown — escalating to human review via notification.
+
+**Acceptance Criteria**:
+
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-6-1 | Inconclusive RR gets `ConsecutiveFailureCount++` and `NextAllowedExecution` set | UT-RO-1091-001 |
+| AC-042-6-2 | Remediated RR does NOT get backoff fields set | UT-RO-1091-005 |
+| AC-042-6-3 | `CheckConsecutiveFailures` counts `Completed+Inconclusive` as failure | UT-RO-1091-007 |
+| AC-042-6-4 | `CheckConsecutiveFailures` still breaks chain on `Completed+Remediated` | UT-RO-1091-008 |
+| AC-042-6-5 | 3 consecutive Inconclusive RRs trigger blocking | UT-RO-1091-009 |
+
+**Option C — LLM-Driven Escalation** (unchanged for non-Inconclusive outcomes):
+Instead of modifying the consecutive failure counter, the system uses DataStorage audit traces to detect ineffective remediation chains. When the same pre-remediation state recurs, the LLM (via Kubernaut Agent (KA)) receives the full remediation history context and can:
+1. Choose a different remediation strategy
+2. Escalate to manual review if no alternative exists
+3. Provide root cause analysis enriched with historical failure context
+
+**Implementation status**:
+- ✅ `CheckIneffectiveRemediationChain` in `blocking.go` (Issue #214, BR-ORCH-042.5)
+- ✅ KA `resource_context` tools (`get_namespaced_resource_context` / `get_cluster_resource_context`) provide remediation history to the LLM
+- ✅ KA prompt engineering leverages history context (`remediation_history_prompt.py`, BR-KA-016, DD-KA-016 v1.1)
+- ✅ Inconclusive backoff and chain-counting (Issue #1091, BR-ORCH-042.6)
+
+**Why not Option A/B?**
+- **Option A** (count all completed-but-ineffective as failures): Punishes correct execution; undermines trust in success signals. However, `Inconclusive` is carved out because it is a definitive signal (alert still firing), not an ambiguous "we don't know" state.
+- **Option B** (separate ineffective counter): Adds complexity without leveraging AI insight; a static counter cannot make nuanced decisions.
+- **Option C** (LLM-driven): Leverages the full context — the LLM can distinguish between "same fix, different root cause" vs "same root cause, fix not working" and choose accordingly.
+
+---
+
+### BR-ORCH-042.7: Forward Hash Chain Detection (Issue #525)
+
+**MUST**: RO SHALL detect consecutive remediations of the **same action type** that each modify the target resource spec but fail to resolve the signal, and block the next attempt.
+
+**Problem**: When a remediation action type is inherently wrong for a signal (e.g., `IncreaseMemoryLimits` for an unbounded memory leak), each cycle successfully modifies the resource (64Mi -> 128Mi -> 256Mi -> ...) so the pre-remediation hash differs each time. Layer 1+2 (hash regression detection) cannot catch this because the hash never reverts -- it always advances. The signal keeps recurring because the root cause is unaddressed.
+
+**Detection Algorithm** (Layer 1b, inserted between Layer 1+2 and Layer 3):
+
+Five conditions must ALL be met for an entry to participate in the forward chain:
+
+1. **Within ForwardChainWindow** (default 1h) -- tighter than the 4h IneffectiveTimeWindow
+2. **Same ActionType** (DD-WORKFLOW-016 taxonomy) as the incoming RR
+3. **SignalResolved == false** -- EA confirmed the remediation was ineffective
+4. **Hash link continuity** -- `entry[i].PostRemediationSpecHash == entry[i+1].PreRemediationSpecHash`
+5. **Causality link** -- last entry's `PostRemediationSpecHash == incoming RR's PreRemediationSpecHash`
+
+**Threshold**: `ForwardChainThreshold` (default: 2). When 2 entries meet all conditions, the incoming RR (3rd attempt) is blocked.
+
+**Layered Detection Architecture**:
+
+```mermaid
+flowchart TD
+    RR["Incoming RR with preHash"] --> L12["Layer 1+2: Hash Regression + Spec Drift"]
+    L12 -->|"preHash matches OR HashMatch=preRemediation"| Block1["Block: IneffectiveChain"]
+    L12 -->|"No regression detected"| L1b["Layer 1b: Forward Hash Chain"]
+    L1b -->|"2 entries, same action type, failed EA, 1h window, hash-linked"| Block1b["Block: IneffectiveChain"]
+    L1b -->|"Conditions not met"| L3["Layer 3: Safety Net"]
+    L3 -->|"Total entries >= 5 in 4h"| Block3["Block: IneffectiveChain"]
+    L3 -->|"Below threshold"| Allow["Allow: Proceed to WFE"]
+```
+
+**Forward Chain Scenario (OOMKill Memory Escalation)**:
+
+```mermaid
+sequenceDiagram
+    participant Signal as OOMKill Signal
+    participant RO as Remediation Orchestrator
+    participant WFE as WorkflowExecution
+    participant EM as EffectivenessMonitor
+    participant DS as DataStorage
+
+    Note over Signal,DS: Cycle 1: 64Mi -> 128Mi
+    Signal->>RO: RR-1 (preHash=hash64)
+    RO->>WFE: IncreaseMemoryLimits
+    WFE-->>DS: Audit (preHash=hash64, postHash=hash128)
+    EM-->>DS: SignalResolved=false, Score=0.0
+
+    Note over Signal,DS: Cycle 2: 128Mi -> 256Mi
+    Signal->>RO: RR-2 (preHash=hash128)
+    RO->>WFE: IncreaseMemoryLimits
+    WFE-->>DS: Audit (preHash=hash128, postHash=hash256)
+    EM-->>DS: SignalResolved=false, Score=0.0
+
+    Note over Signal,DS: Cycle 3: Blocked!
+    Signal->>RO: RR-3 (preHash=hash256)
+    Note right of RO: Forward chain detected:<br/>hash64->hash128->hash256->incoming<br/>Same action type, both failed EA<br/>2 entries >= threshold 2
+    RO-->>RO: PhaseBlocked (IneffectiveChain)
+```
+
+**Decision Flowchart -- Which Layer Catches What**:
+
+```mermaid
+flowchart LR
+    subgraph patterns [Detection Patterns]
+        P1["Spec reverts to same bad state<br/>(e.g., external controller overrides)"]
+        P2["Spec advances but signal recurs<br/>(e.g., memory escalation)"]
+        P3["Many remediations, inconclusive hashes<br/>(safety net)"]
+    end
+
+    subgraph layers [Detection Layers]
+        L12["Layer 1+2<br/>Hash Regression"]
+        L1b["Layer 1b<br/>Forward Chain"]
+        L3["Layer 3<br/>Safety Net"]
+    end
+
+    P1 --> L12
+    P2 --> L1b
+    P3 --> L3
+```
+
+**Configuration**:
+
+```yaml
+# remediationorchestrator.yaml ConfigMap (ADR-030)
+routing:
+  forwardChainThreshold: 2           # Block after N forward-linked failed entries (Issue #525)
+  forwardChainWindow: "1h"           # Time window for forward chain detection
+```
+
+**Error handling**: Same as Layer 1+2 -- DS query failures fail-open. Forward chain filtering operates on entries already fetched by `GetRemediationHistory`.
+
+**EA guarantee**: The system does not accept new RRs for the same signal/target until the previous RR's effectiveness assessment completes. Therefore, `SignalResolved` is always populated when `countForwardChain` evaluates entries -- no null handling is needed.
+
+**ActionType source**: `AIAnalysis.Status.SelectedWorkflow.ActionType` (DD-WORKFLOW-016 taxonomy). Populates `RemediationHistoryEntry.actionType` in the DataStorage remediation history API (Issue #528, v1.2).
+
+**Acceptance Criteria**:
+
+| ID | Criterion | Test |
+|----|-----------|------|
+| AC-042-7-1 | Forward chain of 2 entries (same action type, failed EA, within 1h, hash-linked) blocks incoming RR | UT-RO-525-001 |
+| AC-042-7-2 | Incoming RR preHash must link to last entry's postHash | UT-RO-525-002 |
+| AC-042-7-3 | Gap in hash links breaks chain below threshold | UT-RO-525-003 |
+| AC-042-7-4 | Chain length below threshold does not block | UT-RO-525-004 |
+| AC-042-7-5 | Missing postHash fails-open | UT-RO-525-005 |
+| AC-042-7-6 | Layer 1+2 takes precedence over forward chain | UT-RO-525-006 |
+| AC-042-7-7 | OOMKill memory-escalation scenario blocked | UT-RO-525-007 |
+| AC-042-7-8 | Different action type breaks chain | UT-RO-525-008 |
+| AC-042-7-9 | Successful EA (SignalResolved=true) breaks chain | UT-RO-525-009 |
+| AC-042-7-10 | Entries outside 1h window excluded | UT-RO-525-010 |
+
+---
+
+## Supersedes
+
+- **BR-GATEWAY-184**: Consecutive Failure Blocking (moved from Gateway to RO)
+
+---
+
+## Test Coverage
+
+| Tier | Tests | Coverage |
+|------|-------|----------|
+| Unit | 8 | `consecutive_failure_test.go` |
+| Unit | 10 | `ineffective_chain_test.go` (Issue #214 -- Layer 1+2, Layer 3, cross-layer) |
+| Unit | 10 | `ineffective_chain_test.go` (Issue #525 -- Layer 1b forward chain) |
+| Unit | 10 | `inconclusive_backoff_test.go` + `consecutive_failures_inconclusive_test.go` (Issue #1091 -- Inconclusive backoff + chain-counting) |
+| Integration | 4 | `blocking_integration_test.go` |
+| E2E | 2 | `blocking_e2e_test.go` |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2025-12-10 | Initial version - moved from Gateway (BR-GATEWAY-184) to RO |
+| 1.1 | 2025-12-10 | Updated to use field selector on `spec.signalFingerprint` (not labels) per BR-GATEWAY-185 v1.1. Added AC-042-1-4, AC-042-1-5. |
+| 1.2 | 2026-02-28 | Added BR-ORCH-042.5: Ineffective Remediation Chain Detection (Issue #214). Three-layer detection using DataStorage audit traces. |
+| 1.3 | 2026-03-02 | Added BR-ORCH-042.6: Documented Option C decision for completed-but-ineffective handling. Prompt engineering deferred to HAPI team. |
+| 1.4 | 2026-03-03 | Externalized routing config to YAML ConfigMap (ADR-030). Marked HAPI prompt engineering as implemented. Fixed latent zero-value bug for Issue #214 fields. |
+| 1.5 | 2026-03-04 | Added BR-ORCH-042.7: Forward hash chain detection (Issue #525). Five-condition Layer 1b with ActionType matching, EA failure check, 1h window, threshold=2. New config fields: `forwardChainThreshold`, `forwardChainWindow`. |
+| 1.6 | 2026-05-11 | Updated BR-ORCH-042.6: Inconclusive exception (Issue #1091). `Completed+Inconclusive` treated as functional failure for backoff and chain-counting. RO sets `NextAllowedExecution` on Inconclusive completion. `CheckConsecutiveFailures` counts Inconclusive as failure instead of chain-breaker. 3 consecutive Inconclusive outcomes trigger blocking. |
+| 1.7 | 2026-07-31 | Fixed Issue #1802: BR-ORCH-042.5's DataStorage remediation-history query matched purely on spec-hash equality with no target-resource scoping, causing unrelated same-spec-hash targets (e.g., templated `Deployment`s) to be treated as the same remediation chain. Added AC-042-5-10 (target-resource scoping, all branches) and AC-042-5-11 (`main`-only `cluster_id` scoping for fleet deployments). Documented the scoping requirement explicitly in the detection algorithm description so the BR text matches enforced behavior. |
+

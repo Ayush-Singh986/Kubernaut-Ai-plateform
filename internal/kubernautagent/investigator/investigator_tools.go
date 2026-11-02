@@ -1,0 +1,485 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package investigator
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/summarizer"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+// fleetSuppressedToolNames is the set of local, client-go/dynamic-client-
+// backed RCA tools whose behavior depends on which cluster they query.
+// toolDefinitionsForPhase excludes any name in this set from the LLM's
+// tool schema during a fleet-target investigation, unless the fleet
+// overlay supplies a same-named override — closing the AC-6 gap where the
+// LLM could otherwise silently call one of these and query the wrong
+// (hub) cluster (issue #2306). Tools that are inherently fleet-agnostic
+// (DataStorage-backed audit/history, workflow catalog, TodoWrite,
+// Prometheus/Alertmanager federation) are deliberately NOT in this set —
+// see toolDefinitionsForPhase's doc comment.
+var fleetSuppressedToolNames = buildFleetSuppressedToolNames()
+
+func buildFleetSuppressedToolNames() map[string]struct{} {
+	names := make(map[string]struct{}, len(k8s.AllToolNames)+len(k8s.MetricsToolNames)+len(k8s.NodeProxyToolNames))
+	for _, n := range k8s.AllToolNames {
+		names[n] = struct{}{}
+	}
+	for _, n := range k8s.MetricsToolNames {
+		names[n] = struct{}{}
+	}
+	for _, n := range k8s.NodeProxyToolNames {
+		names[n] = struct{}{}
+	}
+	return names
+}
+
+// isFleetSuppressed reports whether name is a hub-bound local tool that must
+// be excluded from the LLM's RCA-phase schema during a fleet-target
+// investigation (see fleetSuppressedToolNames).
+func isFleetSuppressed(name string) bool {
+	_, suppressed := fleetSuppressedToolNames[name]
+	return suppressed
+}
+
+func escalateMaxTokens(completionTokens int) int {
+	if completionTokens > 0 {
+		escalated := completionTokens * 2
+		if escalated > 16384 {
+			return 16384
+		}
+		return escalated
+	}
+	return 8192
+}
+
+func totalPromptLength(messages []llm.Message) int {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content)
+	}
+	return total
+}
+
+// lastUserMessagePreviewLen is the fixed truncation length for audit
+// prompt_preview fields derived from the last user message. Every caller of
+// lastUserMessage uses this same length (unlike truncatePreview's other call
+// sites, which vary), so it is hardcoded here rather than threaded as a
+// parameter (100 Go Mistakes: unparam).
+const lastUserMessagePreviewLen = 500
+
+func lastUserMessage(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return truncatePreview(messages[i].Content, lastUserMessagePreviewLen)
+		}
+	}
+	return ""
+}
+
+func truncatePreview(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
+}
+
+// emitReasoningContentEvent live-streams BR-AI-086's captured LLM reasoning
+// content via the dedicated EventTypeReasoningContentDelta event, distinct
+// from EventTypeReasoningDelta's orchestration narration (#1634, #1635,
+// DD-LLM-009). No-op when reasoning is nil (BR-AI-086 AC2 default-disabled
+// parity — Reasoning is nil unless an operator opts in). Shared by the three
+// call sites that already emit EventTypeReasoningDelta right before this
+// call: the main LLM loop (investigator_loop.go) and the RCA/workflow-
+// selection parse-retry paths (investigator_rca.go,
+// investigator_workflow_selection.go).
+//
+// #2006: Claude's extended-thinking + tool-use behavior frequently ends the
+// private thinking block with a short one-line plan and then repeats that
+// identical line as the visible narration (resp.Message.Content) right
+// before the tool_use block. Both were faithfully captured and streamed as
+// two separate events with identical text; the Console renders each live
+// event as its own ThinkingEntry, so the operator saw the same sentence
+// twice. narration is the exact text already emitted via the preceding
+// EventTypeReasoningDelta call at each call site (resp.Message.Content) —
+// when reasoning.Text matches it after trimming whitespace, the dedicated
+// event is skipped since it would add no new information. The redacted
+// signal (empty Text + Redacted=true, #1716) is explicitly exempted from
+// suppression so that transparency behavior is untouched even when
+// narration also happens to be empty. Authority: BR-AI-086, FedRAMP CC7.2
+// (decision audit trails visible to the operator)/SI-10 (input validation
+// before display).
+func emitReasoningContentEvent(ctx context.Context, reasoning *llm.ReasoningBlock, narration string, turn int, phase string) {
+	if reasoning == nil {
+		return
+	}
+	if !reasoning.Redacted && strings.TrimSpace(reasoning.Text) == strings.TrimSpace(narration) {
+		return
+	}
+	emitToSink(ctx, session.EventTypeReasoningContentDelta, turn, phase, map[string]interface{}{
+		"text":     reasoning.Text,
+		"redacted": reasoning.Redacted,
+	})
+}
+
+// retryAuditParams groups the per-attempt fields for emitRetryAudit. Kept as
+// a config struct (rather than individual parameters) per the Go
+// Anti-Pattern Checklist's 8+-parameter rule.
+type retryAuditParams struct {
+	correlationID string
+	modelName     string
+	messages      []llm.Message
+	attempt       int
+	maxAttempts   int
+	phase         katypes.Phase
+	retryReason   string
+}
+
+// emitRetryAudit records a best-effort audit event for one parse-level retry
+// attempt (workflow-submit or RCA-submit). Shared by retryWorkflowSubmit and
+// retryRCASubmit so the AU-3 field set (model, prompt length/preview, retry
+// attempt/max, phase, retry reason) stays byte-identical between both call
+// sites.
+func (inv *Investigator) emitRetryAudit(ctx context.Context, p retryAuditParams) {
+	retryEvent := audit.NewEvent(audit.EventTypeLLMRequest, p.correlationID)
+	retryEvent.EventAction = audit.ActionLLMRequest
+	retryEvent.EventOutcome = audit.OutcomeSuccess
+	retryEvent.Data["model"] = p.modelName
+	retryEvent.Data["prompt_length"] = totalPromptLength(p.messages)
+	retryEvent.Data["prompt_preview"] = lastUserMessage(p.messages)
+	retryEvent.Data["retry_attempt"] = p.attempt
+	retryEvent.Data["retry_max"] = p.maxAttempts
+	retryEvent.Data["phase"] = string(p.phase)
+	retryEvent.Data["retry_reason"] = p.retryReason
+	audit.StoreBestEffort(ctx, inv.auditStore, retryEvent, inv.auditLog())
+}
+
+func toolNames(defs []llm.ToolDefinition) []string {
+	names := make([]string, len(defs))
+	for i, d := range defs {
+		names[i] = d.Name
+	}
+	return names
+}
+
+// toolDefinitionsForPhase builds the LLM-facing tool schema for phase. When
+// ctx carries a fleet tool overlay (DD-FLEET-005), a phase tool whose name
+// also appears in the overlay is described using the overlay's BridgeTool
+// instead of the local registry's tool of the same name — the LLM sees one
+// entry per name either way, so the schema is byte-identical to a hub-local
+// investigation's regardless of which cluster backs it (AC-6).
+//
+// Issue #1729: that override-only behavior left a tool-transparency gap for
+// any overlay tool whose name has no local-registry namesake at all — e.g.
+// kube-mcp-server's own naming convention (resources_get/resources_list/...,
+// pkg/fleet/mcpclient/tool_names.go) never collides with KA's local k8s-tool
+// naming convention (kubectl_get_by_name/kubectl_list/...). Such tools were
+// present in the resolved overlay and reachable by executeResolved, but never
+// advertised to the LLM at all, making them permanently uncallable regardless
+// of Helm/gateway wiring. appendNonCollidingOverlayTools below closes that gap
+// for the RCA phase (where the local read/k8s tool set already lives) only —
+// WorkflowDiscovery/Validation schemas are intentionally left untouched, to
+// avoid widening the LLM's action surface for phases that have never exposed
+// read tools of any kind (least privilege, AC-6).
+//
+// Issue #2306: the override-and-append halves above still left a third,
+// subtractive gap open — a local tool whose behavior depends on which
+// cluster it queries (fleetSuppressedToolNames: client-go/dynamic-client-
+// backed RCA tools) but has NO same-named overlay override stayed
+// advertised to the LLM even for a fleet-target investigation, so the LLM
+// could silently call it and query the wrong (hub) cluster. During the RCA
+// phase of a fleet-target investigation (non-empty overlay), such a name is
+// now skipped entirely — never appended to defs — rather than offered and
+// left to silently resolve against the wrong cluster. A hub-local
+// investigation (no overlay in ctx) never triggers the skip, so its schema
+// stays byte-identical to before this fix.
+func (inv *Investigator) toolDefinitionsForPhase(ctx context.Context, phase katypes.Phase) []llm.ToolDefinition {
+	var defs []llm.ToolDefinition
+	if inv.registry != nil {
+		phaseTools := inv.registry.ToolsForPhase(phase, inv.phaseTools)
+		overlay, hasOverlay := FleetOverlayFromContext(ctx)
+		defs = make([]llm.ToolDefinition, 0, len(phaseTools))
+		seen := make(map[string]struct{}, len(phaseTools))
+		for _, t := range phaseTools {
+			eff := t
+			ov, overridden := resolveTool(overlay, t.Name())
+			if phase == katypes.PhaseRCA && overridden {
+				eff = ov
+			} else if phase == katypes.PhaseRCA && hasOverlay && isFleetSuppressed(t.Name()) {
+				seen[t.Name()] = struct{}{}
+				continue
+			}
+			defs = append(defs, llm.ToolDefinition{
+				Name:        eff.Name(),
+				Description: eff.Description(),
+				Parameters:  eff.Parameters(),
+			})
+			seen[t.Name()] = struct{}{}
+		}
+		if phase == katypes.PhaseRCA {
+			defs = appendNonCollidingOverlayTools(defs, overlay, seen)
+		}
+	}
+
+	defs = slices.Grow(defs, 2)
+	if phase == katypes.PhaseWorkflowDiscovery {
+		defs = append(defs,
+			llm.ToolDefinition{
+				Name:        SubmitResultWithWorkflowToolName,
+				Description: "Submit investigation result WITH a selected workflow. Call this when you have identified a matching workflow.",
+				Parameters:  parser.WithWorkflowResultSchema(),
+			},
+			llm.ToolDefinition{
+				Name:        SubmitResultNoWorkflowToolName,
+				Description: "Submit investigation result when NO matching workflow exists. Call this when none of the available workflows can remediate the incident.",
+				Parameters:  parser.NoWorkflowResultSchema(),
+			},
+		)
+	} else {
+		defs = append(defs, llm.ToolDefinition{
+			Name:        SubmitResultToolName,
+			Description: "Submit the final investigation result as structured JSON. Call this tool when your analysis is complete.",
+			Parameters:  submitResultSchemaForPhase(phase),
+		})
+	}
+	return defs
+}
+
+// appendNonCollidingOverlayTools appends the fleet overlay's own tool
+// definitions to defs for every overlay name not already in seen (i.e. every
+// name that was NOT already advertised via a same-named local-registry tool
+// in toolDefinitionsForPhase's override loop). Overlay names are sorted
+// before appending so the resulting schema is deterministic across calls —
+// Go map iteration order is randomized, and a nondeterministic tool schema
+// would be both hard to test and, worse, would give the LLM a
+// non-reproducible view of its own toolset from one turn to the next.
+func appendNonCollidingOverlayTools(defs []llm.ToolDefinition, overlay map[string]tools.Tool, seen map[string]struct{}) []llm.ToolDefinition {
+	if len(overlay) == 0 {
+		return defs
+	}
+	names := make([]string, 0, len(overlay))
+	for name := range overlay {
+		if _, dup := seen[name]; !dup {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	defs = slices.Grow(defs, len(names))
+	for _, name := range names {
+		t := overlay[name]
+		defs = append(defs, llm.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  t.Parameters(),
+		})
+	}
+	return defs
+}
+
+func submitResultSchemaForPhase(phase katypes.Phase) json.RawMessage {
+	if phase == katypes.PhaseRCA {
+		return parser.RCAResultSchema()
+	}
+	return parser.InvestigationResultSchema()
+}
+
+// executeResolved executes name via the fleet tool overlay (DD-FLEET-005)
+// when ctx carries one and name is present in it, otherwise via the local
+// tool registry unchanged. Callers see identical (string, error) semantics
+// regardless of which backend served the call.
+//
+// For a hub-local investigation (no overlay in ctx), a miss surfaces the
+// registry's plain registry.ErrToolNotFound unchanged — unambiguous on its
+// own, no cluster context to add. For a fleet-target investigation (overlay
+// present but name isn't in it), a miss is wrapped with the cluster ID: a
+// bare "tool not found: X" would otherwise leave an operator unable to tell
+// whether X was never a valid tool name or whether the fleet overlay simply
+// didn't expose it for this cluster (AC-6 — the two failure modes look
+// identical without this context).
+//
+// For a fleet-target investigation, a name in fleetSuppressedToolNames with
+// no overlay override is rejected before ever reaching the local registry
+// (AC-6). toolDefinitionsForPhase already omits these names from the LLM's
+// schema, but that's advertisement only — this is the execution-time
+// backstop, so a suppressed name called anyway (schema drift, hallucination,
+// adversarial input) can't still run against the hub.
+func (inv *Investigator) executeResolved(ctx context.Context, name string, args json.RawMessage, phase katypes.Phase) (string, error) {
+	overlay, hasOverlay := FleetOverlayFromContext(ctx)
+	if phase != katypes.PhaseRCA {
+		overlay, hasOverlay = nil, false
+	}
+	if hasOverlay {
+		if t, found := resolveTool(overlay, name); found {
+			return t.Execute(ctx, args)
+		}
+		// AC-6: toolDefinitionsForPhase already omits this name from the
+		// schema for this exact reason, but a call can still arrive here —
+		// schema drift across turns, a hallucinated call, or an adversarial
+		// prompt. Without this check the call falls through to
+		// inv.registry.Execute() below and runs against the hub, silently
+		// defeating the schema-level suppression. Block it here too so
+		// suppression is enforced at execution time, not just advertisement.
+		if isFleetSuppressed(name) {
+			clusterID, _ := audit.ClusterIDFromContext(ctx)
+			return "", fmt.Errorf("tool %q is suppressed for fleet-target investigations and the overlay for cluster %q provides no override: %w",
+				name, clusterID, &registry.ErrToolNotFound{Name: name})
+		}
+	}
+
+	result, err := inv.registry.Execute(ctx, name, args)
+	if err != nil && hasOverlay {
+		var notFound *registry.ErrToolNotFound
+		if errors.As(err, &notFound) {
+			clusterID, _ := audit.ClusterIDFromContext(ctx)
+			return "", fmt.Errorf("tool %q not found in fleet overlay for cluster %q or local registry: %w", name, clusterID, err)
+		}
+	}
+	return result, err
+}
+
+// toolAllowedInPhase enforces the server-owned phase contract (DD-KA-2496,
+// BR-KA-017). Fleet-only tools extend RCA, never workflow discovery. Submission
+// sentinels are phase-scoped too; model arguments cannot change this decision.
+func (inv *Investigator) toolAllowedInPhase(ctx context.Context, phase katypes.Phase, name string) bool {
+	switch phase {
+	case katypes.PhaseRCA, katypes.PhaseWorkflowDiscovery, katypes.PhaseValidation:
+	default:
+		return false
+	}
+	switch name {
+	case SubmitResultToolName:
+		return phase == katypes.PhaseRCA || phase == katypes.PhaseValidation
+	case SubmitResultWithWorkflowToolName, SubmitResultNoWorkflowToolName:
+		return phase == katypes.PhaseWorkflowDiscovery
+	}
+	if slices.Contains(inv.phaseTools[phase], name) {
+		return true
+	}
+	if phase == katypes.PhaseRCA {
+		overlay, _ := FleetOverlayFromContext(ctx)
+		_, found := resolveTool(overlay, name)
+		return found
+	}
+	return false
+}
+
+func (inv *Investigator) phaseToolError(name string, phase katypes.Phase, correlationID string) string {
+	err := fmt.Errorf("tool %q not allowed in phase %q", name, phase)
+	inv.logger.Error(err, "tool call rejected by trusted phase policy",
+		"tool", name, "phase", string(phase), "correlation_id", correlationID)
+	return toolErrorJSON(err.Error())
+}
+
+func (inv *Investigator) executeTool(ctx context.Context, name string, args json.RawMessage, correlationID string, phase katypes.Phase) string {
+	if !inv.toolAllowedInPhase(ctx, phase, name) {
+		return inv.phaseToolError(name, phase, correlationID)
+	}
+	if inv.registry == nil {
+		return toolErrorJSON("no registry configured for tool " + name)
+	}
+
+	detector := inv.anomalyDetectorFor(correlationID)
+
+	if ar := detector.CheckToolCall(name, args); !ar.Allowed {
+		inv.logger.Info("anomaly detector rejected tool call",
+			"tool", name,
+			"reason", ar.Reason,
+		)
+		return toolErrorJSON(ar.Reason)
+	}
+
+	result, err := inv.executeResolved(ctx, name, args, phase)
+	if err != nil {
+		return inv.handleToolExecutionError(ctx, detector, name, args, err)
+	}
+
+	return inv.finishToolResult(ctx, name, result, correlationID, phase)
+}
+
+func (inv *Investigator) handleToolExecutionError(ctx context.Context, detector *AnomalyDetector, name string, args json.RawMessage, err error) string {
+	if status := katypes.EvidenceStatusFromError(err); status != nil {
+		if scope, ok := katypes.EvidenceStatusScopeFromContext(ctx); ok {
+			scope.Merge(status)
+		}
+	}
+	inv.logger.Error(err, "tool execution failed", "tool", name)
+	if ar := detector.RecordFailure(name, args); !ar.Allowed {
+		errResult := toolErrorJSON(ar.Reason)
+		alignment.SubmitToolStep(ctx, name, errResult)
+		return errResult
+	}
+	errResult := toolErrorJSON(err.Error())
+	alignment.SubmitToolStep(ctx, name, errResult)
+	return errResult
+}
+
+func (inv *Investigator) finishToolResult(ctx context.Context, name, result, correlationID string, phase katypes.Phase) string {
+	// DD-KA-2496: project the original structure before text sanitizers can
+	// consume JSON quoting. captureEvidence retains only sanitized content;
+	// summarization and truncation stay independent.
+	if phase == katypes.PhaseRCA {
+		inv.captureEvidence(ctx, correlationID, name, result)
+	}
+	if inv.pipeline.Sanitizer != nil {
+		sanitized, sanitizeErr := inv.pipeline.Sanitizer.Run(ctx, result)
+		if sanitizeErr != nil {
+			inv.logger.Error(sanitizeErr, "sanitization failed, fail-closed for SOC2 compliance",
+				"tool", name,
+			)
+			if phase == katypes.PhaseRCA {
+				inv.failEvidence(correlationID, "observation sanitization failed")
+			}
+			errResult := toolErrorJSON("sanitization failed: tool output withheld")
+			alignment.SubmitToolStep(ctx, name, errResult)
+			return errResult
+		}
+		result = sanitized
+	}
+	alignment.SubmitToolStep(ctx, name, result)
+
+	if inv.pipeline.Summarizer != nil {
+		summarized, sumErr := inv.pipeline.Summarizer.MaybeSummarize(ctx, name, result)
+		if sumErr != nil {
+			inv.logger.Error(sumErr, "summarization failed, returning unsummarized output",
+				"tool", name,
+			)
+		} else {
+			result = summarized
+		}
+	}
+
+	if inv.pipeline.MaxToolOutputSize > 0 {
+		result = summarizer.TruncateToolOutput(result, name, inv.pipeline.MaxToolOutputSize)
+	}
+
+	return result
+}

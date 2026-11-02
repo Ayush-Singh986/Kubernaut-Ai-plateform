@@ -1,0 +1,112 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package handlers implements phase handlers for the AIAnalysis controller.
+//
+// P2.2 Refactoring: Consolidated constants from investigating.go for better organization.
+package handlers
+
+import "time"
+
+// ========================================
+// RETRY CONFIGURATION
+// BR-AI-009: Transient error retry with exponential backoff
+// BR-AI-010: Permanent error immediate failure
+// ========================================
+
+const (
+	// MaxRetries for transient errors before marking as Failed
+	// BR-AI-009: Maximum retry attempts for transient KA errors
+	// After 5 attempts with exponential backoff, transition to permanent failure
+	MaxRetries = 5
+
+	// BaseDelay for exponential backoff (first retry)
+	// Used with pkg/shared/backoff for retry delay calculation
+	// Note: pkg/shared/backoff default is also 30s for consistency
+	BaseDelay = 30 * time.Second
+
+	// MaxDelay caps the backoff delay (maximum wait between retries)
+	// Ensures retries don't become too slow for time-sensitive analysis
+	// Note: Set to 8 minutes vs. backoff default 5 minutes for KA analysis tolerance
+	MaxDelay = 480 * time.Second // 8 minutes
+)
+
+// ========================================
+// KUBERNETES ANNOTATIONS
+// Used for storing handler state in CRD annotations
+// ========================================
+
+const (
+	// RetryCountAnnotation stores retry count in CRD annotations
+	// Format: "kubernaut.ai/retry-count"
+	// Used to persist retry state across reconciliation loops
+	RetryCountAnnotation = "kubernaut.ai/retry-count"
+
+	// SchemaRejectionRetryCountAnnotation persists the count of consecutive
+	// apierrors.IsInvalid rejections of a Status().Update() call (#2030 Part
+	// A: e.g. the live cluster's installed CRD lagging behind a new enum
+	// value the Go source already defines). Written via a plain Update()
+	// rather than Status().Update(): the whole point is that the status
+	// subresource write is being rejected, and a CRD with
+	// subresources.status enabled silently drops any .status diff on a
+	// non-status Update, so that write still succeeds even though
+	// Status().Update() doesn't.
+	SchemaRejectionRetryCountAnnotation = "kubernaut.ai/schema-rejection-retry-count"
+)
+
+const (
+	// MaxSchemaRejectionRetries caps how many times reconcileInvestigating/
+	// reconcileAnalyzing retry a Status().Update() rejected by CRD schema
+	// validation (#2030 Part A) before escalating to a terminal Failed
+	// phase. Previously there was no cap at all -- the controller fail-
+	// closed forever on the first rejection (return ctrl.Result{}, nil, no
+	// requeue), permanently abandoning the AIAnalysis.
+	MaxSchemaRejectionRetries = 5
+)
+
+// ========================================
+// SESSION CONFIGURATION (BR-AA-KA-064)
+// AgentSession-watch-driven session management (DD-AA-KA-001)
+// ========================================
+//
+// #2204 (2026-08-20): DefaultSessionPollInterval / WithSessionPollInterval
+// were removed. They were a vestige of the pre-AgentSession-CRD design,
+// where AA polled KA over HTTP on a fixed cadence because there was no other
+// signal that a session had progressed. Since DD-AA-KA-001 replaced that
+// HTTP channel with a watched AgentSession CRD, the watch is the real
+// completion signal (fires immediately on any KA status write); the
+// InvestigatingHandler's only remaining need is a backstop reconcile to
+// catch a hung KA that never writes again, and that backstop is now
+// scheduled exactly at the investigation's own deadline
+// (investigationDeadline/backstopRequeueAfter in investigating.go) rather
+// than on a periodic interval unrelated to it.
+
+const (
+	// DefaultMaxInvestigationDuration is the wall-clock cap for an investigation session.
+	// #1078: If a session exceeds this duration, the handler transitions to PhaseFailed
+	// with Reason=TransientError to prevent unbounded resource consumption.
+	DefaultMaxInvestigationDuration = 25 * time.Minute
+)
+
+
+
+
+
+
+
+
+
+

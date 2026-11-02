@@ -1,0 +1,369 @@
+package ka
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/go-logr/logr"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+)
+
+// terminalActions are MCP actions that end an interactive session.
+// After a successful terminal action, the pooled session is released.
+var terminalActions = map[string]bool{
+	"complete": true,
+	"cancel":   true,
+}
+
+// PooledMCPClient implements MCPClient using KASessionPool for persistent
+// MCP sessions. Sessions are keyed by (rr_id, username) and persist across
+// multiple tool calls within the same interactive investigation (#1306).
+//
+// Terminal actions (complete, cancel) automatically release the pooled session.
+// Non-terminal actions (takeover, message, status, discover_workflows) reuse
+// the existing session or create a new one via the pool factory.
+type PooledMCPClient struct {
+	pool      *KASessionPool
+	logger    logr.Logger
+	emitEvent EventEmitter
+}
+
+// EventEmitter delivers a KA event to the current caller's event stream.
+// Keeping this adapter injected prevents the KA session package from depending
+// on A2A presentation details.
+type EventEmitter func(ctx context.Context, event InvestigationEvent)
+
+// NewPooledMCPClient creates a PooledMCPClient backed by the given session pool.
+// An optional emitter enables live event delivery for A2A callers; callers
+// without an event stream retain the existing request/response behavior.
+func NewPooledMCPClient(pool *KASessionPool, logger logr.Logger, emitters ...EventEmitter) *PooledMCPClient {
+	var emitEvent EventEmitter
+	if len(emitters) > 0 {
+		emitEvent = emitters[0]
+	}
+	return &PooledMCPClient{
+		pool:      pool,
+		logger:    logger.WithName("pooled-mcp"),
+		emitEvent: emitEvent,
+	}
+}
+
+// Investigate is not supported by pooled sessions — investigation uses KA REST,
+// not MCP interactive protocol. Callers should use SDKMCPClient.Investigate.
+func (c *PooledMCPClient) Investigate(_ context.Context, _ InvestigateArgs) (*InvestigateResult, error) {
+	return nil, fmt.Errorf("Investigate is a REST operation; use SDKMCPClient for non-interactive calls")
+}
+
+// ListWorkflows is not supported by pooled sessions — it is a stateless
+// catalog browse with no rr_id to key a pooled session on. Callers should
+// use SDKMCPClient.ListWorkflows (#1677 Phase 2f, DD-WORKFLOW-019).
+func (c *PooledMCPClient) ListWorkflows(_ context.Context, _ ListWorkflowsArgs) (*ListWorkflowsResult, error) {
+	return nil, fmt.Errorf("ListWorkflows is a stateless catalog query; use SDKMCPClient for non-interactive calls")
+}
+
+// InvokeAction calls kubernaut_investigate with the given action via a pooled
+// MCP session. Terminal actions (complete, cancel) release the session after
+// a successful call.
+func (c *PooledMCPClient) InvokeAction(ctx context.Context, args InvokeActionArgs) (*InvokeActionResult, error) {
+	identity := auth.UserIdentityFromContext(ctx)
+	if identity == nil {
+		return nil, fmt.Errorf("user identity required: no identity in context")
+	}
+
+	session, err := c.pool.Acquire(ctx, args.RRID, identity.Username)
+	if err != nil {
+		return nil, fmt.Errorf("acquire MCP session: %w", err)
+	}
+
+	argsMap := map[string]any{
+		"rr_id":              args.RRID,
+		"action":             args.Action,
+		"acting_user":        identity.Username,
+		"acting_user_groups": identity.Groups,
+	}
+	if args.Message != "" {
+		argsMap["message"] = args.Message
+	}
+
+	raw, err := c.callPooledTool(ctx, session, "kubernaut_investigate", argsMap, args.RRID, identity.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	var result InvokeActionResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("parse invoke_action response: %w", err)
+	}
+
+	if terminalActions[args.Action] {
+		c.pool.Release(args.RRID, identity.Username)
+		c.logger.Info("pooled session released (terminal action)",
+			"rr_id", args.RRID, "action", args.Action)
+	}
+
+	return &result, nil
+}
+
+// DiscoverWorkflows calls kubernaut_investigate with action "discover_workflows"
+// via a pooled MCP session.
+//
+//nolint:gocritic // hugeParam: matches MCPClient interface contract
+func (c *PooledMCPClient) DiscoverWorkflows(ctx context.Context, args DiscoverWorkflowsArgs) (*DiscoverWorkflowsResult, error) {
+	identity := auth.UserIdentityFromContext(ctx)
+	if identity == nil {
+		return nil, fmt.Errorf("user identity required: no identity in context")
+	}
+
+	session, err := c.pool.Acquire(ctx, args.RRID, identity.Username)
+	if err != nil {
+		return nil, fmt.Errorf("acquire MCP session: %w", err)
+	}
+
+	argsMap := map[string]any{
+		"rr_id":              args.RRID,
+		"action":             "discover_workflows",
+		"acting_user":        identity.Username,
+		"acting_user_groups": identity.Groups,
+	}
+
+	raw, err := c.callPooledTool(ctx, session, "kubernaut_investigate", argsMap, args.RRID, identity.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	return ParseDiscoverWorkflowsResponse(raw)
+}
+
+// SelectWorkflow calls kubernaut_select_workflow via a pooled MCP session.
+//
+//nolint:gocritic // hugeParam: matches MCPClient interface contract
+func (c *PooledMCPClient) SelectWorkflow(ctx context.Context, args SelectWorkflowArgs) (*SelectWorkflowResult, error) {
+	identity := auth.UserIdentityFromContext(ctx)
+	if identity == nil {
+		return nil, fmt.Errorf("user identity required: no identity in context")
+	}
+
+	session, err := c.pool.Acquire(ctx, args.RRID, identity.Username)
+	if err != nil {
+		return nil, fmt.Errorf("acquire MCP session: %w", err)
+	}
+
+	argsMap := map[string]any{
+		"rr_id":              args.RRID,
+		"workflow_id":        args.WorkflowID,
+		"acting_user":        identity.Username,
+		"acting_user_groups": identity.Groups,
+	}
+	if args.Kind != "" {
+		argsMap["kind"] = args.Kind
+	}
+	if args.Name != "" {
+		argsMap["name"] = args.Name
+	}
+	if args.Namespace != "" {
+		argsMap["namespace"] = args.Namespace
+	}
+	if args.Parameters != nil {
+		argsMap["parameters"] = args.Parameters
+	}
+
+	raw, err := c.callPooledTool(ctx, session, "kubernaut_select_workflow", argsMap, args.RRID, identity.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SelectWorkflowResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("parse select_workflow response: %w", err)
+	}
+	return &result, nil
+}
+
+// StartInvestigation is not supported by pooled sessions — dedicated investigations
+// require a long-lived MCP session with LoggingMessageHandler for event streaming.
+// Callers should use SDKMCPClient.StartInvestigation.
+func (c *PooledMCPClient) StartInvestigation(_ context.Context, _ StartInvestigationArgs) (*StartInvestigationResult, error) {
+	return nil, fmt.Errorf("StartInvestigation requires a dedicated MCP session; use SDKMCPClient")
+}
+
+// callPooledTool dispatches a tool call to the given pooled session, handling
+// error response parsing and security redaction consistently with SDKMCPClient.
+// On stale-session errors (#1386), it evicts the dead entry and retries once
+// with a fresh session from the pool factory.
+//
+// #1637/DD-AF-015: for the duration of the call, subscribes the caller to the
+// pooled entry's EventRouter (if any) so that WatchTerminalEvents — the sole
+// consumer of the session's residual event channel after a
+// kubernaut_investigate handoff — can relay KA's mid-call notifications
+// (reasoning_content_delta, reasoning_delta, tool_call_start, error, ...)
+// live to this call's EventBridge instead of dropping them. A session
+// acquired directly (never handed off from an investigate call) has no
+// router (RouterFor returns nil) and this is a no-op, matching prior behavior.
+func (c *PooledMCPClient) callPooledTool(ctx context.Context, session PoolSession, name string, args map[string]any, rrID, username string) (json.RawMessage, error) {
+	if c.emitEvent != nil {
+		if unsubscribe := c.attachPooledEventSubscription(ctx, rrID, username); unsubscribe != nil {
+			defer unsubscribe()
+		}
+	}
+	raw, err := c.doCallTool(ctx, session, name, args)
+	if err != nil && isStaleSessionError(err) {
+		c.logger.Info("stale MCP session detected, evicting and retrying",
+			"rr_id", rrID, "error", err.Error())
+		c.pool.Release(rrID, username)
+		newSession, acqErr := c.pool.Acquire(ctx, rrID, username)
+		if acqErr != nil {
+			return nil, fmt.Errorf("re-acquire MCP session after stale eviction: %w", acqErr)
+		}
+		raw, err = c.doCallTool(ctx, newSession, name, args)
+	}
+	return raw, err
+}
+
+// attachPooledEventSubscription returns call-scoped cleanup when no enclosing
+// event lifetime was supplied. With a live event lifetime, cleanup is owned by
+// that context and happens asynchronously after the MCP call returns.
+func (c *PooledMCPClient) attachPooledEventSubscription(ctx context.Context, rrID, username string) func() {
+	router := c.pool.RouterFor(rrID, username)
+	if router == nil {
+		return nil
+	}
+
+	eventCtx := ctx
+	lifetimeCtx := EventLifetimeFromContext(ctx)
+	persistentSubscription := lifetimeCtx != nil && lifetimeCtx.Done() != nil
+	if persistentSubscription {
+		eventCtx = lifetimeCtx
+	}
+
+	unsubscribe := router.Subscribe(func(evt InvestigationEvent) {
+		if evt.Type == EventTypeReasoningContentDelta {
+			c.logger.V(1).Info("pooled event delivered to active caller",
+				"rr_id", rrID,
+				"username", username,
+				"event_type", evt.Type,
+				"turn", evt.Turn,
+				"phase", evt.Phase)
+		}
+		c.emitEvent(eventCtx, evt)
+	})
+	c.logger.Info("pooled event subscription attached",
+		"rr_id", rrID,
+		"username", username)
+
+	if persistentSubscription {
+		go func() {
+			<-eventCtx.Done()
+			unsubscribe()
+			c.logger.Info("pooled event subscription detached",
+				"rr_id", rrID,
+				"username", username,
+				"reason", "event_lifetime_done")
+		}()
+		return nil
+	}
+
+	return func() {
+		unsubscribe()
+		c.logger.Info("pooled event subscription detached",
+			"rr_id", rrID,
+			"username", username,
+			"reason", "call_returned")
+	}
+}
+
+func (c *PooledMCPClient) doCallTool(ctx context.Context, session PoolSession, name string, args map[string]any) (json.RawMessage, error) {
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("MCP call %s: %w", name, err)
+	}
+
+	if result.IsError {
+		msg := "tool call returned error"
+		if len(result.Content) > 0 {
+			if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+				msg = security.RedactError(fmt.Errorf("%s", tc.Text))
+			}
+		}
+		return nil, fmt.Errorf("kubernaut agent: %s", msg)
+	}
+
+	if len(result.Content) == 0 {
+		return json.RawMessage("{}"), nil
+	}
+
+	if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+		return json.RawMessage(tc.Text), nil
+	}
+
+	return json.RawMessage("{}"), nil
+}
+
+// isStaleSessionError returns true if the error indicates the MCP transport
+// session is no longer valid on the server (e.g., SSE stream died, pod
+// restarted, or proxy idle timeout).
+func isStaleSessionError(err error) bool {
+	if errors.Is(err, mcp.ErrSessionMissing) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "session not found") ||
+		strings.Contains(msg, "failed to connect") ||
+		strings.Contains(msg, "failed to reconnect")
+}
+
+// CompleteNoAction calls kubernaut_complete_no_action via a pooled MCP session.
+// This is a terminal action — the pooled session is released after success.
+func (c *PooledMCPClient) CompleteNoAction(ctx context.Context, args CompleteNoActionArgs) (*CompleteNoActionResult, error) {
+	identity := auth.UserIdentityFromContext(ctx)
+	if identity == nil {
+		return nil, fmt.Errorf("user identity required: no identity in context")
+	}
+
+	session, err := c.pool.Acquire(ctx, args.RRID, identity.Username)
+	if err != nil {
+		return nil, fmt.Errorf("acquire MCP session: %w", err)
+	}
+
+	argsMap := map[string]any{
+		"rr_id":              args.RRID,
+		"acting_user":        identity.Username,
+		"acting_user_groups": identity.Groups,
+	}
+	if args.Reason != "" {
+		argsMap["reason"] = args.Reason
+	}
+	if args.EscalationReason != "" {
+		argsMap["escalation_reason"] = args.EscalationReason
+	}
+
+	raw, err := c.callPooledTool(ctx, session, "kubernaut_complete_no_action", argsMap, args.RRID, identity.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	// Terminal action: always release the session after successful tool call,
+	// regardless of unmarshal outcome.
+	defer func() {
+		c.pool.Release(args.RRID, identity.Username)
+		c.logger.Info("pooled session released (complete_no_action)", "rr_id", args.RRID)
+	}()
+
+	var result CompleteNoActionResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("parse complete_no_action response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Compile-time interface check.
+var _ MCPClient = (*PooledMCPClient)(nil)

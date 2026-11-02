@@ -1,0 +1,489 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package audit
+
+import (
+	"context"
+
+	"github.com/go-logr/logr"
+	"github.com/google/uuid"
+)
+
+// EventCategory is the audit event_category for all Kubernaut Agent events.
+const EventCategory = "aiagent"
+
+const (
+	EventTypeLLMRequest        = "aiagent.llm.request"
+	EventTypeLLMResponse       = "aiagent.llm.response"
+	EventTypeLLMToolCall       = "aiagent.llm.tool_call"
+	EventTypeValidationAttempt = "aiagent.workflow.validation_attempt"
+	EventTypeResponseComplete  = "aiagent.response.complete"
+	EventTypeResponseFailed    = "aiagent.response.failed"
+	EventTypeRCAComplete       = "aiagent.rca.complete"
+	// EventTypeInvestigationDecision records one bounded, server-owned
+	// investigation state transition or terminal decision (DD-KA-2520-2521).
+	EventTypeInvestigationDecision = "aiagent.investigation.decision"
+	EventTypeEnrichmentCompleted   = "aiagent.enrichment.completed"
+	EventTypeEnrichmentFailed      = "aiagent.enrichment.failed"
+	EventTypeAlignmentStep         = "aiagent.alignment.step"
+	EventTypeAlignmentVerdict      = "aiagent.alignment.verdict"
+	EventTypeGroundingRequest      = "aiagent.alignment.grounding.request"
+	EventTypeGroundingResponse     = "aiagent.alignment.grounding.response"
+
+	EventTypeSessionStarted   = "aiagent.session.started"
+	EventTypeSessionCancelled = "aiagent.session.cancelled"
+	EventTypeSessionCompleted = "aiagent.session.completed"
+	EventTypeSessionFailed    = "aiagent.session.failed"
+
+	// EventTypeInvestigationCancelled is emitted by the investigator when
+	// it detects context cancellation mid-investigation (BR-SESSION-001).
+	// Unlike EventTypeSessionCancelled (emitted by session.Manager at the
+	// session lifecycle level), this event carries investigation-internal
+	// state: the phase, turn number, and accumulated token usage at the
+	// point of cancellation. This enables SOC2 CC8.1 audit reconstruction
+	// of partial investigation progress.
+	EventTypeInvestigationCancelled = "aiagent.investigation.cancelled"
+
+	// EventTypeSessionObserved is emitted when an operator subscribes to an
+	// active investigation's SSE stream (BR-SESSION-005). Records who is
+	// observing which investigation for SOC2 CC8.1 audit trail.
+	EventTypeSessionObserved = "aiagent.session.observed"
+
+	// EventTypeSessionAccessDenied is emitted when an authenticated user
+	// attempts to access a session they do not own. Records the requesting
+	// user, target session, and endpoint for SOC2 CC8.1 failed-access audit.
+	EventTypeSessionAccessDenied = "aiagent.session.access_denied"
+
+	// EventTypeSessionSuspended is emitted when an autonomous investigation is
+	// suspended due to dynamic takeover (BR-INTERACTIVE-004). The session remains
+	// in a terminal state; reconstruction spawns a new session after interactive
+	// mode ends. DD-INTERACTIVE-002 identity transition: KA SA → human operator.
+	EventTypeSessionSuspended = "aiagent.session.suspended"
+
+	// EventTypeInteractiveStarted is emitted when a user acquires the interactive
+	// Lease and begins driving the investigation (BR-INTERACTIVE-004).
+	EventTypeInteractiveStarted = "aiagent.interactive.started"
+
+	// EventTypeInteractiveCompleted is emitted when an interactive session ends,
+	// either by explicit complete, cancel, disconnect, or timeout. Carries the
+	// reason in event data for SOC2 attribution.
+	EventTypeInteractiveCompleted = "aiagent.interactive.completed"
+
+	// EventTypeSessionResumed is emitted when autonomous investigation resumes
+	// after interactive session ends (cancel+reconstruct). The new session ID
+	// and reconstructed context are included in event data.
+	EventTypeSessionResumed = "aiagent.session.resumed"
+
+	// EventTypeInteractiveK8sCall is emitted for the K8s lookup
+	// enrichment.Enricher performs on behalf of the acting user during
+	// interactive kubernaut_select_workflow (BR-INTERACTIVE-003 #3,
+	// BR-AUDIT-005). Per #1288, KA never impersonates the user at the K8s
+	// API level -- the call always runs under KA's own SA -- so this event
+	// is for audit attribution, not RBAC impersonation. One event
+	// summarizes each Enrich() call (owner-chain walk + spec-hash fetch),
+	// not each raw K8s Get.
+	EventTypeInteractiveK8sCall = "aiagent.interactive.k8s_call"
+
+	EventTypeShadowLLMRequest  = "aiagent.shadow.llm.request"
+	EventTypeShadowLLMResponse = "aiagent.shadow.llm.response"
+
+	// EventTypeConfigReloaded/EventTypeConfigRejected are emitted for every
+	// CA-cert hot-reload attempt (GAP-11, Issue #2285) so that hot-reload
+	// state changes have the same audit-trail parity as every other
+	// hot-reloadable component (SOC2 CC7.2 / FedRAMP CM-3, AU-2, AU-12).
+	EventTypeConfigReloaded = "aiagent.config.reloaded"
+	EventTypeConfigRejected = "aiagent.config.rejected"
+
+	EventTypeAuthFailure     = "aiagent.auth.failure"
+	EventTypeAuthDenied      = "aiagent.auth.denied"
+	EventTypeRateLimitDenied = "aiagent.ratelimit.denied"
+
+	// EventTypeSecretAccessed is emitted every time KubernautAgent's K8s
+	// resource resolver reads a core Secret (Get or List), regardless of
+	// outcome (GAP-13, Issue #1505). KubernautAgent intentionally retains
+	// broad read RBAC on Secrets for investigation completeness (see
+	// docs/services/kubernaut-agent/security-configuration.md);
+	// this event is the detective control that compensates for not
+	// narrowing that RBAC — every Secret read is independently queryable
+	// for SOC2 CC7.2 / FedRAMP AU-12 review, separate from the generic
+	// aiagent.llm.tool_call event already emitted for every tool call.
+	EventTypeSecretAccessed = "aiagent.secret.accessed"
+
+	// EventTypeFleetOverlayFailed is emitted when a fleet-target
+	// investigation's FleetOverlayResolver.Overlay call fails (DD-FLEET-005,
+	// issue #1732). The investigation fails open -- it proceeds without the
+	// remote cluster's tools, behaving like a hub-local investigation minus
+	// remote-cluster access, rather than aborting -- so this event is the
+	// only observable record of the degradation (AU-3, GA Readiness
+	// Dimension 12: no silent failures).
+	EventTypeFleetOverlayFailed = "aiagent.fleet.overlay_failed"
+
+	// EventTypeFleetOverlayUnavailable is emitted when a fleet-target
+	// investigation (a non-empty clusterID) reaches prescopeFleetOverlay on
+	// a KA instance with no FleetOverlayResolver configured at all (issue
+	// #1768 follow-up). Distinct from EventTypeFleetOverlayFailed: nothing
+	// errored, fleet mode simply isn't wired on this KA instance --  but
+	// without this event that condition was previously indistinguishable
+	// from a hub-local investigation (clusterID == "", the expected
+	// zero-regression no-op) or, worse, from a regression that stopped
+	// calling prescopeFleetOverlay entirely. This is the only observable
+	// record of "a fleet-scoped investigation silently ran against local/
+	// hub tools instead of its intended target cluster" (AU-3, AC-4, GA
+	// Readiness Dimension 12: no silent failures).
+	EventTypeFleetOverlayUnavailable = "aiagent.fleet.overlay_unavailable"
+)
+
+// ========================================
+// WORKFLOW CATALOG DISCOVERY EVENTS (Issue #1677, DD-WORKFLOW-019)
+// ========================================
+// Relocated from pkg/datastorage/audit/workflow_discovery_event.go: KA, not
+// DS, now generates these 4 events -- amending BR-AUDIT-023/DD-WORKFLOW-014's
+// "who generates" language. Event type/action string values are unchanged
+// (existing audit-query consumers keyed on event_type keep working); only
+// the emitter and event_category (see WorkflowCatalogEventCategory below)
+// change. See internal/kubernautagent/audit/ds_workflow_catalog_payloads.go
+// for the payload builders.
+const (
+	EventTypeActionsListed      = "workflow.catalog.actions_listed"
+	EventTypeWorkflowsListed    = "workflow.catalog.workflows_listed"
+	EventTypeWorkflowRetrieved  = "workflow.catalog.workflow_retrieved"
+	EventTypeSelectionValidated = "workflow.catalog.selection_validated"
+)
+
+// WorkflowCatalogEventCategory is the event_category for the 4 workflow
+// discovery events above -- "workflow" (per the OpenAPI schema), not KA's
+// default "aiagent", since these events describe the workflow-catalog
+// domain rather than KA's own investigation lifecycle. Pass via
+// WithEventCategory. Matches DS's pre-existing EventCategoryWorkflow
+// constant value (pkg/datastorage/audit/workflow_discovery_event.go).
+const WorkflowCatalogEventCategory = "workflow"
+
+const (
+	ActionLLMRequest            = "llm_request"
+	ActionLLMResponse           = "llm_response"
+	ActionToolExecution         = "tool_execution"
+	ActionValidation            = "validation"
+	ActionResponseSent          = "response_sent"
+	ActionResponseFailed        = "response_failed"
+	ActionAlignmentEvaluate     = "alignment_evaluate"
+	ActionAlignmentVerdict      = "alignment_verdict"
+	ActionSameKindGate          = "same_kind_validation_gate"
+	ActionAPIVersionGate        = "api_version_validation_gate"
+	ActionWorkflowAlignmentGate = "workflow_target_alignment_gate"
+	ActionShadowLLMRequest      = "shadow_llm_request"
+	ActionShadowLLMResponse     = "shadow_llm_response"
+	ActionGroundingRequest      = "grounding_request"
+	ActionGroundingResponse     = "grounding_response"
+	ActionTruncationDetected    = "truncation_detected"
+	ActionEnriched              = "enriched"
+	ActionMCPTransportReset     = "mcp_transport_reset"
+	ActionMCPRetry              = "mcp_retry"
+	ActionMCPRetryExhausted     = "mcp_retry_exhausted"
+	ActionEvidenceSourceFailed  = "evidence_source_failed"
+
+	ActionSessionStarted          = "session_started"
+	ActionSessionCancelled        = "session_cancelled"
+	ActionSessionCompleted        = "session_completed"
+	ActionSessionFailed           = "session_failed"
+	ActionInvestigationCancelled  = "investigation_cancelled"
+	ActionSessionObserved         = "session_observed"
+	ActionSessionAccessDenied     = "session_access_denied"
+	ActionSessionSuspended        = "session_suspended"
+	ActionInteractiveStarted      = "interactive_started"
+	ActionInteractiveCompleted    = "interactive_completed"
+	ActionSessionResumed          = "session_resumed"
+	ActionInteractiveK8sCall      = "interactive_k8s_call"
+	ActionAuthFailure             = "auth_failure"
+	ActionAuthDenied              = "auth_denied"
+	ActionRateLimitDenied         = "ratelimit_denied"
+	ActionSecretAccessed          = "secret_accessed"
+	ActionFleetOverlayFailed      = "fleet_overlay_failed"
+	ActionFleetOverlayUnavailable = "fleet_overlay_unavailable"
+	ActionInvestigationDecision   = "investigation_decision"
+
+	// Workflow catalog discovery event actions (Issue #1677, DD-WORKFLOW-019).
+	// Values match DS's pre-existing ActionDiscovery/ActionRetrieve/ActionValidate
+	// constants (pkg/datastorage/audit/workflow_discovery_event.go).
+	ActionDiscovery = "discovery"
+	ActionRetrieve  = "retrieve"
+	ActionValidate  = "validate"
+
+	// ActionConfigReloaded/ActionConfigRejected are used with
+	// EventTypeConfigReloaded/EventTypeConfigRejected (GAP-11, Issue #2285).
+	ActionConfigReloaded = "reloaded"
+	ActionConfigRejected = "rejected"
+)
+
+const (
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
+	OutcomePending = "pending"
+)
+
+// AllEventTypes lists all Kubernaut Agent audit event types.
+var AllEventTypes = []string{
+	EventTypeLLMRequest,
+	EventTypeLLMResponse,
+	EventTypeLLMToolCall,
+	EventTypeValidationAttempt,
+	EventTypeResponseComplete,
+	EventTypeRCAComplete,
+	EventTypeInvestigationDecision,
+	EventTypeResponseFailed,
+	EventTypeEnrichmentCompleted,
+	EventTypeEnrichmentFailed,
+	EventTypeAlignmentStep,
+	EventTypeAlignmentVerdict,
+	EventTypeSessionStarted,
+	EventTypeSessionCancelled,
+	EventTypeSessionCompleted,
+	EventTypeSessionFailed,
+	EventTypeInvestigationCancelled,
+	EventTypeSessionObserved,
+	EventTypeSessionAccessDenied,
+	EventTypeSessionSuspended,
+	EventTypeInteractiveStarted,
+	EventTypeInteractiveCompleted,
+	EventTypeSessionResumed,
+	EventTypeInteractiveK8sCall,
+	EventTypeShadowLLMRequest,
+	EventTypeShadowLLMResponse,
+	EventTypeGroundingRequest,
+	EventTypeGroundingResponse,
+	EventTypeAuthFailure,
+	EventTypeAuthDenied,
+	EventTypeRateLimitDenied,
+	EventTypeSecretAccessed,
+	EventTypeFleetOverlayFailed,
+	EventTypeFleetOverlayUnavailable,
+	EventTypeActionsListed,
+	EventTypeWorkflowsListed,
+	EventTypeWorkflowRetrieved,
+	EventTypeSelectionValidated,
+	EventTypeConfigReloaded,
+	EventTypeConfigRejected,
+}
+
+// AuditEvent represents an audit event to be stored.
+type AuditEvent struct {
+	// EventID is the canonical UUID for the event. NewEvent creates it once;
+	// stores copy the same value to the top-level request and typed payload.
+	EventID       uuid.UUID
+	EventType     string
+	EventCategory string
+	EventAction   string
+	EventOutcome  string
+	CorrelationID string
+	SessionID     string
+	ActingUser    string
+	ClusterID     string
+	ParentEventID *uuid.UUID
+	Data          map[string]interface{}
+	ActorID       string
+	ActorType     string
+	// ResourceType/ResourceID identify the audited resource (e.g. "Workflow"
+	// / a workflow ID for the Step 3/selection-validated discovery events,
+	// Issue #1677 Phase 2c). Empty means no specific resource is audited.
+	ResourceType string
+	ResourceID   string
+}
+
+// AuditStore is the interface for storing audit events (matches pkg/audit.AuditStore).
+type AuditStore interface {
+	StoreAudit(ctx context.Context, event *AuditEvent) error
+}
+
+// EventOption configures optional fields on an AuditEvent.
+type EventOption func(*AuditEvent)
+
+// WithSessionID attaches an interactive session identifier to the audit event.
+func WithSessionID(sessionID string) EventOption {
+	return func(e *AuditEvent) {
+		e.SessionID = sessionID
+	}
+}
+
+// WithEventCategory overrides the default "aiagent" event_category. Used by
+// the workflow.catalog.* discovery events (Issue #1677 Phase 2c,
+// DD-WORKFLOW-019), which belong to the "workflow" domain category rather
+// than "aiagent" -- see WorkflowCatalogEventCategory.
+func WithEventCategory(category string) EventOption {
+	return func(e *AuditEvent) {
+		e.EventCategory = category
+	}
+}
+
+// WithResource attaches the audited resource's type/ID to the event, e.g.
+// ("Workflow", workflowID) for the Step 3/selection-validated discovery
+// events (Issue #1677 Phase 2c).
+func WithResource(resourceType, resourceID string) EventOption {
+	return func(e *AuditEvent) {
+		e.ResourceType = resourceType
+		e.ResourceID = resourceID
+	}
+}
+
+// WithActingUser attaches the identity of the user who triggered the event.
+// Used in interactive MCP sessions for SOC2 per-event user attribution
+// (BR-INTERACTIVE-005).
+func WithActingUser(user string) EventOption {
+	return func(e *AuditEvent) {
+		e.ActingUser = user
+	}
+}
+
+type actorContextKey struct{}
+
+type actorValue struct {
+	ID   string
+	Type string
+}
+
+// WithActor returns a context carrying the given actor identity.
+// All audit events emitted via StoreBestEffort on this context will
+// inherit the actor unless the event already has explicit ActorID/ActorType.
+func WithActor(ctx context.Context, actorID, actorType string) context.Context {
+	return context.WithValue(ctx, actorContextKey{}, actorValue{ID: actorID, Type: actorType})
+}
+
+// ActorFromContext extracts the actor identity from the context.
+func ActorFromContext(ctx context.Context) (actorID, actorType string, ok bool) {
+	v, ok := ctx.Value(actorContextKey{}).(actorValue)
+	if !ok {
+		return "", "", false
+	}
+	return v.ID, v.Type, true
+}
+
+type clusterIDContextKey struct{}
+
+// WithClusterID returns a context carrying the cluster ID for audit events (DD-AUDIT-003 v2.2).
+// All audit events emitted via StoreBestEffort on this context will inherit the cluster ID.
+func WithClusterID(ctx context.Context, clusterID string) context.Context {
+	if clusterID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, clusterIDContextKey{}, clusterID)
+}
+
+// ClusterIDFromContext extracts the cluster ID from the context.
+func ClusterIDFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(clusterIDContextKey{}).(string)
+	return v, ok
+}
+
+type correlationIDContextKey struct{}
+
+// WithCorrelationID returns a context carrying the investigation's
+// correlation ID (typically the RemediationRequest name/RemediationID).
+// Set once per investigation in session.Manager.launchInvestigation, it lets
+// deep call sites — e.g. the K8s resource resolver's secret-access observer
+// (GAP-13, Issue #1505) — emit correctly-correlated audit events without
+// threading correlationID through every function signature down to the tool
+// layer.
+func WithCorrelationID(ctx context.Context, correlationID string) context.Context {
+	if correlationID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, correlationIDContextKey{}, correlationID)
+}
+
+// CorrelationIDFromContext extracts the investigation correlation ID set by
+// WithCorrelationID.
+func CorrelationIDFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(correlationIDContextKey{}).(string)
+	return v, ok
+}
+
+// NewEvent creates an AuditEvent with the correct event_category and a unique event_id.
+func NewEvent(eventType string, correlationID string, opts ...EventOption) *AuditEvent {
+	data := make(map[string]interface{})
+	eventID := uuid.New()
+	data["event_id"] = eventID.String()
+	event := &AuditEvent{
+		EventID:       eventID,
+		EventType:     eventType,
+		EventCategory: EventCategory,
+		CorrelationID: correlationID,
+		Data:          data,
+	}
+	for _, opt := range opts {
+		opt(event)
+	}
+	return event
+}
+
+// StoreBestEffort stores an audit event without propagating errors (fire-and-forget).
+// The call is synchronous but non-blocking in practice: when backed by BufferedDSAuditStore,
+// StoreAudit enqueues to a buffered channel and returns immediately. Under extreme
+// back-pressure (buffer full), the enqueue fails and the event is dropped — this is
+// acceptable per ADR-038 (audit must never block business logic).
+// If the event has no ActorID/ActorType set, it inherits from the context (see WithActor).
+// inheritActorFromContext fills in event.ActorID/ActorType from ctx (see
+// WithActor) for any fields not already set on the event.
+func inheritActorFromContext(ctx context.Context, event *AuditEvent) {
+	if event.ActorID != "" && event.ActorType != "" {
+		return
+	}
+	id, typ, ok := ActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	if event.ActorID == "" {
+		event.ActorID = id
+	}
+	if event.ActorType == "" {
+		event.ActorType = typ
+	}
+}
+
+func StoreBestEffort(ctx context.Context, store AuditStore, event *AuditEvent, logger logr.Logger) {
+	inheritActorFromContext(ctx, event)
+	if event.ClusterID == "" {
+		if cn, ok := ClusterIDFromContext(ctx); ok {
+			event.ClusterID = cn
+		}
+	}
+	if err := store.StoreAudit(ctx, event); err != nil {
+		logger.Error(err, "audit store failure (best-effort)", "event_type", event.EventType)
+	}
+}
+
+// InstrumentedAuditStore wraps an AuditStore to call a recorder after each
+// successful store. This enables BR-KA-OBSERVABILITY-001.7 audit pipeline
+// throughput metrics without changing StoreBestEffort callers.
+type InstrumentedAuditStore struct {
+	inner    AuditStore
+	recorder func(eventType string)
+}
+
+// NewInstrumentedAuditStore wraps an AuditStore. recorder is called on each
+// successful StoreAudit with the event type. recorder may be nil.
+func NewInstrumentedAuditStore(inner AuditStore, recorder func(eventType string)) AuditStore {
+	if recorder == nil {
+		return inner
+	}
+	return &InstrumentedAuditStore{inner: inner, recorder: recorder}
+}
+
+func (s *InstrumentedAuditStore) StoreAudit(ctx context.Context, event *AuditEvent) error {
+	err := s.inner.StoreAudit(ctx, event)
+	if err == nil {
+		s.recorder(event.EventType)
+	}
+	return err
+}

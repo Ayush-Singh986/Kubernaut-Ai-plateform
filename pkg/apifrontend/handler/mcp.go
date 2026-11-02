@@ -1,0 +1,237 @@
+package handler
+
+import (
+	"context"
+	"fmt"
+	"iter"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+)
+
+// MCPToolDef defines a tool to be registered with the MCP server.
+type MCPToolDef struct {
+	Name        string
+	Description string
+	InputSchema any
+}
+
+// MCPConfig holds configuration for the MCP Streamable HTTP handler.
+type MCPConfig struct {
+	ServerName    string
+	ServerVersion string
+	Tools         []MCPToolDef
+	Auditor       audit.Emitter
+	Enabled       bool
+	// ToolCallback is invoked on each tool call for observability/testing hooks.
+	ToolCallback func(ctx context.Context, toolName string)
+	// Bridge enables real tool dispatch when set. When nil, stubs are registered.
+	Bridge *MCPBridgeConfig
+	// SessionTimeout configures idle session auto-close duration.
+	SessionTimeout time.Duration
+	// InteractiveEnabled controls tool filtering in the stub path. When Bridge
+	// is non-nil, InteractiveEnabled is read from Bridge.InteractiveEnabled instead.
+	InteractiveEnabled bool
+}
+
+func (c MCPConfig) validate() error { //nolint:gocritic // hugeParam: value copy intentional for validation
+	if c.ServerName == "" {
+		return fmt.Errorf("server name is required")
+	}
+	if c.ServerVersion == "" {
+		return fmt.Errorf("server version is required")
+	}
+	return nil
+}
+
+// NewMCPHandler creates an http.Handler serving the MCP Streamable HTTP protocol.
+// When cfg.Enabled is false, returns a handler that responds 501 Not Implemented.
+// When cfg.Bridge is set, tools dispatch to real Handle* implementations.
+// Otherwise, tools are registered as pass-through stubs.
+func NewMCPHandler(cfg MCPConfig) (http.Handler, error) { //nolint:gocritic // hugeParam: called once at startup
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid MCP config: %w", err)
+	}
+
+	if !cfg.Enabled {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			httputil.WriteProblem(w, http.StatusNotImplemented,
+				"Not Implemented", "MCP protocol is disabled in configuration")
+		}), nil
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{
+		Name:    cfg.ServerName,
+		Version: cfg.ServerVersion,
+	}, nil)
+
+	if cfg.Bridge != nil {
+		RegisterTools(srv, cfg.Bridge)
+	} else {
+		interactiveEnabled := cfg.InteractiveEnabled
+		registerStubTools(srv, cfg, interactiveEnabled)
+	}
+
+	opts := &mcp.StreamableHTTPOptions{}
+	if cfg.SessionTimeout > 0 {
+		opts.SessionTimeout = cfg.SessionTimeout
+	}
+
+	auditor := cfg.Auditor
+
+	if auditor != nil {
+		opts.EventStore = newAuditingEventStore(auditor)
+	}
+
+	// The SDK may call getServer while validating a request before it routes the
+	// request to an existing or new session. Keep this callback side-effect-free;
+	// auditingEventStore.Open observes the actual session stream lifecycle.
+	h := mcp.NewStreamableHTTPHandler(
+		func(_ *http.Request) *mcp.Server {
+			return srv
+		},
+		opts,
+	)
+
+	return h, nil
+}
+
+func registerStubTools(srv *mcp.Server, cfg MCPConfig, interactiveEnabled bool) { //nolint:gocritic // hugeParam: called once at startup
+	defs := cfg.Tools
+	if defs == nil {
+		defs = DefaultMCPTools(interactiveEnabled)
+	}
+
+	for _, t := range defs {
+		toolDef := &mcp.Tool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+		cb := cfg.ToolCallback
+		auditor := cfg.Auditor
+		toolName := t.Name
+		srv.AddTool(toolDef, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if cb != nil {
+				cb(ctx, toolName)
+			}
+			if auditor != nil {
+				username := ""
+				if user := auth.UserIdentityFromContext(ctx); user != nil {
+					username = user.Username
+				}
+				auditor.Emit(ctx, &audit.Event{
+					Type:   audit.EventToolExecuted,
+					UserID: username,
+					Detail: map[string]string{"tool_name": toolName, "tool_outcome": "failure"},
+				})
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("tool %q: not yet wired to backend", toolName)},
+				},
+			}, nil
+		})
+	}
+}
+
+// DefaultMCPTools returns the MCP tool definitions as stub descriptors.
+// When interactiveEnabled is false, session-dependent tools are excluded (#1366).
+// When Bridge is configured, RegisterTools registers real handlers with
+// SDK-derived input schemas; these stubs serve only the fallback/dev path.
+func DefaultMCPTools(interactiveEnabled bool) []MCPToolDef {
+	objectSchema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+
+	result := make([]MCPToolDef, 0, len(mcpToolRegistry))
+	for _, t := range mcpToolRegistry {
+		if !interactiveEnabled && tools.SessionDependentTools[t.Name] {
+			continue
+		}
+		result = append(result, MCPToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: objectSchema,
+		})
+	}
+	return result
+}
+
+// auditingEventStore wraps the SDK's MemoryEventStore and emits an audit event
+// when a console-facing MCP session is closed (idle timeout or explicit close).
+// BR-OPS-013: session lifecycle events must be auditable.
+type auditingEventStore struct {
+	inner              *mcp.MemoryEventStore
+	auditor            audit.Emitter
+	initializedSession sync.Map
+}
+
+func newAuditingEventStore(auditor audit.Emitter) *auditingEventStore {
+	return &auditingEventStore{
+		inner:   mcp.NewMemoryEventStore(nil),
+		auditor: auditor,
+	}
+}
+
+func (s *auditingEventStore) Open(ctx context.Context, sessionID, streamID string) error {
+	if err := s.inner.Open(ctx, sessionID, streamID); err != nil {
+		return err
+	}
+
+	if s.auditor != nil {
+		shouldEmit := sessionID == ""
+		if sessionID != "" {
+			_, alreadyInitialized := s.initializedSession.LoadOrStore(sessionID, struct{}{})
+			shouldEmit = !alreadyInitialized
+		}
+		if shouldEmit {
+			username := ""
+			if user := auth.UserIdentityFromContext(ctx); user != nil {
+				username = user.Username
+			}
+			s.auditor.Emit(ctx, &audit.Event{
+				Type:   audit.EventMCPSessionInit,
+				UserID: username,
+				Detail: map[string]string{
+					"protocol_version": "2025-03-26",
+				},
+			})
+		}
+	}
+
+	return nil
+}
+
+func (s *auditingEventStore) Append(ctx context.Context, sessionID, streamID string, data []byte) error {
+	return s.inner.Append(ctx, sessionID, streamID, data)
+}
+
+func (s *auditingEventStore) After(ctx context.Context, sessionID, streamID string, index int) iter.Seq2[[]byte, error] {
+	return s.inner.After(ctx, sessionID, streamID, index)
+}
+
+func (s *auditingEventStore) SessionClosed(ctx context.Context, sessionID string) error {
+	if s.auditor != nil {
+		s.auditor.Emit(ctx, &audit.Event{
+			Type: audit.EventMCPSessionClosed,
+			Detail: map[string]string{
+				"mcp_session_id": sessionID,
+				"reason":         "session_closed",
+			},
+		})
+	}
+	err := s.inner.SessionClosed(ctx, sessionID)
+	if err == nil && sessionID != "" {
+		s.initializedSession.Delete(sessionID)
+	}
+	return err
+}

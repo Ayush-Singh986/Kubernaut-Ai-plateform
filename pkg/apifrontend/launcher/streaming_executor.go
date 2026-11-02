@@ -1,0 +1,225 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package launcher
+
+import (
+	"context"
+	"time"
+
+	"github.com/a2aproject/a2a-go/a2a"
+	"github.com/a2aproject/a2a-go/a2asrv"
+	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
+	"github.com/go-logr/logr"
+
+	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+)
+
+// SessionPhaseUpdater provides the subset of session.CRDSessionService needed
+// by StreamingExecutor for disconnect detection (BR-SESS-003, SI-4).
+type SessionPhaseUpdater interface {
+	IsMaterialized(sessionID string) bool
+	UpdatePhase(ctx context.Context, sessionID string, to isv1alpha1.SessionPhase, message, userID string) error
+}
+
+// ConcurrencyLimiter abstracts the LLM concurrency semaphore so the executor
+// does not depend directly on the ratelimit package.
+type ConcurrencyLimiter interface {
+	Acquire() bool
+	Release()
+}
+
+// StreamingExecutor wraps an AgentExecutor to inject an EventBridge into the
+// execution context. This enables tool handlers (e.g., kubernaut_investigate)
+// to emit progressive reasoning artifacts directly to the A2A event queue.
+type StreamingExecutor struct {
+	inner         a2asrv.AgentExecutor
+	logger        logr.Logger
+	bridgeMetrics BridgeMetrics
+	sessionSvc    SessionPhaseUpdater
+	llmSemaphore  ConcurrencyLimiter
+}
+
+// NewStreamingExecutor creates a StreamingExecutor that wraps the given executor.
+func NewStreamingExecutor(inner a2asrv.AgentExecutor, logger logr.Logger, m BridgeMetrics, spu SessionPhaseUpdater, opts ...StreamingExecutorOption) *StreamingExecutor {
+	if logger.GetSink() == nil {
+		logger = logr.Discard()
+	}
+	se := &StreamingExecutor{inner: inner, logger: logger, bridgeMetrics: m, sessionSvc: spu}
+	for _, opt := range opts {
+		opt(se)
+	}
+	return se
+}
+
+// StreamingExecutorOption configures optional StreamingExecutor behavior.
+type StreamingExecutorOption func(*StreamingExecutor)
+
+// WithLLMSemaphore injects a concurrency limiter (SC-5). When set, Execute
+// acquires a slot before invoking the LLM and releases it when done. Requests
+// that cannot acquire a slot fail with a capacity error.
+func WithLLMSemaphore(sem ConcurrencyLimiter) StreamingExecutorOption {
+	return func(se *StreamingExecutor) { se.llmSemaphore = sem }
+}
+
+// Execute injects the EventBridge into the context and delegates to the inner executor.
+// Stream lifecycle is logged (not audited) because a2a.stream_opened/closed lack
+// OpenAPI payload schemas in data-storage-v1.yaml. The A2A task lifecycle is
+// already audited by buildBeforeExecuteCallback / buildAfterExecuteCallback.
+// ErrLLMCapacity is returned when the LLM semaphore is full. Wrapped as a
+// typed a2a.Error (reason SERVER_ERROR, JSON-RPC code -32000) rather than a
+// bare error so it survives a2a-go's ToJSONRPCError conversion as a
+// meaningful, retryable rejection instead of falling through to the generic
+// -32603 "internal error" default reserved for unclassified server bugs
+// (issue #1544). The retryable/reason detail lets API consumers distinguish
+// "server is busy, retry" from an actual defect without parsing the message.
+var ErrLLMCapacity = a2a.NewError(a2a.ErrServerError, "LLM concurrency limit reached — request rejected (SC-5)").
+	WithDetails(map[string]any{"retryable": true, "reason": "llm_concurrency_exhausted"})
+
+func (s *StreamingExecutor) Execute(ctx context.Context, reqCtx *a2asrv.RequestContext, queue eventqueue.Queue) error {
+	ctx = logr.NewContext(ctx, s.logger)
+	ctx = WithEventBridge(ctx, queue, reqCtx.TaskID, reqCtx.ContextID, s.bridgeMetrics)
+
+	username := ""
+	if user := auth.UserIdentityFromContext(ctx); user != nil {
+		username = user.Username
+	}
+
+	// SC-5: LLM concurrency gate — reject requests that exceed capacity
+	if release, ok := s.acquireLLMSlot(reqCtx, username); !ok {
+		return ErrLLMCapacity
+	} else if release != nil {
+		defer release()
+	}
+
+	s.logger.Info("a2a stream opened",
+		"task_id", string(reqCtx.TaskID),
+		"user", username,
+	)
+
+	stopKeepalive := startKeepalive(ctx)
+
+	err := s.inner.Execute(ctx, reqCtx, queue)
+
+	close(stopKeepalive)
+
+	s.logger.Info("a2a stream closed",
+		"task_id", string(reqCtx.TaskID),
+		"user", username,
+		"error", err != nil,
+	)
+
+	s.handleSSEDisconnect(ctx, reqCtx, username)
+
+	return err
+}
+
+// acquireLLMSlot enforces the SC-5 LLM concurrency gate. ok is false when a
+// semaphore is configured and full (caller should reject with
+// ErrLLMCapacity); release is non-nil only when a slot was actually
+// acquired and must be released by the caller.
+func (s *StreamingExecutor) acquireLLMSlot(reqCtx *a2asrv.RequestContext, username string) (release func(), ok bool) {
+	if s.llmSemaphore == nil {
+		return nil, true
+	}
+	if !s.llmSemaphore.Acquire() {
+		s.logger.Info("LLM concurrency limit reached, rejecting request",
+			"task_id", string(reqCtx.TaskID),
+			"user", username,
+		)
+		return nil, false
+	}
+	return s.llmSemaphore.Release, true
+}
+
+// startKeepalive emits a lightweight artifact every 5s to prevent idle SSE
+// timeouts from proxies or clients during long LLM thinking pauses between
+// tool calls. The returned channel must be closed by the caller to stop it.
+func startKeepalive(ctx context.Context) chan struct{} {
+	stopKeepalive := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopKeepalive:
+				return
+			case <-ticker.C:
+				_ = EmitKeepaliveDotSafe(ctx)
+			}
+		}
+	}()
+	return stopKeepalive
+}
+
+// handleSSEDisconnect implements BR-SESS-003 / SI-4: on client SSE
+// disconnect, transitions materialized sessions to Disconnected phase so the
+// CRD reflects the actual connection state. Tracker slot release is handled
+// by the disconnect watcher goroutine in trackSSEConnection (router.go).
+//
+// The a2a-go library runs executors in a detached context
+// (context.WithoutCancel), so ctx.Err() won't reflect SSE disconnects. We
+// stored the original HTTP request context as a value (values survive
+// WithoutCancel). Go's net/http cancels r.Context() when the client's
+// connection closes — before ServeHTTP returns — making it a reliable
+// disconnect signal even from within the detached goroutine.
+func (s *StreamingExecutor) handleSSEDisconnect(ctx context.Context, reqCtx *a2asrv.RequestContext, username string) {
+	sseCtx := SSEDisconnectCtxFromContext(ctx)
+	disconnected := ctx.Err() == context.Canceled ||
+		(sseCtx != nil && sseCtx.Err() == context.Canceled)
+
+	if !disconnected || s.sessionSvc == nil {
+		return
+	}
+
+	// Use reqCtx.ContextID directly as the session ID. The
+	// BeforeExecuteCallback injects CreateContext inside the inner
+	// executor's scope, so session.CreateContextFromContext(ctx) would
+	// return nil here. reqCtx.ContextID is the A2A context ID that the ADK
+	// maps 1:1 to the session ID.
+	sessionID := reqCtx.ContextID
+	if sessionID == "" || !s.sessionSvc.IsMaterialized(sessionID) {
+		return
+	}
+
+	if uerr := s.sessionSvc.UpdatePhase( //nolint:contextcheck // session phase update fires from a detached streaming-executor goroutine, independent of the original request context
+		context.Background(), sessionID,
+		isv1alpha1.SessionPhaseDisconnected,
+		"client SSE disconnect", username,
+	); uerr != nil {
+		s.logger.Error(uerr, "failed to transition session to Disconnected on SSE disconnect",
+			"session_id", sessionID,
+		)
+	} else {
+		s.logger.Info("session transitioned to Disconnected on SSE disconnect",
+			"session_id", sessionID,
+		)
+	}
+}
+
+// Cancel delegates directly to the inner executor.
+func (s *StreamingExecutor) Cancel(ctx context.Context, reqCtx *a2asrv.RequestContext, queue eventqueue.Queue) error {
+	return s.inner.Cancel(ctx, reqCtx, queue)
+}
+
+// Cleanup delegates to the inner executor if it implements AgentExecutionCleaner.
+func (s *StreamingExecutor) Cleanup(ctx context.Context, reqCtx *a2asrv.RequestContext, result a2a.SendMessageResult, err error) {
+	if cleaner, ok := s.inner.(a2asrv.AgentExecutionCleaner); ok {
+		cleaner.Cleanup(ctx, reqCtx, result, err)
+	}
+}

@@ -1,0 +1,152 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"runtime/debug"
+	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
+)
+
+// Health check handlers
+
+// LivenessHandler returns the liveness probe handler for use with the
+// dedicated health server (Issue #753: port 8081, /healthz).
+func (s *Server) LivenessHandler() http.HandlerFunc {
+	return s.handleLiveness
+}
+
+// ReadinessHandler returns the readiness probe handler for use with the
+// dedicated health server (Issue #753: port 8081, /readyz).
+func (s *Server) ReadinessHandler() http.HandlerFunc {
+	return s.handleReadiness
+}
+
+// handleReadiness handles GET /readyz - readiness probe for Kubernetes (port 8081)
+// DD-007: Returns 503 during shutdown to remove pod from endpoints
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	// DD-007: Check shutdown flag first
+	if s.isShuttingDown.Load() {
+		s.logger.V(1).Info("Readiness probe returning 503 - shutdown in progress")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"status":"not_ready","reason":"shutting_down"}`)
+		return
+	}
+
+	// Check database connectivity
+	if err := s.db.PingContext(r.Context()); err != nil {
+		s.logger.Error(err, "Readiness probe failed - database unreachable")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"status":"not_ready","reason":"database_unreachable"}`)
+		return
+	}
+
+	// #1088 Phase 7.3: Check Redis connectivity
+	if s.dlqClient != nil {
+		if err := s.dlqClient.HealthCheck(r.Context()); err != nil {
+			s.logger.Error(err, "Readiness probe failed - Redis unreachable")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"status":"not_ready","reason":"redis_unreachable"}`)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprint(w, `{"status":"ready"}`)
+}
+
+// handleLiveness handles GET /healthz - liveness probe for Kubernetes.
+// Issue #753 H-3: Standardized response across all stateless services.
+func (s *Server) handleLiveness(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":    "healthy",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// Middleware
+
+// PanicRecoveryMiddleware is the exported form of panicRecoveryMiddleware,
+// enabling unit tests outside this package to exercise the production code path.
+func (s *Server) PanicRecoveryMiddleware(next http.Handler) http.Handler {
+	return s.panicRecoveryMiddleware(next)
+}
+
+// panicRecoveryMiddleware catches panics, logs detailed information, and
+// returns HTTP 500 instead of re-panicking (SEC-M2).
+func (s *Server) panicRecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() { //nolint:contextcheck // false positive: this recover closure has no context-requiring call; r.Context() is already used correctly for request-scoped values (request_id)
+			if err := recover(); err != nil {
+				requestID := middleware.GetReqID(r.Context())
+
+				s.logger.Error(fmt.Errorf("panic: %v", err), "PANIC RECOVERED",
+					"request_id", requestID,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"remote_addr", r.RemoteAddr,
+					"stack_trace", string(debug.Stack()),
+				)
+
+				// SEC-M2: Return 500 instead of re-panicking
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500,"detail":"unexpected error"}`))
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// LoggingMiddleware is the exported form of loggingMiddleware,
+// enabling unit tests outside this package to exercise the production code path.
+func (s *Server) LoggingMiddleware(next http.Handler) http.Handler {
+	return s.loggingMiddleware(next)
+}
+
+// loggingMiddleware logs HTTP requests with structured logging.
+// FED-M2: Includes authenticated user identity when available.
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		requestID := middleware.GetReqID(r.Context())
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+		next.ServeHTTP(ww, r)
+
+		duration := time.Since(start)
+		// FED-M2: Include authenticated principal in access log.
+		// X-Auth-Request-User is set by the auth middleware after successful authentication.
+		user := r.Header.Get("X-Auth-Request-User")
+		s.logger.Info("HTTP request",
+			"request_id", requestID,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"user", user,
+			"status", ww.Status(),
+			"bytes", ww.BytesWritten(),
+			"duration", duration,
+		)
+	})
+}

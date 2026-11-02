@@ -1,0 +1,166 @@
+# Kind Cluster Configuration for Full Pipeline E2E Tests
+# Reference: DD-TEST-001 Port Allocation Strategy
+#
+# Full Pipeline E2E deploys ALL Kubernaut services in a single Kind cluster
+# to test the complete remediation lifecycle:
+#   Gateway → RO → SP → AA → KA → WE → Notification
+#
+# Port Allocation (from DD-TEST-001 v2.8):
+#   Gateway API:      hostPort 30080, NodePort 30080
+#   Data Storage API: hostPort 30081, NodePort 30081
+#   Mock LLM:         ClusterIP only (internal access by KA)
+#   Prometheus:        hostPort 9190,  NodePort 30190 (EM metric comparison)
+#   AlertManager:      hostPort 9193,  NodePort 30191 (EM alert resolution; moved
+#                       from 30193 per DD-TEST-001 v3.8 after a "fleet" E2E
+#                       NodePort collision)
+#   Keycloak (browser): hostPort 8443, NodePort 30557 (same NodePort as the
+#                       existing in-cluster/local mapping -- second hostPort
+#                       publish only, for Console's OIDC login redirect;
+#                       manual setup-e2e-fleet-infra use only)
+#   Traefik (Console):  hostPort 8880/8843, NodePort 30880/30843 (manual
+#                       setup-e2e-fleet-infra use only, see deployTraefikForKind;
+#                       unprivileged host ports, matched by console.ingress.port
+#                       in the manual `helm install` values -- see
+#                       the operator-exposure console port, added so
+#                       CI runners that can't bind 80/443 as a non-root user
+#                       still work)
+#
+# Kubeconfig Convention (per TESTING_GUIDELINES.md):
+#   Pattern: ~/.kube/{service}-e2e-config
+#   Path: ~/.kube/fullpipeline-e2e-config
+#   Cluster Name: fullpipeline-e2e
+#
+# Memory Budget: ~6.1GB total (fullpipeline base + fleet components)
+#   - Kind cluster overhead: ~1.5GB
+#   - PostgreSQL: ~256MB
+#   - DataStorage: ~128MB
+#   - Gateway: ~128MB
+#   - RO Controller: ~128MB
+#   - SP Controller: ~64MB
+#   - AA Controller: ~128MB
+#   - WE Controller: ~64MB
+#   - Notification Controller: ~64MB
+#   - KA + Mock LLM: ~192MB
+#   - Event Exporter: ~64MB
+#   - Prometheus: ~128MB
+#   - AlertManager: ~64MB
+#   - Memory Eater Pod: ~256MB (target workload)
+#   - Fleet: Istio (istiod + gateway proxy): ~250MB
+#   - Fleet: Kuadrant (broker + controller): ~60MB
+#   - Fleet: kube-mcp-server: ~16MB
+#   - Fleet: Valkey: ~30MB
+#   - Fleet: FMC: ~32MB
+#   - Buffer: ~1.5GB
+#
+# Usage:
+#   kind create cluster \
+#     --name fullpipeline-e2e \
+#     --config test/infrastructure/kind-fullpipeline-config.yaml \
+#     --kubeconfig ~/.kube/fullpipeline-e2e-config
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  # Expose service ports via NodePort to host machine
+  # Gateway (for event-exporter webhook delivery)
+  extraPortMappings:
+  - containerPort: 30080  # Gateway NodePort
+    hostPort: 30080       # DD-TEST-001: Gateway API
+    protocol: TCP
+  # DataStorage (for workflow catalog seeding and audit queries)
+  - containerPort: 30081  # DataStorage NodePort
+    hostPort: 30081       # DD-TEST-001: DataStorage API
+    protocol: TCP
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 30281       # Port on host machine
+    protocol: TCP
+  # Kubernaut Agent (MCP endpoint for HARM-001 regression test)
+  - containerPort: 30088  # Kubernaut Agent NodePort
+    hostPort: 8088        # localhost:8088 (same as KA E2E per DD-TEST-001)
+    protocol: TCP
+  # Prometheus (for EM metric comparison - remote write receiver)
+  - containerPort: 30190  # Prometheus NodePort
+    hostPort: 9190        # DD-TEST-001 v2.8: Prometheus
+    protocol: TCP
+  # AlertManager (for EM alert resolution queries)
+  - containerPort: 30191  # AlertManager NodePort (DD-TEST-001 v3.8; moved from 30193)
+    hostPort: 9193        # DD-TEST-001 v2.8: AlertManager
+    protocol: TCP
+  # API Frontend HTTPS (Issue #1189: AF as FP signal source)
+  - containerPort: 30443  # AF NodePort
+    hostPort: 18443       # DD-TEST-001: AF HTTPS
+    protocol: TCP
+  # DEX OIDC for AF's own login flow (Issue #1189) -- unrelated to fleet;
+  # kept as-is, this DEX instance is never used for the K8s API server's
+  # OIDC trust below.
+  - containerPort: 30556  # DEX NodePort
+    hostPort: 30556       # DD-TEST-001: DEX for AF
+    protocol: TCP
+  # Fleet: Kuadrant MCP Gateway (multi-cluster tool routing, Issue #54)
+  - containerPort: 31975  # Kuadrant Istio gateway MCP NodePort
+    hostPort: 31975       # DD-TEST-001: MCP Gateway
+    protocol: TCP
+  # Fleet: Envoy AI Gateway (EAIGW) MCP Gateway -- this suite's active
+  # gateway (Kuadrant's static broker credential proved a structural SPOF,
+  # kubernaut#2309; Kuadrant itself stays covered by its own standalone FMC
+  # E2E lane). Both mappings are kept side by side since Kubernaut only runs
+  # one gateway at a time but this Kind config is shared infra.
+  - containerPort: 31976  # Envoy AI Gateway generated-Service MCP NodePort
+    hostPort: 31976       # DD-TEST-001: EAIGW MCP Gateway
+    protocol: TCP
+  # Fleet: Keycloak OIDC + RFC 8693 Standard Token Exchange (replaces DEX
+  # for kube-mcp-server passthrough auth and the K8s API server's OIDC
+  # trust -- DEX has no Standard Token Exchange, Spike S17/S20). Same
+  # dedicated port as the FMC E2E lane (DD-TEST-001); safe to reuse since
+  # each suite runs in its own isolated Kind cluster.
+  - containerPort: 30557  # Keycloak NodePort
+    hostPort: 30557       # DD-TEST-001: Keycloak for fleet token exchange
+    protocol: TCP
+  # Second host port for the SAME Keycloak NodePort (30557), published on
+  # 8443: Keycloak's KC_HOSTNAME is hardcoded to "https://keycloak:8443"
+  # (keycloak_e2e.go), so every URL it issues -- including the browser
+  # authorization-code redirect for Console login -- literally reads
+  # "keycloak:8443". A browser on the host machine can only complete that
+  # redirect if "keycloak" resolves (via /etc/hosts: `127.0.0.1 keycloak`)
+  # AND port 8443 is actually published, which the existing 30557 mapping
+  # above doesn't cover (that one's for in-cluster/local kubectl testing at
+  # its real hostPort). Manual setup-e2e-fleet-infra (Console) use only --
+  # inert for the "fleet"/"fullpipeline" Ginkgo suites, which never open a
+  # browser against Keycloak.
+  - containerPort: 30557  # same Keycloak NodePort as above
+    hostPort: 8443        # matches KC_HOSTNAME's baked-in port for browser reachability
+    protocol: TCP
+  # Traefik ingress controller (manual setup-e2e-fleet-infra Console access
+  # only -- see deployTraefikForKind in fleet_e2e.go). Unprivileged host ports
+  # (>1024), NOT the standard 80/443: most CI runners can't bind non-root
+  # processes to privileged ports, so the operator-managed Console exposure
+  # must use this exact port (":8843") instead of assuming port-less HTTPS
+  # (443). The Keycloak client's redirectUris must match this hostPort. Inert for
+  # suites that don't deploy Traefik.
+  - containerPort: 30880  # Traefik web (HTTP) NodePort
+    hostPort: 8880
+    protocol: TCP
+  - containerPort: 30843  # Traefik websecure (HTTPS) NodePort
+    hostPort: 8843
+    protocol: TCP
+  # Extra mounts for coverage data collection (DD-TEST-007) and notification output
+  # Note: ALL extraMounts are added programmatically in SetupFullPipelineInfrastructure
+  # based on OS (macOS vs Linux) to handle path differences between environments
+  # Increase API server rate limits for parallel integration testing
+  # OIDC for fleet: configured post-deploy by patchAPIServerForOIDC() in fleet_e2e.go
+  # (Dex must be running before the API server can perform OIDC discovery)
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Increase API server rate limits for parallel operations
+        max-requests-inflight: "800"
+        max-mutating-requests-inflight: "400"
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        kube-api-qps: "100"
+        kube-api-burst: "200"

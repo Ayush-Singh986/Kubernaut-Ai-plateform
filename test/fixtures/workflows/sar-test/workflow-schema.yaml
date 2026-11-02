@@ -1,0 +1,47 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: sar-test-v1
+spec:
+  # SAR Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: DataStorage E2E — 23_sar_access_control_test.go (DD-AUTH-012)
+  version: "1.0.0"
+  description:
+    what: "Test workflow for SubjectAccessReview and user attribution validation"
+    whenToUse: "For E2E testing of SAR-based access control on workflow catalog"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "DataStorage service running with RBAC configured"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [high]
+    environment: [test]
+    component: [apps/v1/Deployment]
+    priority: P2
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace"
+    - name: DEPLOYMENT_NAME
+      type: string
+      required: true
+      description: "Name of the deployment to restart"

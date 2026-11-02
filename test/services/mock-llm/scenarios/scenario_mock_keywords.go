@@ -1,0 +1,313 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package scenarios
+
+import (
+	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+)
+
+func noWorkflowFoundConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "no_workflow_found", SignalName: "MOCK_NO_WORKFLOW_FOUND", Severity: "critical",
+		Confidence:   0.0,
+		RootCause:    "No suitable workflow found in catalog for this signal type",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "failing-pod",
+		APIVersion:           "v1",
+		InvestigationOutcome: "inconclusive",
+	}
+}
+
+func lowConfidenceConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "low_confidence", SignalName: "MOCK_LOW_CONFIDENCE", Severity: "critical",
+		WorkflowName: "generic-restart-v1", WorkflowID: uuid.DeterministicUUID("generic-restart-v1"),
+		ActionType:    "RestartPod",
+		WorkflowTitle: "Generic Pod Restart", Confidence: 0.35,
+		Rationale:    "Multiple possible root causes identified; generic restart is safest but requires human judgment to confirm",
+		RootCause:    "Multiple possible root causes identified, requires human judgment",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "ambiguous-pod",
+		APIVersion:   "v1",
+		Parameters:   map[string]string{"NAMESPACE": "production", "POD_NAME": "ambiguous-pod"},
+		Contributing: []string{"ambiguous_root_cause", "multiple_correlated_signals"},
+		Alternatives: []MockAlternativeWorkflow{
+			{WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"), Confidence: 0.30, Rationale: "Alternative approach for ambiguous root cause"},
+			{WorkflowName: "node-drain-reboot-v1", WorkflowID: uuid.DeterministicUUID("node-drain-reboot-v1"), Confidence: 0.20, Rationale: "Requires human expertise to determine correct remediation"},
+		},
+		InvestigationOutcome: "actionable",
+		IsActionable:         BoolPtr(true),
+	}
+}
+
+func approvalRequiredConfig() MockScenarioConfig {
+	cfg := crashloopConfig()
+	cfg.ScenarioName = "approval_required"
+	cfg.SignalName = "MOCK_APPROVAL_TEST"
+	cfg.Confidence = 0.75
+	return cfg
+}
+
+func problemResolvedConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "problem_resolved", SignalName: "MOCK_PROBLEM_RESOLVED", Severity: "info",
+		Confidence:   0.85,
+		RootCause:    "Problem self-resolved through auto-scaling or transient condition cleared",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "recovered-pod",
+		APIVersion:           "v1",
+		Contributing:         []string{"Transient condition", "Auto-recovery"},
+		InvestigationOutcome: "problem_resolved",
+		IsActionable:         BoolPtr(false),
+	}
+}
+
+// reasoningCaptureConfig simulates a DeepSeek/vLLM-style OpenAI-compatible
+// reasoning model for KA's openaicompat reasoning-capture E2E test
+// (E2E-KA-AUDIT-001, BR-AI-086 AC6, #1578): the response carries a
+// reasoning_content field alongside the submit_result_with_workflow tool
+// call, proving the full pipeline (capture -> InvestigationResult ->
+// audit trail -> DataStorage, correlation_id-reconstructable per SOC2
+// CC8.1) without requiring a real reasoning-capable provider.
+func reasoningCaptureConfig() MockScenarioConfig {
+	const reasoningText = "Weighed a transient traffic spike against a sustained leak: memory climbed steadily over 6h with no correlated traffic increase, which rules out a spike and points to a leak. Increasing the memory limit is the safe immediate mitigation while the leak itself would need a code-level fix."
+
+	return MockScenarioConfig{
+		ScenarioName: "mock_reasoning_capture", SignalName: "MOCK_REASONING_CAPTURE", Severity: "critical",
+		WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+		ActionType:    "IncreaseMemoryLimits",
+		WorkflowTitle: "OOMKill Recovery - Increase Memory Limits", Confidence: 0.92,
+		Rationale:    "Sustained memory climb over 6h rules out a transient spike; increasing limits addresses the sustained leak",
+		RootCause:    "Container exceeded memory limits due to a sustained memory leak",
+		ResourceKind: "Deployment", ResourceNS: "production", ResourceName: "api-server",
+		APIVersion: "apps/v1",
+		Parameters: map[string]string{"MEMORY_LIMIT_NEW": "512Mi"}, ExecutionEngine: "job",
+		Contributing:         []string{"memory_leak", "insufficient_memory_limits"},
+		InvestigationOutcome: "actionable",
+		IsActionable:         BoolPtr(true),
+		ThoughtText:          reasoningText,
+		ReasoningText:        reasoningText,
+	}
+}
+
+func problemResolvedContradictionConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "problem_resolved_contradiction", SignalName: "MOCK_PROBLEM_RESOLVED_CONTRADICTION", Severity: "info",
+		Confidence:   0.85,
+		RootCause:    "Problem self-resolved. Transient OOM cleared after pod restart",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "recovered-pod",
+		APIVersion:           "v1",
+		Contributing:         []string{"Transient condition", "Auto-recovery"},
+		InvestigationOutcome: "problem_resolved",
+		IsActionable:         BoolPtr(false),
+	}
+}
+
+func maxRetriesExhaustedConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "max_retries_exhausted", SignalName: "MOCK_MAX_RETRIES_EXHAUSTED", Severity: "high",
+		WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+		ActionType:    "IncreaseMemoryLimits",
+		WorkflowTitle: "OOMKill Recovery - Increase Memory Limits", Confidence: 0.6,
+		RootCause:    "LLM analysis selected a valid workflow with invalid parameters on every correction attempt.",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "failed-analysis-pod",
+		APIVersion:           "v1",
+		RawParameters:        map[string]interface{}{"MEMORY_LIMIT_NEW": float64(123)},
+		InvestigationOutcome: "actionable",
+		IsActionable:         BoolPtr(true),
+	}
+}
+
+func notActionableConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "not_actionable", SignalName: "MOCK_NOT_ACTIONABLE", Severity: "info",
+		Confidence:   0.0,
+		Rationale:    "Orphaned PVC from completed batch job; no active workload references it",
+		RootCause:    "Orphaned PVC from completed batch job — no active workload references this volume",
+		ResourceKind: "PersistentVolumeClaim", ResourceNS: "production", ResourceName: "batch-job-pvc-expired",
+		APIVersion:           "v1",
+		Contributing:         []string{"batch_job_completed", "pvc_retention_policy", "no_active_consumers"},
+		InvestigationOutcome: "predictive_no_action",
+		IsActionable:         BoolPtr(false),
+	}
+}
+
+// notActionableGroundedConfig backs E2E-FP-1918-001
+// (test/e2e/fullpipeline/18_af_a2a_consent_gate_test.go, issue #1918).
+//
+// Unlike notActionableConfig (registered via the free-text "mock_not_actionable"
+// keyword in registry_default.go, matched broadly against ctx.Content+ctx.AllText),
+// this scenario is registered via a signal selector, which only inspects
+// ctx.Content -- the fixed last-user-text of a single Gemini request, never
+// the accumulated allText that folds in prior turns' function responses/args
+// (see response.ExtractTextFromContents). This distinction matters because
+// af_create_rr.go's HandleCreateRR echoes the RR's derived SignalName back
+// in kubernaut_remediate's own JSON response (CreateRRResult.SignalName) --
+// which becomes part of AF's OWN orchestration conversation's allText on the
+// next turn. A broadly-matched keyword there would silently hijack AF's own
+// tool-selection turn into whatever KA-side scenario shares that keyword,
+// exactly as empirically confirmed happening with notActionableConfig's
+// "mock_not_actionable" keyword during E2E-FP-1918-001 development. Grounding
+// this scenario via a real K8s Event Reason (deriveSignalName's Tier 3a) and
+// matching only via the signal selector keeps it safe: KA's own investigation
+// prompt literally renders "Signal Name: <value>" (see
+// incident_investigation.tmpl) which extractSignal's regex picks up from
+// ctx.Content, while AF's own conversation content never contains that
+// space-separated phrase (its echoed field is JSON "signal_name":"...",
+// underscore not space) and is unaffected by allText growth on later turns.
+func notActionableGroundedConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "not_actionable_grounded_1918", SignalName: "E2EFP1918NotActionable", Severity: "info",
+		Confidence:   0.0,
+		Rationale:    "E2E-FP-1918-001: synthetic not-actionable signal, zero-replica Deployment never scheduled a Pod",
+		RootCause:    "Synthetic E2E test signal on a zero-replica Deployment -- no real workload or fault exists",
+		ResourceKind: "Deployment", ResourceNS: "not-actionable-1918", ResourceName: "memory-eater",
+		APIVersion:           "apps/v1",
+		InvestigationOutcome: "predictive_no_action",
+		IsActionable:         BoolPtr(false),
+	}
+}
+
+// notActionableGrounded1912Config backs E2E-FP-1912-001 (issue #1912: no
+// reinvocation after a session-terminal tool; #2265 tracks a CI flake where
+// this test's "no WorkflowExecution is ever created" assertion had no
+// deterministic backstop). Mirrors notActionableGroundedConfig's pattern
+// exactly (same grounding mechanism, same signal-selector-only matching, same
+// leak-avoidance rationale -- see that config's doc comment) with a distinct
+// SignalName/ScenarioName so the two tests can't collide. Without this, the
+// RR created by E2E-FP-1912-001's kubernaut_remediate call (no synthetic
+// signal, "unknown" derived SignalName) falls through to the generic
+// "af_unknown" -> oomkilledConfig() actionable scenario shared with genuinely
+// OOM-flavored tests elsewhere in the suite, racing the test's own
+// interactive-takeover attach against RO/AA/KA's independent, already-
+// committed autonomous reconciliation of that RR (#2265's actual root cause:
+// a test-design gap, not a takeover-path defect -- see issue discussion).
+// Grounding the signal here makes KA's RCA deterministically resolve
+// is_actionable=false regardless of that race's outcome, exactly as 1918
+// already does for its own scenario.
+func notActionableGrounded1912Config() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "not_actionable_grounded_1912", SignalName: "E2EFP1912NotActionable", Severity: "info",
+		Confidence:   0.0,
+		Rationale:    "E2E-FP-1912-001: synthetic not-actionable signal, zero-replica Deployment never scheduled a Pod",
+		RootCause:    "Synthetic E2E test signal on a zero-replica Deployment -- no real workload or fault exists",
+		ResourceKind: "Deployment", ResourceNS: "not-actionable-1912", ResourceName: "memory-eater",
+		APIVersion:           "apps/v1",
+		InvestigationOutcome: "predictive_no_action",
+		IsActionable:         BoolPtr(false),
+	}
+}
+
+func parallelToolsConfig() MockScenarioConfig {
+	actionable := true
+	return MockScenarioConfig{
+		ScenarioName: "parallel_tools", SignalName: "MOCK_PARALLEL_TOOLS", Severity: "high",
+		WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+		ActionType:    "IncreaseMemoryLimits",
+		WorkflowTitle: "Increase Memory Limits", Confidence: 0.9,
+		RootCause:    "Container OOMKilled due to memory limits below steady-state usage",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "api-server-abc",
+		APIVersion:           "v1",
+		Parameters:           map[string]string{"NAMESPACE": "production", "POD_NAME": "api-server-abc"},
+		InvestigationOutcome: "actionable",
+		IsActionable:         &actionable,
+		ForceText:            BoolPtr(false),
+		MultiToolCalls: []MultiToolCallEntry{
+			{Name: "kubectl_describe", Arguments: map[string]interface{}{"kind": "Pod", "name": "api-server-abc", "namespace": "production"}},
+			{Name: "kubectl_events", Arguments: map[string]interface{}{"kind": "Pod", "name": "api-server-abc", "namespace": "production"}},
+			{Name: "kubectl_logs", Arguments: map[string]interface{}{"kind": "Pod", "name": "api-server-abc", "namespace": "production"}},
+		},
+	}
+}
+
+// emptyToolResultReplayConfig backs E2E-KA-2482-001. The RCA response is a
+// six-tool batch, matching the production replay shape that exposed #2482.
+// The fifth tool (index 4) reads all containers from the existing pause
+// test-pod, so a successful read produces an empty string. The sixth chained
+// response submits the RCA, forcing KA to replay all six results through the
+// OpenAI-compatible serializer. The subsequent workflow-selection phase uses
+// the normal three-step discovery planner and submits the selected workflow.
+func emptyToolResultReplayConfig() MockScenarioConfig {
+	actionable := true
+	resourceArgs := map[string]interface{}{"kind": "Pod", "name": "test-pod", "namespace": "default"}
+	logArgs := map[string]interface{}{"name": "test-pod", "namespace": "default"}
+	toolChain := make([]MultiToolCallEntry, 6)
+	for i := range toolChain {
+		toolChain[i] = MultiToolCallEntry{Name: "kubectl_logs"}
+	}
+	toolChain[len(toolChain)-1] = MultiToolCallEntry{Name: openai.ToolSubmitResult}
+	for i := 0; i < len(toolChain)-1; i++ {
+		toolChain[i].NextToolCall = &toolChain[i+1]
+	}
+
+	return MockScenarioConfig{
+		ScenarioName: "empty_tool_result_replay", SignalName: "MOCK_EMPTY_TOOL_RESULT_REPLAY", Severity: "critical",
+		WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+		UseWorkflowDiscovery: true,
+		ActionType:           "IncreaseMemoryLimits",
+		WorkflowTitle:        "OOMKill Recovery - Increase Memory Limits", Confidence: 0.9,
+		Rationale:    "Increasing the memory limit is the safest remediation for this test signal",
+		RootCause:    "The test workload exceeded its memory limit",
+		ResourceKind: "Pod", ResourceNS: "default", ResourceName: "test-pod", APIVersion: "v1",
+		Parameters:           map[string]string{"MEMORY_LIMIT_NEW": "512Mi"},
+		InvestigationOutcome: "actionable", IsActionable: &actionable,
+		ForceText: BoolPtr(false),
+		MultiToolCalls: []MultiToolCallEntry{
+			{Name: "kubectl_describe", Arguments: resourceArgs},
+			{Name: "kubectl_events", Arguments: resourceArgs},
+			{Name: "kubectl_get_yaml", Arguments: resourceArgs},
+			{Name: "kubectl_logs", Arguments: logArgs},
+			{Name: "kubectl_logs_all_containers", Arguments: logArgs},
+			{Name: "kubectl_get_yaml", Arguments: resourceArgs},
+		},
+		NextToolCall: &toolChain[0],
+	}
+}
+
+func alertmanagerNodeToolsConfig() MockScenarioConfig {
+	actionable := true
+	return MockScenarioConfig{
+		ScenarioName: "alertmanager_node_tools", SignalName: "MOCK_ALERTMANAGER_NODE_TOOLS", Severity: "high",
+		WorkflowName: "oomkill-increase-memory-v1", WorkflowID: uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+		ActionType:    "IncreaseMemoryLimits",
+		WorkflowTitle: "Increase Memory Limits", Confidence: 0.88,
+		RootCause:    "Node resource exhaustion correlated with active alerts",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "api-server-abc",
+		APIVersion:           "v1",
+		Parameters:           map[string]string{"NAMESPACE": "production", "POD_NAME": "api-server-abc"},
+		InvestigationOutcome: "actionable",
+		IsActionable:         &actionable,
+		ForceText:            BoolPtr(false),
+		MultiToolCalls: []MultiToolCallEntry{
+			{Name: "get_alerts", Arguments: map[string]interface{}{}},
+			{Name: "nodes_stats_summary", Arguments: map[string]interface{}{"node": "kubernaut-agent-e2e-control-plane"}},
+		},
+	}
+}
+
+func rcaIncompleteConfig() MockScenarioConfig {
+	return MockScenarioConfig{
+		ScenarioName: "rca_incomplete", SignalName: "MOCK_RCA_INCOMPLETE", Severity: "critical",
+		WorkflowName: "generic-restart-v1", WorkflowID: uuid.DeterministicUUID("generic-restart-v1"),
+		ActionType:    "RestartPod",
+		WorkflowTitle: "Generic Pod Restart", Confidence: 0.88,
+		RootCause:    "Root cause identified but affected resource could not be determined from signal context",
+		ResourceKind: "Pod", ResourceNS: "production", ResourceName: "unreachable-pod",
+		APIVersion:           "v1",
+		OverrideResource:     true,
+		Parameters:           map[string]string{"NAMESPACE": "production", "POD_NAME": "unreachable-pod"},
+		InvestigationOutcome: "actionable",
+		IsActionable:         BoolPtr(true),
+	}
+}

@@ -1,0 +1,24 @@
+# RemediationOrchestrator Integration Test Configuration
+# ADR-030: camelCase YAML fields
+
+# ========================================
+# DATASTORAGE CONNECTIVITY (Integration Tests)
+# ========================================
+datastorage:
+  # Use local DataStorage container (started by integration test infrastructure)
+  url: http://ro-e2e-datastorage:8080
+  timeout: 10s
+  buffer:
+    bufferSize: 30000
+    batchSize: 1000
+    flushInterval: 1s
+    maxRetries: 3
+
+# ========================================
+# CONTROLLER RUNTIME (Integration Tests)
+# ========================================
+controller:
+  metricsAddr: ":9090"
+  healthProbeAddr: ":8081"
+  leaderElection: false
+  leaderElectionId: remediationorchestrator.kubernaut.ai

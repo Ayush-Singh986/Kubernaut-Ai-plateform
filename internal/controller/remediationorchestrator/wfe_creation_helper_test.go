@@ -1,0 +1,262 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller_test
+
+import (
+	"context"
+	"fmt"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	prometheus "github.com/prometheus/client_golang/prometheus"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+)
+
+var _ = Describe("Issue #666: WFE Creation Helper (TP-666-v1 §8.3)", func() {
+
+	var (
+		ctx    context.Context
+		scheme *runtime.Scheme
+		m      *rometrics.Metrics
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		scheme = runtime.NewScheme()
+		Expect(remediationv1.AddToScheme(scheme)).To(Succeed())
+		m = rometrics.NewMetricsWithRegistry(prometheus.NewRegistry())
+	})
+
+	minimalAI := func() *aianalysisv1.AIAnalysis {
+		return &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{Name: "ai-test", Namespace: defaultFixture},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase: "Completed",
+				RCAResult: &aianalysisv1.RCAResult{
+					SelectedWorkflow: &aianalysisv1.SelectedWorkflow{
+						WorkflowSnapshot: sharedtypes.WorkflowSnapshot{
+							WorkflowID:   "wf-restart",
+							WorkflowName: "wf-restart",
+							ActionType:   "patch",
+						},
+						Confidence: 0.95,
+					},
+					RootCauseAnalysis: &aianalysisv1.RootCauseAnalysis{
+						RemediationTarget: &aianalysisv1.RemediationTarget{
+							Kind:      "Deployment",
+							Name:      "my-app",
+							Namespace: defaultFixture,
+						},
+					},
+				},
+			},
+		}
+	}
+
+	noopWFECallbacks := func() prodcontroller.WFECreationCallbacks {
+		return prodcontroller.WFECreationCallbacks{
+			EmitWorkflowCreatedAudit: func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis, _ string) {},
+			CreateWFE: func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis) (string, bool, error) {
+				return "wfe-test", true, nil
+			},
+		}
+	}
+
+	It("UT-WEC-001: WFE created successfully → Advance to Executing", func() {
+		rr := newRemediationRequest("wec-001", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		cbs := noopWFECallbacks()
+		auditEmitted := false
+		cbs.EmitWorkflowCreatedAudit = func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis, _ string) {
+			auditEmitted = true
+		}
+
+		intent, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "hash123", cbs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(intent.Type).To(Equal(phase.TransitionAdvance))
+		Expect(intent.TargetPhase).To(Equal(phase.Executing))
+		Expect(auditEmitted).To(BeTrue(), "should emit workflow_created audit")
+	})
+
+	It("UT-WEC-007: reused WFE → do not emit duplicate workflow_created audit", func() {
+		rr := newRemediationRequest("wec-007", defaultFixture, remediationv1.PhaseAwaitingApproval)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		cbs := noopWFECallbacks()
+		cbs.CreateWFE = func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis) (string, bool, error) {
+			return "wfe-existing", false, nil
+		}
+		auditEmitted := false
+		cbs.EmitWorkflowCreatedAudit = func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis, _ string) {
+			auditEmitted = true
+		}
+
+		intent, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "hash007", cbs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(intent.Type).To(Equal(phase.TransitionAdvance))
+		Expect(auditEmitted).To(BeFalse(), "reusing a WFE must not emit workflow_created again")
+	})
+
+	It("UT-WEC-002: WFE creation fails → RequeueAfter", func() {
+		rr := newRemediationRequest("wec-002", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		cbs := noopWFECallbacks()
+		cbs.CreateWFE = func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis) (string, bool, error) {
+			return "", false, fmt.Errorf("namespace terminating")
+		}
+
+		intent, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "", cbs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(intent.Type).To(Equal(phase.TransitionNone))
+		Expect(intent.RequeueAfter).To(BeNumerically(">", 0), "should requeue on WFE creation failure")
+	})
+
+	It("UT-WEC-003: Status update fails → RequeueAfter", func() {
+		rr := newRemediationRequest("wec-003", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		// Use a client without the RR object so status update will fail
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		cbs := noopWFECallbacks()
+		intent, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "", cbs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(intent.Type).To(Equal(phase.TransitionNone))
+		Expect(intent.RequeueAfter).To(BeNumerically(">", 0), "should requeue on status update failure")
+	})
+
+	It("UT-WEC-004: sets WorkflowExecutionRef and SelectedWorkflowRef in status", func() {
+		rr := newRemediationRequest("wec-004", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		cbs := noopWFECallbacks()
+		cbs.CreateWFE = func(_ context.Context, _ *remediationv1.RemediationRequest, _ *aianalysisv1.AIAnalysis) (string, bool, error) {
+			return "wfe-created", true, nil
+		}
+
+		_, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "hash456", cbs)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Refetch RR to check persisted status
+		updated := &remediationv1.RemediationRequest{}
+		Expect(c.Get(ctx, client.ObjectKeyFromObject(rr), updated)).To(Succeed())
+		Expect(updated.Status.EnsurePhaseProgress().WorkflowExecutionRef).To(HaveField("Name", Equal("wfe-created")))
+		Expect(updated.Status.EnsureWorkflowSelection().SelectedWorkflowRef).To(HaveField("WorkflowID", Equal("wf-restart")))
+		// Issue #1677 Phase 1: WorkflowDisplayName comes directly from
+		// ai.Status.SelectedWorkflow.ActionType/.WorkflowName (set by minimalAI()
+		// to "patch"/"wf-restart") -- no live resolver involved.
+		Expect(updated.Status.EnsureWorkflowSelection().WorkflowDisplayName).To(Equal("patch/wf-restart"))
+	})
+
+	It("UT-WEC-005: increments ChildCRDCreationsTotal metric", func() {
+		rr := newRemediationRequest("wec-005", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := minimalAI()
+
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		reg := prometheus.NewRegistry()
+		localMetrics := rometrics.NewMetricsWithRegistry(reg)
+
+		cbs := noopWFECallbacks()
+		_, err := prodcontroller.CreateWFEAndTransition(ctx, c, localMetrics, rr, ai, "", cbs)
+		Expect(err).ToNot(HaveOccurred())
+
+		families, collectErr := reg.Gather()
+		Expect(collectErr).ToNot(HaveOccurred())
+		found := false
+		for _, fam := range families {
+			if fam.GetName() == "kubernaut_remediationorchestrator_child_crd_creations_total" {
+				for _, metric := range fam.GetMetric() {
+					for _, label := range metric.GetLabel() {
+						if label.GetName() == "child_type" && label.GetValue() == "WorkflowExecution" {
+							found = true
+							Expect(metric.GetCounter().GetValue()).To(Equal(1.0))
+						}
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "ChildCRDCreationsTotal metric should be incremented")
+	})
+
+	It("UT-WEC-006: handles nil SelectedWorkflow gracefully", func() {
+		rr := newRemediationRequest("wec-006", defaultFixture, remediationv1.PhaseAnalyzing)
+		rr.Status.EnsurePhaseProgress().AIAnalysisRef = &corev1.ObjectReference{Name: "ai-test", Namespace: defaultFixture}
+		ai := &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{Name: "ai-test", Namespace: defaultFixture},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase: "Completed",
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(rr).
+			WithStatusSubresource(&remediationv1.RemediationRequest{}).
+			Build()
+
+		cbs := noopWFECallbacks()
+		intent, err := prodcontroller.CreateWFEAndTransition(ctx, c, m, rr, ai, "", cbs)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(intent.Type).To(Equal(phase.TransitionAdvance))
+		Expect(intent.TargetPhase).To(Equal(phase.Executing))
+	})
+})

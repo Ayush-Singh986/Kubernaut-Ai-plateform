@@ -1,0 +1,678 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/go-logr/logr"
+	"github.com/google/uuid"
+
+	fleetclient "github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	auth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
+	alignprompt "github.com/jordigilh/kubernaut/internal/kubernautagent/alignment/prompt"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
+	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
+	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/summarizer"
+)
+
+// coreServices groups the mid-level dependencies constructed between the
+// static config load and the investigation-stack wiring: audit, K8s infra,
+// DataStorage clients, tool registry, fleet tools, enrichment, sanitization,
+// anomaly detection, summarization, and the alignment-wrapped LLM/registry.
+// Extracted from main() to keep main() under the funlen statement budget
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 complexity remediation, Wave C).
+type coreServices struct {
+	auditStore           audit.AuditStore
+	auditCleanup         func()
+	infra                *k8sInfra
+	interactiveReadiness *karbac.InteractiveReadiness
+	eventEmitter         *karbac.EventEmitter
+	ds                   *dsClients
+	reg                  *registry.Registry
+	fleetClient          *fleetclient.ResilientClient
+	fleetGate            *readiness.Gate
+	// dsGate is the #1985 pod-wide readiness gate for DataStorage
+	// reachability (BR-AUDIT-005 v2.0). Unlike fleetGate, this is always
+	// non-nil -- every service writes audit, there is no "disabled" state.
+	dsGate               *readiness.Gate
+	fleetOverlayResolver investigator.FleetOverlayResolver
+	enricher             *enrichment.Enricher
+	sanitizer            *sanitization.Pipeline
+	anomalyDetector      *investigator.AnomalyDetector
+	summarizer           *summarizer.Summarizer
+	catalogFetcher       investigator.CatalogFetcher
+	effectiveLLM         llm.Client
+	effectiveReg         registry.ToolRegistry
+	alignEvaluator       *alignment.Evaluator
+	alignCfg             kaconfig.AlignmentCheckConfig
+	wfCatalog            *workflowcatalog.LazyCatalog
+	agentMetrics         *kametrics.Metrics
+}
+
+// buildCoreServices wires audit, K8s infra, DataStorage, tool registry,
+// fleet tools, enrichment/sanitization/anomaly-detection/summarization, and
+// the alignment stack. Terminates the process on the fatal "no DataStorage
+// client" condition, matching the original inline main() behavior.
+func buildCoreServices(
+	cfg *kaconfig.Config,
+	llmRuntime *kaconfig.LLMRuntimeConfig,
+	swappable *llm.SwappableClient,
+	dsTokenSource *auth.TokenSource,
+	logger logr.Logger,
+) *coreServices {
+	// Construct the injected registry before fleet tools. The provider-backed
+	// BridgeTools capture the observer during construction; no post-startup
+	// global swap is permitted (DD-FLEET-009).
+	agentMetrics := kametrics.NewMetrics()
+	auditStore, auditCleanup := buildAuditStore(cfg, dsTokenSource, logger)
+	infra := initK8sInfra(logger)
+
+	// #1677 Phase 2a + hardening (DD-WORKFLOW-019): KA owns workflow/
+	// action-type discovery directly via its own informer-backed cache,
+	// instead of proxying every lookup through DataStorage. wfCatalog is
+	// always non-nil (LazyCatalog) -- it starts Not-Ready and becomes Ready
+	// once its background retry loop completes a successful cache sync; see
+	// buildWorkflowCatalogCache and readinessHandler.
+	wfCatalog := buildWorkflowCatalogCache(infra, logger)
+
+	// #1288: SSAR impersonate gate removed — KA uses its own SA for all K8s
+	// API calls. Interactive readiness is no longer gated on impersonation RBAC.
+	interactiveReadiness := karbac.NewInteractiveReadiness()
+	var eventEmitter *karbac.EventEmitter
+	if cfg.Interactive.Enabled && infra != nil {
+		podName, podNS := karbac.DetectPodIdentity()
+		eventEmitter = karbac.NewEventEmitter(infra.clientset, podName, podNS)
+	}
+
+	ds := initDSClients(cfg, infra, dsTokenSource, logger)
+	if ds == nil {
+		logger.Error(nil, "FATAL: DataStorage client initialization failed — KA cannot operate without DS (workflow discovery, audit, enrichment all require it)")
+		os.Exit(1)
+	}
+	reg := buildToolRegistry(cfg, logger, infra, ds, wfCatalog, auditStore)
+	fleetObserver := newFleetRetryObserver(auditStore, agentMetrics, logger.WithName("fleet-recovery"))
+	fleetClient, fleetOverlayResolver := registerFleetTools(context.Background(), cfg, logger, fleetObserver)
+	// #1553 / ADR-068 decision #11 / BR-INTEGRATION-054: fail closed on Fleet
+	// dependency unreachability via readyz (pod-wide), instead of the
+	// previous fail-open behavior of only logging an error.
+	fleetGate := wireFleetReadinessGate(context.Background(), fleetClient, logger)
+	// #1985 / BR-AUDIT-005: fail closed on DataStorage unreachability via
+	// readyz (pod-wide), unconditionally.
+	dsGate := wireDataStorageReadinessGate(context.Background(), cfg, logger)
+	enricher := buildEnricher(cfg, ds, infra, auditStore, logger)
+	sanitizer := buildSanitizationPipeline(cfg, logger)
+	anomalyDetector := buildAnomalyDetector(cfg, logger)
+	sum := buildSummarizer(swappable, cfg, logger)
+
+	instrumentedLLM := llm.NewInstrumentedClient(swappable)
+
+	// #1677 hardening (DD-WORKFLOW-019): catalogFetcher is always
+	// constructed -- wfCatalog is never nil (LazyCatalog). Before the cache
+	// syncs, FetchValidator's List call returns workflowcatalog.
+	// ErrCatalogNotReady, which selfCorrectWorkflowSelection already
+	// classifies as HumanReviewNeeded/"catalog_unavailable" rather than
+	// silently allowing an unvalidated LLM-selected workflow through (the
+	// former "CatalogFetcher == nil -> skip validation entirely" bypass this
+	// replaces; see investigator_workflow_selection.go).
+	catalogFetcher := newWorkflowCatalogFetcher(wfCatalog, logger)
+
+	effectiveLLM, effectiveReg, alignEvaluator, alignCfg := buildAlignmentStack(cfg, llmRuntime, instrumentedLLM, reg, auditStore, logger)
+
+	return &coreServices{
+		auditStore: auditStore, auditCleanup: auditCleanup, infra: infra,
+		interactiveReadiness: interactiveReadiness, eventEmitter: eventEmitter,
+		ds: ds, reg: reg, fleetClient: fleetClient, fleetGate: fleetGate, dsGate: dsGate, fleetOverlayResolver: fleetOverlayResolver, enricher: enricher,
+		sanitizer: sanitizer, anomalyDetector: anomalyDetector, summarizer: sum,
+		catalogFetcher: catalogFetcher, effectiveLLM: effectiveLLM, effectiveReg: effectiveReg,
+		alignEvaluator: alignEvaluator, alignCfg: alignCfg,
+		wfCatalog: wfCatalog, agentMetrics: agentMetrics,
+	}
+}
+
+// buildWorkflowCatalogCache constructs and starts KA's LazyCatalog, an
+// informer-backed workflow/action-type catalog that becomes Ready() once
+// its first successful cache sync completes (#1677 Phase 2a + hardening,
+// DD-WORKFLOW-019). The returned LazyCatalog is never nil.
+//
+// Construction is retried forever in the background with capped exponential
+// backoff (LazyCatalog.Start), instead of either failing the pod boot
+// (os.Exit -- issue #665's boot-blocks-on-external-dependency anti-pattern,
+// reproduced live in CI for this exact cache via a WaitForCacheSync timeout
+// under startup contention) or silently disabling discovery for the rest of
+// the pod's lifetime (the removed "infra == nil -> dev mode, cache
+// disabled" carve-out this replaces). KA always runs in-cluster -- there is
+// no supported dev-mode-without-K8s -- so neither a missing infra nor a
+// failed cache sync is an acceptable degraded steady state: readinessHandler
+// gates /readyz on wfCatalog.Ready(), keeping the pod out of Service
+// endpoints for as long as discovery is unavailable, and
+// investigator_workflow_selection.go's self-correction path fails closed
+// (HumanReviewNeeded/"catalog_unavailable") on any in-flight investigation
+// that races the not-yet-ready window.
+//
+// infra == nil should never happen in a real deployment (initK8sInfra only
+// returns nil when ctrl.GetConfig() fails, i.e. KA is not actually running
+// in-cluster); when it does, the returned LazyCatalog is left un-Started and
+// therefore never becomes Ready -- /readyz correctly reports not_ready
+// until the pod is restarted with valid K8s connectivity, rather than
+// silently accepting the condition as intentional.
+func buildWorkflowCatalogCache(infra *k8sInfra, logger logr.Logger) *workflowcatalog.LazyCatalog {
+	lazy := workflowcatalog.NewLazyCatalog(logger)
+
+	if infra == nil {
+		logger.Error(nil, "K8s infrastructure unavailable -- workflow catalog cache cannot start and will never become "+
+			"ready; this should never happen in a real deployment (KA always runs in-cluster); /readyz will report "+
+			"not_ready until the pod is restarted with valid K8s connectivity")
+		return lazy
+	}
+
+	scheme, err := workflowcatalog.NewScheme()
+	if err != nil {
+		logger.Error(err, "FATAL: failed to build workflow catalog scheme")
+		os.Exit(1)
+	}
+
+	lazy.Start(func() (*workflowcatalog.Cache, context.CancelFunc, error) {
+		return workflowcatalog.NewInformerCache(infra.kubeConfig, scheme, logger)
+	})
+	return lazy
+}
+
+// buildLLMClients constructs the primary SwappableClient plus any per-phase
+// SwappableClient overrides configured in llmRuntime.PhaseModels. Terminates
+// the process (os.Exit(1)) on unrecoverable client construction failures,
+// matching the original inline main() behavior
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4f).
+func buildLLMClients(cfg *kaconfig.Config, llmRuntime *kaconfig.LLMRuntimeConfig, logger logr.Logger) (*llm.SwappableClient, map[katypes.Phase]*llm.SwappableClient) {
+	resolvedBase, err := kaconfig.ResolveEffectiveLLM(cfg.AI.LLM, *llmRuntime, nil, "ai.llm")
+	if err != nil {
+		logger.Error(err, "failed to resolve investigation LLM profile")
+		os.Exit(1)
+	}
+	llmClient, err := buildLLMClientFromConfig(context.Background(), resolvedBase)
+	if err != nil {
+		logger.Error(err, "failed to create LLM client", "provider", resolvedBase.Provider)
+		os.Exit(1)
+	}
+
+	swappable, err := llm.NewSwappableClient(llmClient, resolvedBase.Model, runtimeParamsFromLLMConfig(resolvedBase))
+	if err != nil {
+		logger.Error(err, "failed to create swappable LLM client")
+		os.Exit(1)
+	}
+
+	// #1470: Build per-phase SwappableClients. The resolver is created after
+	// the alignment evaluator, so that the PinDecorator can be set at
+	// construction time.
+	phaseSwappables := make(map[katypes.Phase]*llm.SwappableClient)
+	for phaseName, profile := range llmRuntime.PhaseModels {
+		if profile == nil {
+			logger.Error(nil, "phase LLM profile is nil", "phase", phaseName)
+			os.Exit(1)
+		}
+		resolvedPhase, resolveErr := kaconfig.ResolveEffectiveLLM(
+			cfg.AI.LLM, *llmRuntime, profile, fmt.Sprintf("phaseModels[%q]", phaseName))
+		if resolveErr != nil {
+			logger.Error(resolveErr, "failed to resolve phase LLM profile", "phase", phaseName)
+			os.Exit(1)
+		}
+		phaseClient, phaseErr := buildLLMClientFromConfig(context.Background(), resolvedPhase)
+		if phaseErr != nil {
+			logger.Error(phaseErr, "failed to build phase LLM client",
+				"phase", phaseName, "model", resolvedPhase.Model)
+			os.Exit(1)
+		}
+		phaseSw, phaseSwErr := llm.NewSwappableClient(phaseClient, resolvedPhase.Model, runtimeParamsFromLLMConfig(resolvedPhase))
+		if phaseSwErr != nil {
+			logger.Error(phaseSwErr, "failed to create phase SwappableClient",
+				"phase", phaseName)
+			os.Exit(1)
+		}
+		phaseSwappables[katypes.Phase(phaseName)] = phaseSw
+		logger.Info("per-phase LLM client initialized",
+			"phase", phaseName, "model", resolvedPhase.Model)
+	}
+
+	return swappable, phaseSwappables
+}
+
+// buildAlignmentStack resolves the shadow-agent alignment-check
+// configuration and, when enabled, constructs the dedicated (or shared)
+// shadow LLM client and wraps the primary LLM/tool registry in
+// alignment-aware proxies. Terminates the process on a fail-closed shadow
+// client construction failure, matching the original inline main() behavior
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4f).
+func buildAlignmentStack(
+	cfg *kaconfig.Config,
+	llmRuntime *kaconfig.LLMRuntimeConfig,
+	instrumentedLLM llm.Client,
+	reg *registry.Registry,
+	auditStore audit.AuditStore,
+	logger logr.Logger,
+) (effectiveLLM llm.Client, effectiveReg registry.ToolRegistry, alignEvaluator *alignment.Evaluator, alignCfg kaconfig.AlignmentCheckConfig) {
+	effectiveLLM = instrumentedLLM
+	effectiveReg = reg
+	alignCfg = resolveAlignmentCheckConfig(cfg)
+	if !alignCfg.Enabled {
+		return effectiveLLM, effectiveReg, nil, alignCfg
+	}
+
+	var shadowClient llm.Client
+	if alignCfg.LLM == nil {
+		shadowClient = instrumentedLLM
+		logger.Error(nil, "shadow agent shares investigation LLM client — shadow requests will compete with primary investigation; configure ai.alignmentCheck.llm for dedicated shadow model")
+	} else {
+		resolvedAlignment, resolveErr := kaconfig.ResolveEffectiveLLM(
+			cfg.AI.LLM, *llmRuntime, alignCfg.LLM, "ai.alignmentCheck.llm")
+		if resolveErr != nil {
+			logger.Error(resolveErr, "failed to resolve shadow agent LLM profile (fail-closed)")
+			os.Exit(1)
+		}
+		raw, alignErr := buildLLMClientFromConfig(context.Background(), resolvedAlignment)
+		if alignErr != nil {
+			logger.Error(alignErr, "alignment check LLM client failed (fail-closed): alignment is enabled but shadow client unavailable")
+			os.Exit(1)
+		}
+		shadowClient = llm.NewInstrumentedClient(raw)
+		logger.Info("shadow agent using dedicated LLM client", "model", resolvedAlignment.Model)
+	}
+	if shadowClient != nil {
+		alignEvaluator = alignment.NewEvaluator(shadowClient, alignment.EvaluatorConfig{
+			Timeout:               alignCfg.Timeout,
+			MaxStepTokens:         alignCfg.MaxStepTokens,
+			MaxRetries:            alignCfg.MaxRetries,
+			MaxConversationTokens: alignCfg.GroundingReview.MaxConversationTokens,
+		}, alignprompt.SystemPrompt(), alignment.WithLogger(logger), alignment.WithAuditStore(auditStore))
+		effectiveLLM = alignment.NewLLMProxy(instrumentedLLM)
+		effectiveReg = alignment.NewToolProxy(reg)
+		logger.Info("shadow agent alignment check enabled (shadow LLM audit active: request/response events will be emitted per step)")
+	}
+	return effectiveLLM, effectiveReg, alignEvaluator, alignCfg
+}
+
+// investigationRunnerParams groups the dependencies needed to build the
+// investigation stack (investigator, session store/manager, ogen server).
+// Extracted per AGENTS.md's 8+-param Options-pattern rule.
+type investigationRunnerParams struct {
+	cfg                  *kaconfig.Config
+	llmRuntime           *kaconfig.LLMRuntimeConfig
+	swappable            *llm.SwappableClient
+	phaseSwappables      map[katypes.Phase]*llm.SwappableClient
+	promptBuilder        *prompt.Builder
+	resultParser         *parser.ResultParser
+	phaseTools           katypes.PhaseToolMap
+	enricher             *enrichment.Enricher
+	auditStore           audit.AuditStore
+	effectiveLLM         llm.Client
+	effectiveReg         registry.ToolRegistry
+	alignEvaluator       *alignment.Evaluator
+	alignCfg             kaconfig.AlignmentCheckConfig
+	fleetOverlayResolver investigator.FleetOverlayResolver
+	infra                *k8sInfra
+	sanitizer            *sanitization.Pipeline
+	anomalyDetector      *investigator.AnomalyDetector
+	catalogFetcher       investigator.CatalogFetcher
+	summarizer           *summarizer.Summarizer
+	logger               logr.Logger
+	agentMetrics         *kametrics.Metrics
+}
+
+// investigationStack groups the constructed investigation-stack components
+// that main() needs after buildInvestigationRunner: the investigator itself
+// (needed by buildMCPHandler) and the metrics/audit/session infrastructure.
+type investigationStack struct {
+	agentMetrics      *kametrics.Metrics
+	instrumentedAudit audit.AuditStore
+	phaseResolver     *investigator.DefaultPhaseResolver
+	inv               *investigator.Investigator
+	// runner is inv wrapped with the alignment InvestigatorWrapper when
+	// alignment-check is enabled (identical to what kaserver.NewHandler
+	// used for the retired HTTP path) -- the AgentSession dispatcher
+	// (DD-AA-KA-001) reuses this exact value so alignment coverage is
+	// identical regardless of dispatch channel.
+	runner kaserver.InvestigationRunner
+	store  *session.Store
+	mgr    *session.Manager
+}
+
+// buildPinDecorator constructs the #1470 PinDecorator used by the
+// PhaseResolver to wrap a pinned per-phase LLM client with the same
+// alignment/instrumentation proxies as the primary client. Returns nil when
+// alignment is disabled (no shadow evaluator).
+func buildPinDecorator(alignEvaluator *alignment.Evaluator) func(llm.Client) llm.Client {
+	if alignEvaluator == nil {
+		return nil
+	}
+	return func(pinned llm.Client) llm.Client {
+		return alignment.NewLLMProxy(llm.NewInstrumentedClient(pinned))
+	}
+}
+
+// buildPhaseResolver constructs the #1470 DefaultPhaseResolver, resolving
+// the scope resolver from the K8s infra (when available) and wiring in any
+// configured per-phase SwappableClient overrides.
+func buildPhaseResolver(p investigationRunnerParams, pinDecorator func(llm.Client) llm.Client) (investigator.ScopeResolver, *investigator.DefaultPhaseResolver) {
+	var scopeResolver investigator.ScopeResolver
+	if p.infra != nil {
+		scopeResolver = investigator.NewMapperScopeResolver(p.infra.mapper)
+	}
+	phaseResolver := investigator.NewDefaultPhaseResolver(p.swappable, pinDecorator)
+	for phase, phaseSw := range p.phaseSwappables {
+		phaseResolver.SetPhaseSwappable(phase, phaseSw)
+	}
+	return scopeResolver, phaseResolver
+}
+
+// buildInvestigator constructs the Investigator from the runner params and
+// the previously-resolved metrics/audit/scope/phase-resolver dependencies.
+func buildInvestigator(
+	p investigationRunnerParams,
+	agentMetrics *kametrics.Metrics,
+	instrumentedAudit audit.AuditStore,
+	scopeResolver investigator.ScopeResolver,
+	phaseResolver *investigator.DefaultPhaseResolver,
+	pinDecorator func(llm.Client) llm.Client,
+) *investigator.Investigator {
+	invCfg := investigator.Config{
+		Client:               p.effectiveLLM,
+		Builder:              p.promptBuilder,
+		ResultParser:         p.resultParser,
+		Enricher:             p.enricher,
+		AuditStore:           instrumentedAudit,
+		Logger:               p.logger,
+		MaxTurns:             p.cfg.AI.Investigation.MaxTurns,
+		PhaseTools:           p.phaseTools,
+		Registry:             p.effectiveReg,
+		ModelName:            p.llmRuntime.Model,
+		Swappable:            p.swappable,
+		ScopeResolver:        scopeResolver,
+		Metrics:              agentMetrics,
+		PhaseResolver:        phaseResolver,
+		PinDecorator:         pinDecorator,
+		FleetOverlayResolver: p.fleetOverlayResolver,
+		// BR-KA-213, Issue #1826: operator-configurable investigation-outcome
+		// confidence bands, templated into the Phase 3 workflow-selection prompt.
+		ResolvedConfidenceThreshold:     p.cfg.AI.Investigation.ResolvedConfidenceThreshold,
+		InconclusiveConfidenceThreshold: p.cfg.AI.Investigation.InconclusiveConfidenceThreshold,
+		// BR-KA-267, #1949: bound tool-call execution so a stuck dependency
+		// call cannot hang an investigation goroutine indefinitely.
+		ToolCallTimeout: p.cfg.AI.Safety.ToolCallTimeout,
+		Pipeline: investigator.Pipeline{
+			Sanitizer:               p.sanitizer,
+			AnomalyDetector:         p.anomalyDetector,
+			CatalogFetcher:          p.catalogFetcher,
+			Summarizer:              p.summarizer,
+			MaxToolOutputSize:       p.cfg.AI.Summarizer.MaxToolOutputSize,
+			MaxEvidenceHandoffBytes: p.cfg.AI.Investigation.MaxEvidenceHandoffBytes,
+		},
+	}
+	return investigator.New(invCfg)
+}
+
+// wrapWithAlignment wraps inv in the shadow-agent alignment InvestigatorWrapper
+// when alignment is enabled, otherwise returns inv unchanged. Terminates the
+// process on unrecoverable wrapper construction failure, matching the
+// original inline main() behavior.
+func wrapWithAlignment(
+	inv *investigator.Investigator,
+	p investigationRunnerParams,
+	instrumentedAudit audit.AuditStore,
+) kaserver.InvestigationRunner {
+	if p.alignEvaluator == nil {
+		return inv
+	}
+	wrapper, wrapErr := alignment.NewInvestigatorWrapper(alignment.InvestigatorWrapperConfig{
+		Inner:                 inv,
+		Evaluator:             p.alignEvaluator,
+		VerdictTimeout:        p.alignCfg.VerdictTimeout,
+		AuditStore:            instrumentedAudit,
+		Logger:                p.logger,
+		Mode:                  p.alignCfg.Mode,
+		CanaryForceEscalation: p.alignCfg.Canary.ForceEscalation,
+		GroundingEnabled:      p.alignCfg.GroundingReview.Enabled,
+	})
+	if wrapErr != nil {
+		p.logger.Error(wrapErr, "failed to create alignment wrapper")
+		os.Exit(1)
+	}
+	return wrapper
+}
+
+// buildInvestigationRunner wires the investigator, the alignment wrapper
+// (when enabled), the session store/manager, and the ogen server. Terminates
+// the process on unrecoverable wiring failures, matching the original inline
+// main() behavior (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4f).
+func buildInvestigationRunner(p investigationRunnerParams) *investigationStack {
+	agentMetrics := p.agentMetrics
+	if agentMetrics == nil {
+		agentMetrics = kametrics.NewMetrics()
+	}
+
+	instrumentedAudit := audit.NewInstrumentedAuditStore(p.auditStore, agentMetrics.RecordAuditEventEmitted)
+
+	// #1470: Build the PhaseResolver with the PinDecorator (if alignment is enabled).
+	pinDecorator := buildPinDecorator(p.alignEvaluator)
+	scopeResolver, phaseResolver := buildPhaseResolver(p, pinDecorator)
+
+	inv := buildInvestigator(p, agentMetrics, instrumentedAudit, scopeResolver, phaseResolver, pinDecorator)
+	investigationRunner := wrapWithAlignment(inv, p, instrumentedAudit)
+
+	store := session.NewStore(p.cfg.Runtime.Session.TTL,
+		session.WithLogger(p.logger.WithName("session-store")),
+		session.WithMaxConcurrent(p.cfg.Runtime.Session.MaxConcurrentInvestigations),
+	)
+	mgr := session.NewManager(store, p.logger, instrumentedAudit, agentMetrics)
+
+	return &investigationStack{
+		agentMetrics:      agentMetrics,
+		instrumentedAudit: instrumentedAudit,
+		phaseResolver:     phaseResolver,
+		inv:               inv,
+		runner:            investigationRunner,
+		store:             store,
+		mgr:               mgr,
+	}
+}
+
+// wireServerTLS configures required TLS on httpServer (Issue #493) and starts
+// a FileWatcher for hot-reloading the server certificate (Issue #756).
+// Terminates the process on unrecoverable failures.
+func wireServerTLS(ctx context.Context, cfg *kaconfig.Config, httpServer *http.Server, logger logr.Logger) func() {
+	_, reloader, tlsErr := sharedtls.ConfigureRequiredTLS(httpServer, cfg.Runtime.Server.TLS.CertDir)
+	if tlsErr != nil {
+		logger.Error(tlsErr, "Failed to configure TLS")
+		os.Exit(1)
+	}
+	logger.Info("TLS configured for HTTP server", "certDir", cfg.Runtime.Server.TLS.CertDir)
+
+	certWatcher, watchErr := hotreload.NewFileWatcher(
+		filepath.Join(cfg.Runtime.Server.TLS.CertDir, "tls.crt"),
+		reloader.ReloadCallback,
+		logger.WithName("cert-reloader"),
+	)
+	if watchErr != nil {
+		logger.Error(watchErr, "Failed to create cert file watcher")
+		os.Exit(1)
+	}
+	if err := certWatcher.Start(ctx); err != nil {
+		logger.Error(err, "Failed to start cert file watcher")
+		os.Exit(1)
+	}
+	return certWatcher.Stop
+}
+
+// wireLLMRuntimeWatcher starts the Issue #916 FileWatcher for LLM runtime
+// config hot-reload. Failures to create or start the watcher are logged but
+// non-fatal (hot-reload is a best-effort convenience). Returns a stopper, or
+// nil when the watcher could not be started.
+func wireLLMRuntimeWatcher(
+	ctx context.Context,
+	cfg *kaconfig.Config,
+	llmRuntimePath string,
+	swappable *llm.SwappableClient,
+	phaseResolver *investigator.DefaultPhaseResolver,
+	bootRuntime *kaconfig.LLMRuntimeConfig,
+	logger logr.Logger,
+) func() {
+	rtCallback := llmRuntimeReloadCallback(cfg, swappable, logger, phaseResolver, bootRuntime) //nolint:contextcheck // LLM runtime reload callback fires asynchronously on config-change events, independent of any request
+	rtWatcher, rtWatchErr := hotreload.NewFileWatcher(
+		llmRuntimePath,
+		rtCallback,
+		logger.WithName("llm-runtime-reloader"),
+	)
+	if rtWatchErr != nil {
+		logger.Info("llm runtime file watcher not started", "error", rtWatchErr)
+		return nil
+	}
+	if err := rtWatcher.Start(ctx); err != nil {
+		logger.Info("llm runtime file watcher failed to start", "error", err)
+		return nil
+	}
+	logger.Info("llm runtime hot-reload enabled (#916)", "path", llmRuntimePath)
+	return rtWatcher.Stop
+}
+
+// hotReloadParams groups wireHotReload's non-context dependencies. Extracted
+// per AGENTS.md's 8+-param Options-pattern rule
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4f), same pattern as
+// shutdownDeps/routerBuildParams/handlerDeps in cmd/apifrontend —
+// bootRuntime (#1599) tipped this function's positional param count to 8.
+// ctx is deliberately kept as wireHotReload's own first parameter rather
+// than a struct field (AGENTS.md Go Anti-Pattern Checklist: "Context stored
+// in struct fields").
+type hotReloadParams struct {
+	Cfg            *kaconfig.Config
+	HTTPServer     *http.Server
+	LLMRuntimePath string
+	Swappable      *llm.SwappableClient
+	PhaseResolver  *investigator.DefaultPhaseResolver
+	// BootRuntime is the frozen LLM runtime snapshot loaded at process start,
+	// used to enforce the #1599 restart-required identity lock.
+	BootRuntime *kaconfig.LLMRuntimeConfig
+	Logger      logr.Logger
+	// AuditStore records every CA-cert hot-reload attempt (GAP-11, Issue
+	// #2285) so hot-reload has the same audit-trail parity as every other
+	// hot-reloadable component. May be nil in tests.
+	AuditStore audit.AuditStore
+}
+
+// wireHotReload configures conditional server TLS (with hot-reload), the
+// LLM-runtime config watcher, the OCP TLS security profile, and the
+// CA-file watcher. Mutates httpServer.TLSConfig in place when TLS is
+// enabled. Terminates the process on unrecoverable wiring failures, matching
+// the original inline main() behavior.
+//
+// Returns a single cleanup function that stops every watcher that was
+// successfully started; the caller must defer it in its own scope so the
+// watchers live for the server's lifetime, not just this function's call
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4f — same pattern as
+// watchLoopState.stopEAWatcher in Phase 4e).
+func wireHotReload(ctx context.Context, p hotReloadParams) func() {
+	cfg, httpServer, logger := p.Cfg, p.HTTPServer, p.Logger
+	var stoppers []func()
+
+	if stop := wireServerTLS(ctx, cfg, httpServer, logger); stop != nil {
+		stoppers = append(stoppers, stop)
+	}
+
+	if stop := wireLLMRuntimeWatcher(ctx, cfg, p.LLMRuntimePath, p.Swappable, p.PhaseResolver, p.BootRuntime, logger); stop != nil {
+		stoppers = append(stoppers, stop)
+	}
+
+	// Issue #748: Load OCP TLS security profile from config before any TLS setup
+	if err := sharedtls.SetDefaultSecurityProfileFromConfig(cfg.Runtime.Server.TLSProfile); err != nil {
+		logger.Error(err, "Invalid TLS security profile in config, using default TLS 1.2")
+	} else if cfg.Runtime.Server.TLSProfile != "" {
+		logger.Info("TLS security profile active", "profile", cfg.Runtime.Server.TLSProfile)
+	}
+
+	// Issue #756: Start CA file watcher for client-side TLS hot-reload.
+	// GAP-11 (Issue #2285): audit every CA-cert hot-reload attempt.
+	caWatcher, caWatchErr := sharedtls.StartCAFileWatcher(ctx, logger, func(reloadErr error) {
+		recordConfigReload(ctx, p.AuditStore, reloadErr, logger)
+	})
+	if caWatchErr != nil {
+		logger.Error(caWatchErr, "Failed to start CA file watcher")
+		os.Exit(1)
+	}
+	if caWatcher != nil {
+		stoppers = append(stoppers, caWatcher.Stop)
+	}
+
+	return func() {
+		for _, stop := range stoppers {
+			stop()
+		}
+	}
+}
+
+// recordConfigReload emits the aiagent.config.reloaded/aiagent.config.rejected
+// audit event for a CA-cert hot-reload attempt (GAP-11, Issue #2285). Best
+// effort: never blocks or fails the reload itself. No-op when store is nil
+// (e.g. audit disabled or unit tests that don't wire one).
+//
+// This is a background, request-less event (unlike toolregistry.go/routes.go's
+// NewEvent calls, which correlate to an in-flight HTTP request), so there is
+// no natural correlation_id to reuse -- mint a fresh UUID, mirroring every
+// other service's own self-audit config-reload event (e.g.
+// pkg/datastorage/audit.NewConfigReloadedAuditEvent). The OpenAPI schema
+// requires correlation_id minLength=1; passing "" was silently rejected by
+// DataStorage's server-side validation, dropping the audit event with only a
+// best-effort log line (confirmed via a live must-gather-e2e run against
+// PR #2288, not caught by unit tests since they stub the store).
+func recordConfigReload(ctx context.Context, store audit.AuditStore, reloadErr error, logger logr.Logger) {
+	if store == nil {
+		return
+	}
+	correlationID := uuid.New().String()
+	var event *audit.AuditEvent
+	if reloadErr != nil {
+		event = audit.NewEvent(audit.EventTypeConfigRejected, correlationID)
+		event.EventAction = audit.ActionConfigRejected
+		event.EventOutcome = audit.OutcomeFailure
+		event.Data["component"] = "ca_cert"
+		event.Data["rejection_reason"] = reloadErr.Error()
+	} else {
+		event = audit.NewEvent(audit.EventTypeConfigReloaded, correlationID)
+		event.EventAction = audit.ActionConfigReloaded
+		event.EventOutcome = audit.OutcomeSuccess
+		event.Data["component"] = "ca_cert"
+	}
+	audit.StoreBestEffort(ctx, store, event, logger)
+}

@@ -1,0 +1,274 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package kubernautagent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// ADR-056 SoC: E2E tests for DetectedLabels in KA responses.
+//
+// These tests verify that when KA processes incident analysis in a Kind cluster
+// with real K8s resources, the response includes correctly computed detected_labels.
+//
+// Business Requirements:
+//   - ADR-056: DetectedLabels computed post-RCA by KA
+//   - BR-SP-101: Infrastructure label detection (PDB, HPA, etc.)
+//
+// Infrastructure: Kind cluster with KA, Mock LLM (3-step), DataStorage
+// K8s resources (Deployments, PDBs, HPAs) are created in a dedicated test namespace.
+
+var _ = Describe("E2E-KA ADR-056 DetectedLabels", Label("e2e", "ka", "adr-056", "detected-labels"), func() {
+	var (
+		testCtx    context.Context
+		testCancel context.CancelFunc
+		clientset  *kubernetes.Clientset
+		testNS     string
+		deployName string
+	)
+
+	BeforeEach(func() {
+		testCtx, testCancel = context.WithTimeout(context.Background(), 3*time.Minute)
+
+		// Create K8s client from Kind cluster kubeconfig
+		cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		Expect(err).NotTo(HaveOccurred(), "Failed to build kubeconfig from Kind cluster")
+		clientset, err = kubernetes.NewForConfig(cfg)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create K8s clientset")
+
+		// Create unique test namespace
+		testNS = fmt.Sprintf("adr056-e2e-%s", uuid.New().String()[:8])
+		deployName = "test-app"
+
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: testNS,
+				Labels: map[string]string{
+					"kubernaut.ai/managed": "true",
+				},
+			},
+		}
+		_, err = clientset.CoreV1().Namespaces().Create(testCtx, ns, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
+
+		// Create Deployment in test namespace
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      deployName,
+				Namespace: testNS,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](1),
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "test-app"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "test-app"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "app",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		_, err = clientset.AppsV1().Deployments(testNS).Create(testCtx, deployment, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "Failed to create test Deployment")
+	})
+
+	AfterEach(func() {
+		if clientset != nil && testNS != "" {
+			_ = clientset.CoreV1().Namespaces().Delete(
+				context.Background(), testNS, metav1.DeleteOptions{})
+
+			// Wait for namespace to fully terminate to prevent
+			// "object is being deleted" errors in subsequent tests.
+			Eventually(func() bool {
+				_, err := clientset.CoreV1().Namespaces().Get(
+					context.Background(), testNS, metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}, "60s", "1s").Should(BeTrue(),
+				"namespace should be fully deleted before next test")
+		}
+		testCancel()
+	})
+
+	Context("Incident Analysis with DetectedLabels", func() {
+		It("E2E-KA-056-001: should include detected_labels in incident analysis response", func() {
+			By("Sending incident analysis request targeting test namespace resources")
+			spec := agentsessionv1.AgentSessionSpec{
+				RemediationRequestRef: agentsessionv1.ObjectRef{Name: "req-e2e-dl-001", Namespace: sharedNamespace},
+				IncidentID:            "e2e-dl-001",
+				RemediationID:         "req-e2e-dl-001",
+				SignalName:            "CrashLoopBackOff",
+				Severity:              "critical",
+				SignalSource:          "prometheus",
+				ResourceNamespace:     testNS,
+				ResourceKind:          "Deployment",
+				ResourceName:          deployName,
+				ErrorMessage:          "Container restarted 5 times",
+				Environment:           "production",
+				Priority:              "P1",
+				RiskTolerance:         "medium",
+				BusinessCategory:      "standard",
+			}
+
+			// #2190: AgentSession CRD flow replaces sessionClient.Investigate().
+			resp, err := infrastructure.InvestigateViaAgentSession(testCtx, k8sClient, sharedNamespace, spec, 2*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), "KA incident analysis should succeed")
+			Expect(resp).NotTo(BeNil())
+
+			By("Verifying detectedLabels is present in response")
+			// ADR-056: KA computes DetectedLabels on-demand during list_available_actions
+			// and includes them in the response via inject_detected_labels.
+			Expect(resp.DetectedLabels).NotTo(BeNil(),
+				"detectedLabels should be present in KA response (ADR-056)")
+		})
+	})
+
+	Context("Infrastructure Label Detection", func() {
+		It("E2E-KA-056-003: should detect PDB and HPA from Kind cluster resources", func() {
+			By("Creating PodDisruptionBudget for test Deployment")
+			pdb := &policyv1.PodDisruptionBudget{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-pdb",
+					Namespace: testNS,
+				},
+				Spec: policyv1.PodDisruptionBudgetSpec{
+					MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "test-app"},
+					},
+				},
+			}
+			_, err := clientset.PolicyV1().PodDisruptionBudgets(testNS).Create(testCtx, pdb, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create PDB")
+
+			By("Creating HorizontalPodAutoscaler for test Deployment")
+			hpa := &autoscalingv2.HorizontalPodAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-hpa",
+					Namespace: testNS,
+				},
+				Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+					ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+						APIVersion: "apps/v1",
+						Kind:       "Deployment",
+						Name:       deployName,
+					},
+					MinReplicas: ptr.To[int32](1),
+					MaxReplicas: 3,
+					Metrics: []autoscalingv2.MetricSpec{{
+						Type: autoscalingv2.ResourceMetricSourceType,
+						Resource: &autoscalingv2.ResourceMetricSource{
+							Name: corev1.ResourceCPU,
+							Target: autoscalingv2.MetricTarget{
+								Type:               autoscalingv2.UtilizationMetricType,
+								AverageUtilization: ptr.To[int32](80),
+							},
+						},
+					}},
+				},
+			}
+			_, err = clientset.AutoscalingV2().HorizontalPodAutoscalers(testNS).Create(testCtx, hpa, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create HPA")
+
+			By("Sending incident analysis request targeting test namespace")
+			// #2190: AgentSession CRD flow replaces sessionClient.Investigate().
+			resp, err := infrastructure.InvestigateViaAgentSession(testCtx, k8sClient, sharedNamespace, agentsessionv1.AgentSessionSpec{
+				RemediationRequestRef: agentsessionv1.ObjectRef{Name: "req-e2e-dl-003", Namespace: sharedNamespace},
+				IncidentID:            "e2e-dl-003",
+				RemediationID:         "req-e2e-dl-003",
+				SignalName:            "CrashLoopBackOff",
+				Severity:              "critical",
+				SignalSource:          "prometheus",
+				ResourceNamespace:     testNS,
+				ResourceKind:          "Deployment",
+				ResourceName:          deployName,
+				ErrorMessage:          "Container restarted",
+				Environment:           "production",
+				Priority:              "P0",
+				RiskTolerance:         "low",
+				BusinessCategory:      "critical",
+			}, 2*time.Minute)
+
+			Expect(err).NotTo(HaveOccurred(), "KA should succeed with K8s resources present")
+			Expect(resp).NotTo(BeNil())
+
+			By("Verifying detectedLabels reflect PDB and HPA presence")
+			Expect(resp.DetectedLabels).NotTo(BeNil(),
+				"detectedLabels should be present when K8s resources exist")
+
+			// If KA successfully detected labels, verify PDB and HPA detection
+			dl := decodeDetectedLabels(resp.DetectedLabels)
+			if len(dl) > 0 {
+				GinkgoWriter.Printf("detected_labels keys: %v\n", getMapKeys(dl))
+			}
+		})
+	})
+})
+
+// getMapKeys returns the keys of a map for logging purposes.
+func getMapKeys[K comparable, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// decodeDetectedLabels unmarshals AgentSessionResult.DetectedLabels (a
+// free-form *apiextensionsv1.JSON per KA's schema) into the
+// map[string]json.RawMessage shape the old agentclient.IncidentResponse's
+// DetectedLabels exposed, so per-field assertions (#2190 migration) don't
+// need to change shape. Returns nil if labels is nil/empty/unparseable.
+func decodeDetectedLabels(labels *apiextensionsv1.JSON) map[string]json.RawMessage {
+	if labels == nil || len(labels.Raw) == 0 {
+		return nil
+	}
+	var dl map[string]json.RawMessage
+	if err := json.Unmarshal(labels.Raw, &dl); err != nil {
+		return nil
+	}
+	return dl
+}

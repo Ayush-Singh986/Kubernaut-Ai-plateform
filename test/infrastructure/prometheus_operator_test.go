@@ -1,0 +1,311 @@
+package infrastructure
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+)
+
+var _ = Describe("fleet spoke Prometheus Operator manifests", func() {
+	It("UT-INFRA-FLEETDEMO-OPERATOR-001: pins the operator Helm chart", func() {
+		Expect(prometheusOperatorHelmChart).To(Equal("kube-prometheus-stack"))
+		Expect(prometheusOperatorHelmVersion).To(Equal("88.1.5"))
+		Expect(prometheusOperatorNamespace).To(Equal("prometheus-operator"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-OPERATOR-002: uses an operator-only chart configuration", func() {
+		Expect(prometheusOperatorHelmChart).To(Equal("kube-prometheus-stack"))
+		Expect(prometheusOperatorHelmRepoURL).To(Equal("https://prometheus-community.github.io/helm-charts"))
+		Expect(prometheusOperatorNamespace).To(Equal("prometheus-operator"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-001: selects monitoring CRDs across namespaces", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("kind: Prometheus\n"))
+		Expect(manifest).To(ContainSubstring("name: fleet-spoke\n"))
+		Expect(manifest).To(ContainSubstring("serviceMonitorSelector: {}"))
+		Expect(manifest).To(ContainSubstring("serviceMonitorNamespaceSelector: {}"))
+		Expect(manifest).To(ContainSubstring("podMonitorSelector: {}"))
+		Expect(manifest).To(ContainSubstring("podMonitorNamespaceSelector: {}"))
+		Expect(manifest).To(ContainSubstring("probeSelector: {}"))
+		Expect(manifest).To(ContainSubstring("probeNamespaceSelector: {}"))
+		Expect(manifest).To(ContainSubstring("ruleSelector: {}"))
+		Expect(manifest).To(ContainSubstring("ruleNamespaceSelector: {}"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-002: preserves fleet identity and Thanos configuration", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("cluster: remote-cluster"))
+		Expect(manifest).To(ContainSubstring("image: " + ThanosImage))
+		Expect(manifest).To(ContainSubstring("name: prometheus-svc"))
+		Expect(manifest).To(ContainSubstring("nodePort: 30190"))
+		Expect(manifest).To(ContainSubstring("app: prometheus"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-003: routes alerts through the hub bridge", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("name: alertmanager-remote"))
+		Expect(manifest).To(ContainSubstring("ip: 10.0.0.2"))
+		Expect(manifest).To(ContainSubstring("port: 30193"))
+		Expect(manifest).To(ContainSubstring("port: web"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-003b: uses the existing hub Alertmanager Service", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "hub", "alertmanager-svc.monitoring.svc.cluster.local:9093")
+
+		Expect(manifest).To(ContainSubstring("name: alertmanager-svc"))
+		Expect(manifest).To(ContainSubstring("port: http"))
+		Expect(manifest).NotTo(ContainSubstring("name: alertmanager-remote"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-004: installs baseline kube-state-metrics discovery", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("name: kube-state-metrics"))
+		Expect(manifest).To(ContainSubstring("kind: ServiceMonitor"))
+		Expect(manifest).To(ContainSubstring("port: http-metrics"))
+	})
+
+	It("UT-INFRA-2380-001 [SI-4, ASVS-4.0.3-V4.1.1]: preserves native KSM labels", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+		serviceMonitor := findManifestDocument(manifest, "ServiceMonitor", "kube-state-metrics")
+
+		endpoints, found, err := unstructured.NestedSlice(serviceMonitor.Object, "spec", "endpoints")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(endpoints).NotTo(BeEmpty())
+
+		endpoint, ok := endpoints[0].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		honorLabels, found, err := unstructured.NestedBool(endpoint, "honorLabels")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(honorLabels).To(BeTrue(), "KSM namespace/pod labels must not be renamed to exported_*")
+	})
+
+	It("UT-INFRA-2380-002 [SI-4]: enables fleet scenario KSM metric families", func() {
+		manifest := buildKubeStateMetricsManifest("monitoring")
+		deployment := findManifestDocument(manifest, "Deployment", "kube-state-metrics")
+		containers, found, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(containers).NotTo(BeEmpty())
+
+		container, ok := containers[0].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		args, found, err := unstructured.NestedStringSlice(container, "args")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(args).To(ContainElement("--resources=pods,deployments,replicasets,statefulsets,daemonsets,nodes,horizontalpodautoscalers,persistentvolumeclaims,poddisruptionbudgets"))
+	})
+
+	It("UT-INFRA-2380-003 [AC-6, ASVS-4.0.3-V4.1.3]: grants KSM required read-only access", func() {
+		manifest := buildKubeStateMetricsManifest("monitoring")
+		clusterRole := findManifestDocument(manifest, "ClusterRole", "kube-state-metrics")
+		rules, found, err := unstructured.NestedSlice(clusterRole.Object, "rules")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+
+		expectReadOnlyRule := func(apiGroup, resource string) {
+			GinkgoHelper()
+			for _, rawRule := range rules {
+				rule, ok := rawRule.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				groups, _, _ := unstructured.NestedStringSlice(rule, "apiGroups")
+				resources, _, _ := unstructured.NestedStringSlice(rule, "resources")
+				if !containsString(groups, apiGroup) || !containsString(resources, resource) {
+					continue
+				}
+				verbs, _, _ := unstructured.NestedStringSlice(rule, "verbs")
+				Expect(verbs).To(ConsistOf("list", "watch"))
+				Expect(verbs).NotTo(ContainElement("create"))
+				Expect(verbs).NotTo(ContainElement("delete"))
+				return
+			}
+			Fail(fmt.Sprintf("missing read-only RBAC rule for apiGroup=%q resource=%q", apiGroup, resource))
+		}
+
+		expectReadOnlyRule("", "persistentvolumeclaims")
+		expectReadOnlyRule("autoscaling", "horizontalpodautoscalers")
+		expectReadOnlyRule("policy", "poddisruptionbudgets")
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-005: keeps the baseline crashloop rule as a PrometheusRule", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("kind: PrometheusRule"))
+		Expect(manifest).To(ContainSubstring("name: demo-alerts"))
+		Expect(manifest).To(ContainSubstring("cluster: remote-cluster"))
+	})
+
+	It("UT-INFRA-FLEET-018-003 [BR-INTEGRATION-054, BR-FLEET-054]: keeps the E2E-only interactive bridge fixture out of managed demo monitoring", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).NotTo(ContainSubstring("KAInteractiveFleetBridgeGrounding"))
+	})
+
+	It("UT-INFRA-FLEET-018-002 [BR-INTEGRATION-054, BR-FLEET-054]: grounds the interactive bridge target in the local Prometheus fixture", func() {
+		rule := fleetInteractiveBridgeGroundingRule()
+
+		Expect(rule).To(ContainSubstring("alert: KAInteractiveFleetBridgeGrounding"))
+		Expect(rule).To(ContainSubstring("expr: vector(1) > 0"))
+		Expect(rule).To(ContainSubstring("name: ka-interactive-fleet-target"))
+		Expect(rule).To(ContainSubstring("cluster: remote-cluster"))
+	})
+
+	It("UT-INFRA-FLEET-2394-001 [BR-FLEET-054]: renders valid hub and remote severity-triage rules", func() {
+		rule := fleetInteractiveBridgeGroundingRule()
+		Expect(rule).To(ContainSubstring("af-hub-cluster-triage-2394.yml: |"))
+
+		manifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: prometheus-rules\ndata:\n" + rule
+		var configMap map[string]interface{}
+		configMapDecoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
+		Expect(configMapDecoder.Decode(&configMap)).To(Succeed(), "fixture must render as valid ConfigMap YAML")
+
+		data, ok := configMap["data"].(map[string]interface{})
+		Expect(ok).To(BeTrue(), "ConfigMap data must be a YAML mapping")
+		hubRules, ok := data["af-hub-cluster-triage-2394.yml"].(string)
+		Expect(ok).To(BeTrue(), "hub triage fixture must be a ConfigMap string value")
+		Expect(hubRules).To(ContainSubstring("alert: AFHubClusterTriage2394"))
+		Expect(hubRules).To(ContainSubstring("severity: warning"))
+		Expect(hubRules).To(ContainSubstring("cluster: hub"))
+		Expect(hubRules).To(ContainSubstring("route_skip_gateway: \"true\""),
+			"AF triage fixtures must not create duplicate RRs through AlertManager")
+		Expect(hubRules).To(ContainSubstring("alert: AFRemoteClusterTriageCollision2394"))
+		Expect(hubRules).To(ContainSubstring("severity: critical"))
+		Expect(hubRules).To(ContainSubstring("cluster: remote-cluster"))
+		var parsedHubRules map[string]interface{}
+		hubRulesDecoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(hubRules), 4096)
+		Expect(hubRulesDecoder.Decode(&parsedHubRules)).To(Succeed(), "hub alert rules must be valid Prometheus rule YAML")
+	})
+
+	It("UT-INFRA-AF-2394-001 [BR-INTEGRATION-065]: local AF triage rules omit a synthetic Gateway cluster ID", func() {
+		localRules := renderSeverityTriageAlertRules("")
+		Expect(localRules).To(ContainSubstring("alert: HighCPU"))
+		Expect(localRules).NotTo(ContainSubstring("cluster:"), "the standalone AF lane has no Gateway cluster identity")
+
+		fleetHubRules := renderSeverityTriageAlertRules("hub")
+		Expect(fleetHubRules).To(ContainSubstring("cluster: \"hub\""),
+			"a caller with a real Gateway registration ID can still render attributed rules")
+		Expect(fleetHubRules).To(ContainSubstring("route_skip_gateway: \"true\""),
+			"AF severity evidence must not also enter the signal-ingestion Gateway path")
+		Expect(fleetHubRules).To(ContainSubstring("cluster: \"unregistered-cluster-2462\""),
+			"the fail-closed test requires a grounded alert for an unregistered identity")
+		Expect(fleetHubRules).To(ContainSubstring("alert: FleetSessionActiveGrounding"),
+			"Fleet AF concurrency fallback needs a hub-attributed grounding alert")
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-006: rejects an invalid Alertmanager bridge address", func() {
+		_, err := buildManagedPrometheusManifestChecked("monitoring", "remote-cluster", "not-an-address")
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("invalid Alertmanager bridge address"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-007: keeps infrastructure scrape configuration separate from scenario CRDs", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+
+		Expect(manifest).To(ContainSubstring("name: prometheus-additional-scrape-configs"))
+		Expect(manifest).To(ContainSubstring("job_name: kubelet-cadvisor"))
+		Expect(strings.Count(manifest, "kind: ServiceMonitor")).To(Equal(1))
+	})
+
+	It("UT-INFRA-FLEETDEMO-PROMETHEUS-008: renders valid multi-document YAML", func() {
+		manifest := buildManagedPrometheusManifest("monitoring", "remote-cluster", "10.0.0.2:30193")
+		decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
+		documents := 0
+
+		for {
+			var document map[string]interface{}
+			err := decoder.Decode(&document)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			Expect(err).NotTo(HaveOccurred())
+			if document != nil {
+				documents++
+			}
+		}
+
+		Expect(documents).To(BeNumerically(">=", 8))
+	})
+
+	It("UT-INFRA-DEMO-PROMETHEUS-001 [BR-PLATFORM-003]: renders a local operator-managed Prometheus without Thanos", func() {
+		manifest := buildLocalManagedPrometheusManifest("monitoring", "local", "alertmanager-svc.monitoring.svc.cluster.local:9093")
+
+		Expect(manifest).To(ContainSubstring("name: local\n"))
+		Expect(manifest).To(ContainSubstring("cluster: local"))
+		Expect(manifest).To(ContainSubstring("serviceMonitorNamespaceSelector: {}"))
+		Expect(manifest).To(ContainSubstring("name: alertmanager-svc"))
+		Expect(manifest).NotTo(ContainSubstring("thanos:"))
+		Expect(manifest).NotTo(ContainSubstring("image: " + ThanosImage))
+		Expect(manifest).NotTo(ContainSubstring("KAInteractiveFleetBridgeGrounding"))
+	})
+
+	It("UT-2492-MONITORING-001 [BR-PLATFORM-014]: renders CA-verified HTTPS for Prometheus and AlertManager", func() {
+		manifest, err := buildManagedPrometheusManifestWithOptionsChecked("monitoring", managedPrometheusOptions{
+			clusterLabel: "hub", alertManagerTarget: "alertmanager-svc.monitoring.svc.cluster.local:9093",
+			prometheusName: localPrometheusName, statefulSetName: localPrometheusStatefulSet, tlsEnabled: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manifest).To(ContainSubstring("name: monitoring-tls"))
+		Expect(manifest).To(ContainSubstring("name: monitoring-ca"))
+		Expect(manifest).To(ContainSubstring("scheme: https"))
+		Expect(manifest).To(ContainSubstring("serverName: localhost"))
+		Expect(manifest).NotTo(ContainSubstring("insecureSkipVerify: true"), "the monitoring endpoint contract must remain CA-verified")
+		decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
+		for {
+			var document map[string]interface{}
+			err := decoder.Decode(&document)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			Expect(err).NotTo(HaveOccurred(), "TLS monitoring manifest must be valid multi-document YAML")
+		}
+	})
+})
+
+func findManifestDocument(manifest, kind, name string) unstructured.Unstructured {
+	decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
+	for {
+		var document map[string]interface{}
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		Expect(err).NotTo(HaveOccurred())
+		if document == nil {
+			continue
+		}
+		if document["kind"] == kind {
+			metadata, found, metadataErr := unstructured.NestedMap(document, "metadata")
+			Expect(metadataErr).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			if metadata["name"] == name {
+				return unstructured.Unstructured{Object: document}
+			}
+		}
+	}
+	Fail(fmt.Sprintf("manifest document not found: kind=%q name=%q", kind, name))
+	return unstructured.Unstructured{}
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}

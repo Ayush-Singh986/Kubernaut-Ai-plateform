@@ -1,0 +1,342 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package effectivenessmonitor
+
+import (
+	"fmt"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+)
+
+// ============================================================================
+// EA CRD Helpers
+// ============================================================================
+
+// createEA creates an EffectivenessAssessment CRD in the controller namespace (ADR-057).
+// targetNamespace is where workload resources (Pods, etc.) live; Spec.SignalTarget and
+// Spec.RemediationTarget reference this namespace. The EA object itself is created in
+// controllerNamespace so the EM controller (which only watches kubernaut-system) can see it.
+func createEA(targetNamespace, name, correlationID string, opts ...eaOption) {
+	ea := &eav1.EffectivenessAssessment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: controllerNamespace,
+		},
+		Spec: eav1.EffectivenessAssessmentSpec{
+			CorrelationID:           correlationID,
+			RemediationRequestPhase: "Completed",
+			SignalTarget: eav1.TargetResource{
+				Kind:      "Pod",
+				Name:      "target-pod",
+				Namespace: targetNamespace,
+			},
+			RemediationTarget: eav1.TargetResource{
+				Kind:      "Pod",
+				Name:      "target-pod",
+				Namespace: targetNamespace,
+			},
+			Config: eav1.EAConfig{
+				StabilizationWindow: metav1.Duration{Duration: 10 * time.Second},
+			},
+		},
+	}
+
+	for _, opt := range opts {
+		opt(ea)
+	}
+
+	GinkgoHelper()
+	Expect(k8sClient.Create(ctx, ea)).To(Succeed(), "Failed to create EA %s/%s", controllerNamespace, name)
+}
+
+// eaOption is a functional option for customizing EA creation.
+type eaOption func(*eav1.EffectivenessAssessment)
+
+// createExpiredEA creates an EA and patches its status with an already-expired
+// ValidityDeadline via the status subresource. Kubernetes ignores status fields
+// on Create(), so the deadline must be set via a separate Status().Update().
+//
+// A long StabilizationWindow (10m) ensures the reconciler's first reconcile
+// requeues at the stabilization gate (Step 5) without reaching component
+// assessment (Step 7+). The validity checker evaluates expiration BEFORE
+// stabilization (validity.Check: "expired takes priority"), so once our
+// status patch sets an expired deadline, the next reconcile completes the EA
+// as expired with no component assessments — matching the ADR-EM-001 scenario:
+// "On first reconcile after recovery, EM checks validity window. If expired,
+// marks EA as expired without collecting any data."
+//
+// This mirrors the integration helper createExpiredEffectivenessAssessment
+// but adapts for E2E where the controller runs asynchronously in a pod.
+func createExpiredEA(targetNamespace, name, correlationID string) *eav1.EffectivenessAssessment {
+	ea := &eav1.EffectivenessAssessment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: controllerNamespace,
+		},
+		Spec: eav1.EffectivenessAssessmentSpec{
+			CorrelationID:           correlationID,
+			RemediationRequestPhase: "Completed",
+			SignalTarget: eav1.TargetResource{
+				Kind:      "Pod",
+				Name:      "target-pod",
+				Namespace: targetNamespace,
+			},
+			RemediationTarget: eav1.TargetResource{
+				Kind:      "Pod",
+				Name:      "target-pod",
+				Namespace: targetNamespace,
+			},
+			Config: eav1.EAConfig{
+				// Long stabilization ensures the reconciler's first reconcile
+				// requeues at the stabilization gate (Step 5) without reaching
+				// component assessment (Step 7+). Our status patch then triggers
+				// a new reconcile that hits the expired path (Step 4).
+				StabilizationWindow: metav1.Duration{Duration: 10 * time.Minute},
+			},
+		},
+	}
+
+	GinkgoHelper()
+	Expect(k8sClient.Create(ctx, ea)).To(Succeed(), "Failed to create EA %s/%s", controllerNamespace, name)
+
+	// Patch status with an expired ValidityDeadline via the status subresource.
+	// Use Eventually to handle potential resourceVersion conflicts if the
+	// reconciler updates status between our Get and Update.
+	Eventually(func(g Gomega) {
+		fetched := &eav1.EffectivenessAssessment{}
+		g.Expect(apiReader.Get(ctx, client.ObjectKey{
+			Namespace: controllerNamespace, Name: name,
+		}, fetched)).To(Succeed())
+
+		expired := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+		fetched.Status.ValidityDeadline = &expired
+		g.Expect(k8sClient.Status().Update(ctx, fetched)).To(Succeed())
+	}, 10*time.Second, 200*time.Millisecond).Should(Succeed(),
+		"Failed to patch expired ValidityDeadline on EA %s/%s", controllerNamespace, name)
+
+	GinkgoWriter.Printf("✅ Created expired EA: %s/%s (correlationID: %s)\n",
+		controllerNamespace, name, correlationID)
+	return ea
+}
+
+// NOTE: withPrometheusDisabled and withAlertManagerDisabled were removed.
+// Per ADR-EM-001 v1.4: PrometheusEnabled and AlertManagerEnabled are EM operational
+// config (effectivenessmonitor.Config.External), NOT per-EA spec fields. Component isolation in E2E
+// tests requires deploying the EM with a different ConfigMap, not per-EA options.
+
+// withTargetPod sets the target pod name in the EA spec.
+func withTargetPod(name string) eaOption {
+	return func(ea *eav1.EffectivenessAssessment) {
+		ea.Spec.SignalTarget.Name = name
+		ea.Spec.RemediationTarget.Name = name
+	}
+}
+
+// withStabilizationWindow overrides the EA's stabilization window duration.
+// Useful for drift tests that need the EM to stay in Stabilizing long enough
+// to inject a fake hash before the RequeueAfter fires.
+func withStabilizationWindow(d time.Duration) eaOption {
+	return func(ea *eav1.EffectivenessAssessment) {
+		ea.Spec.Config.StabilizationWindow = metav1.Duration{Duration: d}
+	}
+}
+
+// ============================================================================
+// Pod Helpers
+// ============================================================================
+
+// createTargetPod creates a simple target pod named "target-pod" in the
+// given namespace. The pod runs a sleep container and becomes Ready.
+func createTargetPod(namespace string) {
+	const name = "target-pod"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": "target-workload",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "workload",
+					Image:   infrastructure.EMTargetPodImage,
+					Command: []string{"sleep", "3600"},
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("10m"),
+							corev1.ResourceMemory: resource.MustParse("16Mi"),
+						},
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("50m"),
+							corev1.ResourceMemory: resource.MustParse("64Mi"),
+						},
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyAlways,
+		},
+	}
+
+	GinkgoHelper()
+	Expect(k8sClient.Create(ctx, pod)).To(Succeed(), "Failed to create target pod %s/%s", namespace, name)
+}
+
+// waitForPodReady waits until the "target-pod" pod in the given namespace
+// has a Ready condition.
+func waitForPodReady(namespace string) {
+	const name = "target-pod"
+	GinkgoHelper()
+	Eventually(func() bool {
+		pod := &corev1.Pod{}
+		if err := apiReader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, pod); err != nil {
+			return false
+		}
+		for _, c := range pod.Status.Conditions {
+			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+				return true
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue(), "Pod %s/%s did not become Ready", namespace, name)
+}
+
+// ============================================================================
+// EA Status Helpers
+// ============================================================================
+
+// waitForEAPhase waits until the EA reaches the specified phase.
+// EAs are always in controllerNamespace (ADR-057).
+func waitForEAPhase(name, expectedPhase string) *eav1.EffectivenessAssessment {
+	GinkgoHelper()
+	ea := &eav1.EffectivenessAssessment{}
+	Eventually(func() string {
+		if err := apiReader.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: name}, ea); err != nil {
+			return ""
+		}
+		return ea.Status.Phase
+	}, timeout, interval).Should(Equal(expectedPhase),
+		"EA %s/%s did not reach phase %s", controllerNamespace, name, expectedPhase)
+	return ea
+}
+
+// ============================================================================
+// Utility
+// ============================================================================
+
+// uniqueName generates a unique name for test resources using the Ginkgo process index.
+func uniqueName(prefix string) string {
+	return fmt.Sprintf("%s-p%d-%d", prefix, GinkgoParallelProcess(), time.Now().UnixNano()%100000)
+}
+
+// ============================================================================
+// DataStorage Audit Event Seeding
+// ============================================================================
+
+// seedWorkflowStartedEvent posts a workflowexecution.execution.started audit event
+// to DataStorage for the given correlation ID. This satisfies the EM's no_execution
+// guard (ADR-EM-001 Section 5) which checks DS for evidence that a workflow ran.
+//
+// In production the WE controller emits this event; in E2E EM tests (no WE controller)
+// the test must seed it explicitly.
+func seedWorkflowStartedEvent(correlationID string) {
+	GinkgoHelper()
+	event := &ogenclient.AuditEventRequest{
+		Version:        "1.0",
+		EventType:      "workflowexecution.execution.started",
+		EventTimestamp: time.Now().UTC(),
+		EventCategory:  ogenclient.AuditEventRequestEventCategoryWorkflowexecution,
+		EventAction:    "started",
+		EventOutcome:   ogenclient.AuditEventRequestEventOutcomeSuccess,
+		CorrelationID:  correlationID,
+		EventData: ogenclient.NewAuditEventRequestEventDataWorkflowexecutionExecutionStartedAuditEventRequestEventData(
+			ogenclient.WorkflowExecutionAuditPayload{
+				EventType:       ogenclient.WorkflowExecutionAuditPayloadEventTypeWorkflowexecutionExecutionStarted,
+				WorkflowID:      "e2e-test-workflow",
+				WorkflowVersion: "v1.0.0",
+				TargetResource:  "Pod/target-pod",
+				Phase:           ogenclient.WorkflowExecutionAuditPayloadPhaseRunning,
+				ContainerImage:  "registry.io/test/workflow:latest",
+				ExecutionName:   fmt.Sprintf("wfe-%s", correlationID),
+			},
+		),
+	}
+
+	resp, err := auditClient.CreateAuditEvent(ctx, event)
+	Expect(err).ToNot(HaveOccurred(), "Failed to seed workflowexecution.execution.started event for %s", correlationID)
+
+	switch resp.(type) {
+	case *ogenclient.AuditEventResponse:
+		GinkgoWriter.Printf("  Seeded execution.started event for correlationID=%s\n", correlationID)
+	default:
+		Fail(fmt.Sprintf("Unexpected DS response type %T when seeding audit event", resp))
+	}
+}
+
+// seedWorkflowCompletedEvent posts a workflowexecution.workflow.completed audit event
+// to DataStorage for the given correlation ID. This satisfies the EM's G4 scope
+// determination (#573) which checks DS for evidence that the workflow completed,
+// enabling the full assessment path (metrics + alerts + health + hash).
+//
+// In production the WE controller emits this event; in E2E EM tests (no WE controller)
+// the test must seed it explicitly when full assessment scope is required.
+func seedWorkflowCompletedEvent(correlationID string) {
+	GinkgoHelper()
+	event := &ogenclient.AuditEventRequest{
+		Version:        "1.0",
+		EventType:      "workflowexecution.workflow.completed",
+		EventTimestamp: time.Now().UTC(),
+		EventCategory:  ogenclient.AuditEventRequestEventCategoryWorkflowexecution,
+		EventAction:    "completed",
+		EventOutcome:   ogenclient.AuditEventRequestEventOutcomeSuccess,
+		CorrelationID:  correlationID,
+		EventData: ogenclient.NewAuditEventRequestEventDataWorkflowexecutionWorkflowCompletedAuditEventRequestEventData(
+			ogenclient.WorkflowExecutionAuditPayload{
+				EventType:       ogenclient.WorkflowExecutionAuditPayloadEventTypeWorkflowexecutionWorkflowCompleted,
+				WorkflowID:      "e2e-test-workflow",
+				WorkflowVersion: "v1.0.0",
+				TargetResource:  "Pod/target-pod",
+				Phase:           ogenclient.WorkflowExecutionAuditPayloadPhaseCompleted,
+				ContainerImage:  "registry.io/test/workflow:latest",
+				ExecutionName:   fmt.Sprintf("wfe-%s", correlationID),
+			},
+		),
+	}
+
+	resp, err := auditClient.CreateAuditEvent(ctx, event)
+	Expect(err).ToNot(HaveOccurred(), "Failed to seed workflowexecution.workflow.completed event for %s", correlationID)
+
+	switch resp.(type) {
+	case *ogenclient.AuditEventResponse:
+		GinkgoWriter.Printf("  Seeded workflow.completed event for correlationID=%s\n", correlationID)
+	default:
+		Fail(fmt.Sprintf("Unexpected DS response type %T when seeding audit event", resp))
+	}
+}

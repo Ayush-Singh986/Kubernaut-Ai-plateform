@@ -1,0 +1,1696 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package fullpipeline
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sretry "k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	sigyaml "sigs.k8s.io/yaml"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+	crdvalidators "github.com/jordigilh/kubernaut/test/shared/validators"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	oomkill = "oomkill"
+)
+
+// BR-E2E-001: Full Remediation Lifecycle E2E Test
+// Validates the complete pipeline from K8s Event to Notification delivery.
+//
+// Pipeline:
+//
+//	OOMKill Event → Gateway → RemediationRequest → RO → SP → AA → KA(MockLLM) → WE(Job) → Notification
+//
+// This test uses the memory-eater pod to generate a real OOMKill event.
+// The kubernetes-event-exporter watches for this event and POSTs to Gateway.
+// From there, the full controller pipeline processes the signal.
+var _ = Describe("Full Remediation Lifecycle [BR-E2E-001]", func() {
+
+	var (
+		testNamespace   string // K8s event test namespace (fp-e2e-*)
+		testNamespaceAM string // AlertManager test namespace (fp-am-*)
+		testCtx         context.Context
+		testCancel      context.CancelFunc
+	)
+
+	BeforeEach(func() {
+		testCtx, testCancel = context.WithTimeout(ctx, 10*time.Minute)
+
+		// Workflows are seeded once in SynchronizedBeforeSuite; workflowUUIDs is suite-level.
+		Expect(workflowUUIDs).To(HaveKey("crashloop-config-fix-v1:production"))
+		Expect(workflowUUIDs).To(HaveKey("oomkill-increase-memory-v1:production"))
+	})
+
+	AfterEach(func() {
+		if testNamespace != "" {
+			By("Cleaning up K8s event test namespace")
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+			_ = k8sClient.Delete(ctx, ns)
+		}
+		if testNamespaceAM != "" {
+			By("Cleaning up AlertManager test namespace")
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespaceAM}}
+			_ = k8sClient.Delete(ctx, ns)
+		}
+		testCancel()
+	})
+
+	It("should produce complete status records across all pipeline stages for downstream consumers [E2E-FP-118-001]", func() {
+		// ================================================================
+		// Step 1: Create a managed namespace
+		// ================================================================
+		By("Step 1: Creating managed test namespace")
+		testNamespace = fmt.Sprintf("fp-e2e-%d", time.Now().Unix())
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: testNamespace,
+				Labels: map[string]string{
+					"kubernaut.ai/managed":     "true",
+					"kubernaut.ai/environment": "staging",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+		GinkgoWriter.Printf("  ✅ Namespace created: %s\n", testNamespace)
+
+		// ================================================================
+		// Step 2: Deploy memory-eater to trigger OOMKill
+		// ================================================================
+		By("Step 2: Deploying memory-eater pod (will trigger OOMKill)")
+		err := infrastructure.DeployMemoryEater(testCtx, testNamespace, kubeconfigPath, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred(), "Failed to deploy memory-eater")
+
+		// Wait for OOMKill event to occur
+		By("Step 2b: Waiting for OOMKill event...")
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := apiReader.List(ctx, pods, client.InNamespace(testNamespace),
+				client.MatchingLabels{"app": "memory-eater"}); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				for _, cs := range pod.Status.ContainerStatuses {
+					// Check last terminated state for OOMKilled reason
+					if cs.LastTerminationState.Terminated != nil &&
+						cs.LastTerminationState.Terminated.Reason == oomkilled {
+						GinkgoWriter.Printf("  ✅ OOMKill detected: restarts=%d\n", cs.RestartCount)
+						return true
+					}
+					// Also check current terminated state
+					if cs.State.Terminated != nil &&
+						cs.State.Terminated.Reason == oomkilled {
+						GinkgoWriter.Println("  ✅ OOMKill terminated state detected")
+						return true
+					}
+					// Fallback: CrashLoopBackOff after restarts
+					if cs.RestartCount > 0 && cs.State.Waiting != nil &&
+						cs.State.Waiting.Reason == crashloopbackoff {
+						GinkgoWriter.Println("  ✅ CrashLoopBackOff detected (OOMKill)")
+						return true
+					}
+				}
+			}
+			return false
+		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "memory-eater should OOMKill")
+
+		// ================================================================
+		// Step 3: Verify RemediationRequest created by Gateway
+		// ================================================================
+		// NOTE: Scale-to-zero happens AFTER the RR is found (below). The Gateway
+		// needs the pod to continue restarting so it emits BackOff/OOMKill events
+		// that trigger RR creation. Scaling too early prevents the event.
+		By("Step 3: Waiting for RemediationRequest to be created by Gateway")
+		var remediationRequest *remediationv1.RemediationRequest
+		Eventually(func() bool {
+			rrList := &remediationv1.RemediationRequestList{}
+			// ADR-057: Gateway creates RR in controller namespace (kubernaut-system)
+			if err := apiReader.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+				return false
+			}
+			for i := range rrList.Items {
+				rr := &rrList.Items[i]
+				if rr.Spec.TargetResource.Namespace != testNamespace {
+					continue
+				}
+				sig := strings.ToLower(rr.Spec.SignalName)
+				if sig == backoff || sig == oomkilledLower || sig == oomkill ||
+					sig == "memoryexceedslimit" ||
+					strings.Contains(sig, "oom") || strings.Contains(sig, "memory") {
+					remediationRequest = rr
+					GinkgoWriter.Printf("  ✅ RemediationRequest found: %s (signal: %s)\n", rr.Name, rr.Spec.SignalName)
+					return true
+				}
+				GinkgoWriter.Printf("  ⏳ Skipping RR %s with signal %q (waiting for OOMKill/BackOff)\n", rr.Name, rr.Spec.SignalName)
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(), "RemediationRequest should be created by Gateway")
+
+		// Scale deployment to 0 AFTER the first RR is found. This prevents
+		// subsequent restarts from generating additional RRs that could trigger
+		// the RO's IneffectiveChain detection (threshold: 3 ineffective RRs for
+		// the same target), which would block WorkflowExecution creation.
+		Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+			dep := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: "memory-eater", Namespace: testNamespace}, dep); err != nil {
+				return err
+			}
+			zero := int32(0)
+			dep.Spec.Replicas = &zero
+			return k8sClient.Update(ctx, dep)
+		})).To(Succeed())
+		GinkgoWriter.Println("  ✅ Scaled memory-eater to 0 replicas (prevent RR storm)")
+
+		// ================================================================
+		// Step 4: Verify SignalProcessing enriched the signal
+		// ================================================================
+		By("Step 4: Waiting for SignalProcessing to complete")
+		Eventually(func() string {
+			spList := &signalprocessingv1.SignalProcessingList{}
+			if err := apiReader.List(ctx, spList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, sp := range spList.Items {
+				if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					GinkgoWriter.Printf("  SP %s phase: %s\n", sp.Name, sp.Status.Phase)
+					return string(sp.Status.Phase)
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("Completed"),
+			"SignalProcessing should reach Completed phase")
+
+		// BR-SP-051, BR-SP-070: Verify environment and priority are populated
+		By("Step 4b: Verifying SP environment classification and priority assignment are populated [BR-SP-051, BR-SP-070]")
+		{
+			spList := &signalprocessingv1.SignalProcessingList{}
+			Expect(apiReader.List(ctx, spList, client.InNamespace(namespace))).To(Succeed())
+			for i := range spList.Items {
+				sp := &spList.Items[i]
+				if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					Expect(sp.Status.EnvironmentClassification).ToNot(BeNil(),
+						"SP EnvironmentClassification must be populated (even when no env label)")
+					Expect(string(sp.Status.EnvironmentClassification.Environment)).ToNot(BeEmpty(),
+						"SP EnvironmentClassification.Environment must not be empty")
+					GinkgoWriter.Printf("  ✅ SP environment: %s (source: %s)\n",
+						sp.Status.EnvironmentClassification.Environment, sp.Status.EnvironmentClassification.Source)
+					Expect(string(sp.Status.EnvironmentClassification.Environment)).To(Equal("Staging"),
+						"E2E-FP-118-001 workload namespace must align with the staging workflow catalog context")
+
+					Expect(sp.Status.PriorityAssignment).ToNot(BeNil(),
+						"SP PriorityAssignment must be populated")
+					Expect(string(sp.Status.PriorityAssignment.Priority)).To(BeElementOf("P0", "P1", "P2", "P3"),
+						"SP PriorityAssignment.Priority must be a valid priority level")
+					GinkgoWriter.Printf("  ✅ SP priority: %s (source: %s)\n",
+						sp.Status.PriorityAssignment.Priority, sp.Status.PriorityAssignment.Source)
+
+					Expect(sp.Status.GetSignalClassification().Severity).ToNot(BeEmpty(),
+						"SP Severity must be populated (normalized by Rego)")
+					GinkgoWriter.Printf("  ✅ SP severity: %s\n", sp.Status.GetSignalClassification().Severity)
+					break
+				}
+			}
+		}
+
+		// ================================================================
+		// Step 5: Verify AIAnalysis created and completed
+		// ================================================================
+		By("Step 5: Waiting for AIAnalysis to complete")
+		var aaName string
+		Eventually(func() string {
+			aaList := &aianalysisv1.AIAnalysisList{}
+			if err := apiReader.List(ctx, aaList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, aa := range aaList.Items {
+				if aa.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					aaName = aa.Name
+					GinkgoWriter.Printf("  AA %s phase: %s\n", aa.Name, aa.Status.Phase)
+					return aa.Status.Phase
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("Completed"),
+			"AIAnalysis should reach Completed phase")
+
+		// Verify AIAnalysis selected a workflow with job engine
+		By("Step 5b: Verifying AIAnalysis selected workflow with job engine")
+		aa := &aianalysisv1.AIAnalysis{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{Name: aaName, Namespace: namespace}, aa)).To(Succeed())
+		Expect(aa.Status.GetRCAResult().SelectedWorkflow).ToNot(BeNil(), "AIAnalysis should have selectedWorkflow")
+		Expect(aa.Status.RCAResult.SelectedWorkflow.ExecutionEngine).To(Equal("job"),
+			"AIAnalysis should select job execution engine")
+
+		// Verify AA signal context has environment, priority, severity, signalMode from SP
+		By("Step 5c: Verifying AA signal context contains full SP-derived fields")
+		keSC := aa.Spec.AnalysisRequest.SignalContext
+		Expect(keSC.Environment).ToNot(BeEmpty(),
+			"AA SignalContext.Environment must be populated (propagated from SP EnvironmentClassification)")
+		Expect(keSC.BusinessPriority).ToNot(BeEmpty(),
+			"AA SignalContext.BusinessPriority must be populated (propagated from SP PriorityAssignment)")
+		Expect(keSC.Severity).ToNot(BeEmpty(),
+			"AA SignalContext.Severity must be populated (normalized by SP)")
+		Expect(keSC.SignalMode).To(BeElementOf("reactive", "proactive"),
+			"AA SignalContext.SignalMode must be populated (BR-AI-084)")
+		GinkgoWriter.Printf("  ✅ AA signal context: env=%s, priority=%s, severity=%s, mode=%s\n",
+			keSC.Environment, keSC.BusinessPriority, keSC.Severity, keSC.SignalMode)
+
+		// Verify EnrichmentResults propagated from SP (BR-ORCH-025)
+		By("Step 5d: Verifying AA EnrichmentResults contains KubernetesContext and BusinessClassification from SP")
+		keER := keSC.EnrichmentResults
+		Expect(keER.KubernetesContext).ToNot(BeNil(),
+			"AA EnrichmentResults.KubernetesContext must be propagated from SP")
+		Expect(keER.BusinessClassification).ToNot(BeNil(),
+			"AA EnrichmentResults.BusinessClassification must be propagated from SP (BR-SP-080, BR-SP-081)")
+		GinkgoWriter.Printf("  ✅ AA enrichment: bizUnit=%s, criticality=%s, customLabels=%d keys\n",
+			keER.BusinessClassification.BusinessUnit, keER.BusinessClassification.Criticality,
+			len(keER.KubernetesContext.CustomLabels))
+
+		// ================================================================
+		// Step 6: Verify WorkflowExecution created with executionEngine: job
+		// ================================================================
+		By("Step 6: Waiting for WorkflowExecution to be created")
+		var weName string
+		Eventually(func() string {
+			weList := &workflowexecutionv1.WorkflowExecutionList{}
+			if err := apiReader.List(ctx, weList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, we := range weList.Items {
+				if we.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					weName = we.Name
+					GinkgoWriter.Printf("  WE %s phase: %s, engine: %s\n",
+						we.Name, we.Status.Phase, we.Spec.WorkflowRef.ExecutionEngine)
+					return we.Spec.WorkflowRef.ExecutionEngine
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("job"),
+			"WorkflowExecution should use job execution engine")
+
+		// ================================================================
+		// Step 7: Verify K8s Job ran and completed
+		// ================================================================
+		By("Step 7: Waiting for K8s Job to complete")
+		Eventually(func(g Gomega) {
+			// Early-exit: if WE already reached Failed, the Job won't recover.
+			// Fail fast with diagnostic info instead of waiting for TTL garbage collection.
+			we := &workflowexecutionv1.WorkflowExecution{}
+			if getErr := apiReader.Get(ctx, client.ObjectKey{Name: weName, Namespace: namespace}, we); getErr == nil {
+				g.Expect(we.Status.Phase).NotTo(Equal("Failed"),
+					fmt.Sprintf("WorkflowExecution %s reached Failed phase (reason: %s) — Job will not recover", weName, we.Status.FailureReason))
+			}
+
+			jobList := &batchv1.JobList{}
+			g.Expect(apiReader.List(ctx, jobList,
+				client.InNamespace("kubernaut-workflows"),
+				client.MatchingLabels{"kubernaut.ai/workflow-execution": weName})).To(Succeed())
+			g.Expect(jobList.Items).NotTo(BeEmpty(), "No Jobs found for WorkflowExecution %s", weName)
+
+			job := jobList.Items[0]
+			g.Expect(job.Status.Failed).To(BeZero(),
+				fmt.Sprintf("Job %s has %d failed pod(s) — check pod logs for details", job.Name, job.Status.Failed))
+			g.Expect(job.Status.Succeeded).To(BeNumerically(">", 0),
+				fmt.Sprintf("Job %s has not succeeded yet (active=%d)", job.Name, job.Status.Active))
+		}, timeout, interval).Should(Succeed(), "K8s Job should complete successfully")
+
+		// ================================================================
+		// Step 7b: Scale memory-eater back up now that the real fix (memory
+		// limit patch) has been applied, and verify it recovers.
+		//
+		// Issue #1542 follow-up: Step 3 scaled memory-eater to 0 replicas to
+		// prevent an RR storm while the pipeline ran. oomkill-increase-memory-v1
+		// is a real fix that patches the Deployment's memory limit but does not
+		// touch replicas (production workloads are never scaled to 0 by the
+		// remediation itself). With 0 replicas, EM's health check finds no pods
+		// and reports "target resource not found"/"0/1 pods ready" regardless
+		// of whether the fix was applied correctly. Scale back up as soon as
+		// the Job succeeds (before waiting on WE's phase transition, which
+		// races EM's fixed-duration stabilization window that starts the
+		// instant WE completes) to give the new pod the maximum possible head
+		// start to become Ready before EM's one-shot health check fires.
+		// ================================================================
+		By("Step 7b: Scaling memory-eater back up and verifying recovery under the new memory limit")
+		Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+			dep := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: "memory-eater", Namespace: testNamespace}, dep); err != nil {
+				return err
+			}
+			one := int32(1)
+			dep.Spec.Replicas = &one
+			return k8sClient.Update(ctx, dep)
+		})).To(Succeed())
+		GinkgoWriter.Println("  ✅ Scaled memory-eater back to 1 replica (real fix applied, safe to resume)")
+
+		Eventually(func(g Gomega) {
+			pods := &corev1.PodList{}
+			g.Expect(apiReader.List(ctx, pods, client.InNamespace(testNamespace),
+				client.MatchingLabels{"app": "memory-eater"})).To(Succeed())
+			g.Expect(pods.Items).NotTo(BeEmpty(), "memory-eater pod should exist after scale-up")
+			for _, pod := range pods.Items {
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning),
+					"pod %s must be Running after the memory limit fix", pod.Name)
+				// Check container Ready (not just pod Phase) to match exactly what
+				// EM's health scorer inspects (ComputePodHealthStats), so this wait
+				// doesn't return "recovered" before EM would also consider it so.
+				ready := false
+				for _, cs := range pod.Status.ContainerStatuses {
+					g.Expect(cs.State.Waiting).To(Or(BeNil(), Not(HaveField("Reason", Equal(crashloopbackoff)))),
+						"pod %s must not remain in CrashLoopBackOff after the memory limit fix", pod.Name)
+					if cs.Ready {
+						ready = true
+					}
+				}
+				g.Expect(ready).To(BeTrue(), "pod %s container must be Ready after the memory limit fix", pod.Name)
+			}
+		}, timeout, interval).Should(Succeed(), "memory-eater should recover to steady Running state under the new memory limit")
+
+		// ================================================================
+		// Step 8: Verify WorkflowExecution reached Completed phase
+		// ================================================================
+		By("Step 8: Waiting for WorkflowExecution to complete")
+		Eventually(func() string {
+			we := &workflowexecutionv1.WorkflowExecution{}
+			if err := apiReader.Get(ctx, client.ObjectKey{
+				Name: weName, Namespace: namespace,
+			}, we); err != nil {
+				return ""
+			}
+			return we.Status.Phase
+		}, timeout, interval).Should(Equal("Completed"),
+			"WorkflowExecution should reach Completed phase")
+		fpAssertSelectionAudit2496(remediationRequest.Name, aa.Status.GetRCAResult().SelectedWorkflow)
+
+		// ================================================================
+		// Step 9: Verify NotificationRequest created (BR-ORCH-045: completion)
+		// ================================================================
+		By("Step 9: Waiting for completion NotificationRequest")
+		pollCount := 0
+		Eventually(func() bool {
+			pollCount++
+			nrList := &notificationv1.NotificationRequestList{}
+			if listErr := apiReader.List(ctx, nrList, client.InNamespace(namespace)); listErr != nil {
+				GinkgoWriter.Printf("  [Step 9 poll %d] List NR error: %v\n", pollCount, listErr)
+				return false
+			}
+			// Diagnostic: every 10 polls, dump RR phase and all NRs
+			if pollCount%10 == 1 {
+				rr := &remediationv1.RemediationRequest{}
+				if getErr := apiReader.Get(ctx, client.ObjectKey{Name: remediationRequest.Name, Namespace: namespace}, rr); getErr == nil {
+					GinkgoWriter.Printf("  [Step 9 poll %d] RR %s phase=%s outcome=%s\n", pollCount, rr.Name, rr.Status.OverallPhase, rr.Status.EnsureCompletionStatus().Outcome)
+				} else {
+					GinkgoWriter.Printf("  [Step 9 poll %d] RR Get error: %v\n", pollCount, getErr)
+				}
+				GinkgoWriter.Printf("  [Step 9 poll %d] Found %d NotificationRequests in %s\n", pollCount, len(nrList.Items), namespace)
+				for _, nr := range nrList.Items {
+					refName := "<nil>"
+					if nr.Spec.RemediationRequestRef != nil {
+						refName = nr.Spec.RemediationRequestRef.Name
+					}
+					GinkgoWriter.Printf("    NR %s type=%s ref=%s\n", nr.Name, nr.Spec.Type, refName)
+				}
+			}
+			for _, nr := range nrList.Items {
+				if nr.Spec.RemediationRequestRef != nil &&
+					nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+					nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+					GinkgoWriter.Printf("  ✅ Completion NotificationRequest: %s\n", nr.Name)
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(),
+			"Completion NotificationRequest should be created (BR-ORCH-045)")
+
+		// ================================================================
+		// Step 10: Verify RemediationRequest reached Completed phase
+		// ================================================================
+		By("Step 10: Verifying RemediationRequest completed")
+		Eventually(func() string {
+			rr := &remediationv1.RemediationRequest{}
+			if err := apiReader.Get(ctx, client.ObjectKey{
+				Name: remediationRequest.Name, Namespace: namespace,
+			}, rr); err != nil {
+				return ""
+			}
+			return string(rr.Status.OverallPhase)
+		}, timeout, interval).Should(Equal("Completed"),
+			"RemediationRequest should reach Completed phase")
+
+		// ================================================================
+		// Step 11: Verify audit trail completeness (BR-AUDIT-005)
+		// ================================================================
+		By("Step 11: Verifying audit trail completeness and non-duplication")
+
+		// The correlation_id for all audit events is the RR name
+		correlationID := remediationRequest.Name
+
+		// Expected audit event types from a successful full remediation lifecycle.
+		// Derived from BR-AUDIT-005, ADR-034, and each service's audit implementation.
+		// Total: 13 exactlyOnce + 22 atLeastOnce = 35 minimum events.
+		// #1111: Promoted 5 events (1 exactlyOnce, 4 atLeastOnce). 5 events
+		// deferred to MAY pending mock LLM tool-call scenario support.
+		//
+		// === Events that MUST appear exactly once (13) ===
+		// These are lifecycle boundary events — one per RR by definition.
+		exactlyOnceEvents := []string{
+			// Gateway: signal ingestion and CRD creation
+			"gateway.signal.received", // pkg/gateway/server.go: emitSignalReceivedAudit
+			"gateway.crd.created",     // pkg/gateway/server.go: emitCRDCreatedAudit
+			// Remediation Orchestrator: lifecycle boundaries
+			"orchestrator.lifecycle.created",                // pkg/remediationorchestrator/audit: emitRemediationCreatedAudit
+			"orchestrator.lifecycle.started",                // pkg/remediationorchestrator/audit: emitLifecycleStartedAudit
+			"orchestrator.lifecycle.verifying_started",      // #280: emitVerifyingStartedAudit (Executing → Verifying)
+			"orchestrator.lifecycle.verification_completed", // #280: emitVerificationCompletedAudit (EA terminal → Completed)
+			"orchestrator.lifecycle.completed",              // pkg/remediationorchestrator/audit: emitCompletionAudit
+			// Effectiveness Monitor: assessment lifecycle + component events
+			// The RO creates an EA CRD when RR enters Verifying (#280, ADR-EM-001). The EM waits
+			// for the stabilization window (30s default), then runs all 4 component
+			// checks in a single reconcile, emitting one audit event per component.
+			// Each event is guarded by its component flag (emitted exactly once per EA).
+			"effectiveness.assessment.scheduled", // pkg/effectivenessmonitor/audit: RecordAssessmentScheduled
+			"effectiveness.health.assessed",      // pkg/effectivenessmonitor/audit: RecordHealthAssessed
+			"effectiveness.hash.computed",        // pkg/effectivenessmonitor/audit: RecordHashComputed
+			"effectiveness.alert.assessed",       // pkg/effectivenessmonitor/audit: RecordAlertAssessed
+			"effectiveness.metrics.assessed",     // pkg/effectivenessmonitor/audit: RecordMetricsAssessed (cAdvisor data from Prometheus)
+			"effectiveness.assessment.completed", // pkg/effectivenessmonitor/audit: RecordAssessmentCompleted
+		}
+
+		// === Events that MUST appear at least once (27) ===
+		// These fire during processing; some may repeat (phase transitions, retries).
+		atLeastOnceEvents := []string{
+			// Remediation Orchestrator: EA creation and phase transitions
+			"orchestrator.ea.created",             // pkg/remediationorchestrator/audit: emitEACreatedAudit — may repeat on reconcile retry
+			"orchestrator.lifecycle.transitioned", // pkg/remediationorchestrator/audit: emitPhaseTransitionAudit
+			// Signal Processing
+			"signalprocessing.enrichment.completed",    // pkg/signalprocessing/audit: RecordEnrichmentComplete
+			"signalprocessing.classification.decision", // pkg/signalprocessing/audit: RecordClassificationDecision
+			"signalprocessing.signal.processed",        // pkg/signalprocessing/audit: RecordSignalProcessed
+			"signalprocessing.phase.transition",        // pkg/signalprocessing/audit: RecordPhaseTransition
+			// Signal Processing: business classification (#1111)
+			"signalprocessing.business.classified", // pkg/signalprocessing/audit: RecordBusinessClassified — promoted from MAY
+			// AI Analysis
+			"aianalysis.phase.transition",   // pkg/aianalysis/audit: RecordPhaseTransition
+			"aianalysis.aiagent.call",       // pkg/aianalysis/audit: RecordAIAgentCall
+			"aianalysis.rego.evaluation",    // pkg/aianalysis/audit: RecordRegoEvaluation
+			"aianalysis.analysis.completed", // pkg/aianalysis/audit: RecordAnalysisComplete
+			// AI Analysis: approval decision (#1111)
+			"aianalysis.approval.decision", // pkg/aianalysis/audit: RecordApprovalDecision — promoted from MAY
+			// KA (event_category: "aiagent" per ADR-034 v1.2)
+			string(ogenclient.LLMRequestPayloadAuditEventEventData),         // kubernaut-agent/src/audit/events.py: create_llm_request_event
+			string(ogenclient.LLMResponsePayloadAuditEventEventData),        // kubernaut-agent/src/audit/events.py: create_llm_response_event
+			string(ogenclient.WorkflowValidationPayloadAuditEventEventData), // kubernaut-agent/src/audit/events.py: create_validation_attempt_event
+			string(ogenclient.AIAgentResponsePayloadAuditEventEventData),    // kubernaut-agent/src/audit/events.py: create_aiagent_response_complete_event
+			// KA: RCA (#1111)
+			string(ogenclient.AIAgentRCACompletePayloadAuditEventEventData), // aiagent.rca.complete — correlation_id=RR.Name confirmed
+			// Workflow Execution
+			"workflowexecution.selection.completed", // pkg/workflowexecution/audit: RecordWorkflowSelectionCompleted
+			"workflowexecution.execution.started",   // pkg/workflowexecution/audit: RecordExecutionWorkflowStarted
+			"workflowexecution.workflow.completed",  // pkg/workflowexecution/audit: RecordWorkflowCompleted
+			// Notification
+			"notification.message.sent", // pkg/notification/audit: CreateMessageSentEvent
+			// Remediation Orchestrator: workflow creation (#1111)
+			"remediation.workflow_created", // pkg/remediationorchestrator/audit: emitWorkflowCreatedAudit — correlation_id=RR.Name confirmed
+		}
+
+		// === Events that MAY appear (non-deterministic) ===
+		// These depend on LLM behavior or conditional logic.
+		//
+		// Events NOT promotable to FP due to correlation_id pattern mismatch:
+		// - "aiagent.enrichment.completed" — uses ai-rr-* (AIAnalysis CR name), not rr-* (RR name). Cover at KA E2E tier.
+		// - "remediationworkflow.admitted.create/update" — uses admission UID. Cover at Auth Webhook IT tier.
+		//
+		// Events deferred to MAY until mock LLM produces tool_call responses in E2E (#1111):
+		// - "aiagent.llm.tool_call" — requires mock LLM to issue tool_calls (not text-only response)
+		// - "workflow.catalog.actions_listed" — emitted by DS only when KA invokes discovery tools
+		// - "workflow.catalog.workflows_listed" — same as above
+		// - "workflow.catalog.workflow_retrieved" — same as above
+		// - "workflow.catalog.selection_validated" — same as above
+		// These are covered by KA E2E tests once mock LLM tool-call scenarios are enabled.
+
+		allExpected := append(exactlyOnceEvents, atLeastOnceEvents...)
+
+		// Query all audit events for this remediation request.
+		// The Eventually checks that ALL required event types are present (not just a count
+		// threshold), preventing a race where late-arriving events (e.g., notification.message.sent)
+		// are missed because the count was already satisfied by earlier events.
+		var allAuditEvents []ogenclient.AuditEvent
+		eventTypeCounts := map[string]int{}
+		Eventually(func() []string {
+			resp, err := dataStorageClient.QueryAuditEvents(testCtx, ogenclient.QueryAuditEventsParams{
+				CorrelationID: ogenclient.NewOptString(correlationID),
+				Limit:         ogenclient.NewOptInt(200),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("  [Step 11] Query error: %v\n", err)
+				return allExpected // return full list so matcher keeps polling
+			}
+			allAuditEvents = resp.Data
+
+			// Rebuild event type counts on each poll
+			eventTypeCounts = map[string]int{}
+			for _, event := range allAuditEvents {
+				eventTypeCounts[event.EventType]++
+			}
+
+			// Determine which required event types are still missing
+			var missing []string
+			for _, eventType := range allExpected {
+				if eventTypeCounts[eventType] == 0 {
+					missing = append(missing, eventType)
+				}
+			}
+			GinkgoWriter.Printf("  [Step 11] Found %d audit events (%d unique types), %d required types still missing\n",
+				len(allAuditEvents), len(eventTypeCounts), len(missing))
+			return missing
+		}, 240*time.Second, 2*time.Second).Should(BeEmpty(),
+			"All required audit event types must be present in the trail")
+
+		// Log all events for debugging
+		for _, event := range allAuditEvents {
+			GinkgoWriter.Printf("  Audit: type=%s category=%s outcome=%s ts=%s\n",
+				event.EventType, event.EventCategory, event.EventOutcome,
+				event.EventTimestamp.Format(time.RFC3339))
+		}
+
+		// Verify exactly-once events
+		for _, eventType := range exactlyOnceEvents {
+			Expect(eventTypeCounts).To(HaveKey(eventType),
+				"Audit trail must contain exactly-once event: %s", eventType)
+			Expect(eventTypeCounts[eventType]).To(Equal(1),
+				"Event %s must appear exactly once, but found %d", eventType, eventTypeCounts[eventType])
+		}
+
+		// Verify at-least-once events
+		for _, eventType := range atLeastOnceEvents {
+			Expect(eventTypeCounts).To(HaveKey(eventType),
+				"Audit trail must contain at-least-once event: %s", eventType)
+			Expect(eventTypeCounts[eventType]).To(BeNumerically(">=", 1),
+				"Event %s must appear at least once, but found %d", eventType, eventTypeCounts[eventType])
+		}
+
+		// Total event count validation: the audit trail must contain at least
+		// len(exactlyOnceEvents) + len(atLeastOnceEvents) events. At-least-once
+		// events may repeat (phase transitions, retries), and optional events
+		// (tool calls, business classification) may also be present.
+		expectedMinTotal := len(exactlyOnceEvents) + len(atLeastOnceEvents)
+		Expect(len(allAuditEvents)).To(BeNumerically(">=", expectedMinTotal),
+			"Audit trail must contain at least %d events (got %d): %d exactly-once + %d at-least-once",
+			expectedMinTotal, len(allAuditEvents), len(exactlyOnceEvents), len(atLeastOnceEvents))
+
+		// #1661 Change 3 introduced event_data.action_type on
+		// workflowexecution.execution.started, resolved via
+		// resolveWorkflowCatalog's DataStorage round-trip. Change 11e (GREEN:
+		// 898fe8574) removed that DS round-trip entirely, and ActionType was
+		// left off the Change 11c/11d WorkflowRef snapshot migration list --
+		// an oversight rather than a deliberate omission, since
+		// AIAnalysis.Status.SelectedWorkflow.ActionType (propagated from KA's
+		// three-step discovery protocol) is available at the exact same
+		// CRD-creation time as its ExecutionEngine/ServiceAccountName
+		// siblings. Change 11f folded ActionType into WorkflowRef alongside
+		// them, reading it straight from that immutable Spec snapshot (no
+		// Status mirror) -- but that only fixed the *read* site: KA itself
+		// never populated action_type/workflow_name in its selected_workflow
+		// wire response, so both stayed empty end-to-end regardless (this
+		// assertion was RED on CI until the fix landed). Change 12 closed
+		// the actual gap catalog-authoritatively in KA (enrichFromCatalog /
+		// applySelectedWorkflow), and deduplicated the two CRDs' snapshot
+		// field lists into one shared sharedtypes.WorkflowSnapshot type
+		// (DD-WORKFLOW-018) so this class of "field added to one CRD but not
+		// its sibling" drift can't recur.
+		for _, event := range allAuditEvents {
+			if event.EventType != "workflowexecution.execution.started" {
+				continue
+			}
+			payload, ok := event.EventData.GetWorkflowExecutionAuditPayload()
+			Expect(ok).To(BeTrue(), "workflowexecution.execution.started event_data should decode as WorkflowExecutionAuditPayload")
+			Expect(payload.ActionType.IsSet()).To(BeTrue(),
+				"action_type should be populated from WorkflowRef.ActionType (Issue #1661 Change 11f/12)")
+			Expect(payload.WorkflowName.IsSet()).To(BeTrue(),
+				"workflow_name should be populated from WorkflowRef.WorkflowName (Issue #1661 Change 12)")
+			break
+		}
+
+		// Verify temporal ordering: gateway.signal.received should be among the earliest events.
+		// Audit timestamps have second-level precision and services run on different pods,
+		// so cross-service clock skew can cause events from later pipeline stages to appear
+		// up to 2 seconds before the gateway event. We use a tolerance window rather than
+		// exact equality to account for this.
+		Expect(len(allAuditEvents)).To(BeNumerically(">=", 3),
+			"Full pipeline should produce at least gateway, orchestrator, and workflow audit events")
+		earliestTS := allAuditEvents[0].EventTimestamp
+		for _, event := range allAuditEvents[1:] {
+			if event.EventTimestamp.Before(earliestTS) {
+				earliestTS = event.EventTimestamp
+			}
+		}
+		clockSkewTolerance := 2 * time.Second
+		var earliestTypes []string
+		for _, event := range allAuditEvents {
+			if event.EventTimestamp.Before(earliestTS.Add(clockSkewTolerance)) {
+				earliestTypes = append(earliestTypes, event.EventType)
+			}
+		}
+		Expect(earliestTypes).To(ContainElement("gateway.signal.received"),
+			"gateway.signal.received must be among the earliest audit events (earliest=%s, window=%s, found: %v)",
+			earliestTS.Format(time.RFC3339), clockSkewTolerance, earliestTypes)
+
+		GinkgoWriter.Printf("  ✅ Audit trail verified: %d events, %d unique types, all expected present\n",
+			len(allAuditEvents), len(eventTypeCounts))
+
+		// ================================================================
+		// Step 12: Verify RR reconstruction from audit trail (BR-AUDIT-005)
+		// ================================================================
+		By("Step 12: Verifying RR reconstruction from audit trail")
+
+		var reconstructionResp *ogenclient.ReconstructionResponse
+		Eventually(func() error {
+			resp, err := dataStorageClient.ReconstructRemediationRequest(testCtx,
+				ogenclient.ReconstructRemediationRequestParams{
+					CorrelationID: correlationID,
+				})
+			if err != nil {
+				return fmt.Errorf("reconstruction API error: %w", err)
+			}
+
+			switch r := resp.(type) {
+			case *ogenclient.ReconstructionResponse:
+				reconstructionResp = r
+				return nil
+			case *ogenclient.ReconstructRemediationRequestBadRequest:
+				return fmt.Errorf("400 Bad Request: %s", r.Detail.Value)
+			case *ogenclient.ReconstructRemediationRequestNotFound:
+				return fmt.Errorf("404 Not Found")
+			case *ogenclient.ReconstructRemediationRequestInternalServerError:
+				return fmt.Errorf("500 Internal Server Error: %s", r.Detail.Value)
+			default:
+				return fmt.Errorf("unexpected response type: %T", resp)
+			}
+		}, 30*time.Second, 2*time.Second).Should(Succeed(),
+			"RR reconstruction should succeed")
+
+		Expect(reconstructionResp.RemediationRequestYaml).To(ContainSubstring("apiVersion:"),
+			"Reconstructed RR YAML should contain Kubernetes resource structure")
+		Expect(reconstructionResp.ClusterID.Set).To(BeFalse(),
+			"local-mode K8s-event RRs must not gain a cluster_id during reconstruction")
+		Expect(reconstructionResp.Validation.IsValid).To(BeTrue(),
+			"Reconstructed RR should be valid")
+		Expect(reconstructionResp.Validation.Completeness).To(BeNumerically(">=", 77),
+			"Reconstructed RR completeness should be at least 77%% (7/9 fields; Kubernetes events lack native labels/annotations)")
+
+		// ================================================================
+		// Step 12b: Field-by-field verification against the live RR (DD-AUDIT-004)
+		// Parse the reconstructed YAML back into an RR struct and verify
+		// fields that the reconstruction pipeline populates from audit events.
+		//
+		// Currently reconstructed fields (from pkg/datastorage/reconstruction/):
+		//   gateway.signal.received → SignalName, SignalType, SignalFingerprint, SignalLabels, SignalAnnotations, OriginalPayload
+		//   orchestrator.lifecycle.created → TimeoutConfig
+		//   aianalysis.analysis.completed → ProviderData
+		//   workflowexecution.selection.completed → SelectedWorkflowRef
+		//   workflowexecution.execution.started → ExecutionRef
+		//
+		// NOT reconstructed (pipeline limitations):
+		//   OverallPhase — not part of reconstruction scope
+		//   Namespace/Name — reconstruction uses correlation_id-derived naming
+		// ================================================================
+		By("Step 12b: Verifying reconstructed RR fields match the live RR")
+
+		// Fetch the live RR (post-completion, all status fields populated)
+		liveRR := &remediationv1.RemediationRequest{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{
+			Name: remediationRequest.Name, Namespace: namespace,
+		}, liveRR)).To(Succeed(), "Should fetch the live RR")
+
+		// Parse reconstructed YAML into an RR struct
+		reconstructedRR := &remediationv1.RemediationRequest{}
+		Expect(sigyaml.Unmarshal([]byte(reconstructionResp.RemediationRequestYaml), reconstructedRR)).To(Succeed(),
+			"Reconstructed YAML should unmarshal into a RemediationRequest")
+
+		GinkgoWriter.Printf("  Reconstructed RR: name=%s namespace=%s phase=%s\n",
+			reconstructedRR.Name, reconstructedRR.Namespace, reconstructedRR.Status.OverallPhase)
+
+		// Gap #1: spec.signalName — from gateway.signal.received (AlertName field)
+		Expect(reconstructedRR.Spec.SignalName).ToNot(BeEmpty(),
+			"Gap #1: Reconstructed RR must have spec.signalName")
+		Expect(reconstructedRR.Spec.SignalName).To(Equal(liveRR.Spec.SignalName),
+			"Gap #1: Reconstructed signalName should match live RR")
+		GinkgoWriter.Printf("  ✅ Gap #1: signalName=%s (matches live RR)\n", reconstructedRR.Spec.SignalName)
+
+		// Gap #1: spec.signalFingerprint — from gateway.signal.received (Fingerprint field)
+		// SHA256 hash (64-char hex), used as deduplication identity for the signal
+		Expect(reconstructedRR.Spec.SignalFingerprint).ToNot(BeEmpty(),
+			"Gap #1: Reconstructed RR must have spec.signalFingerprint")
+		Expect(reconstructedRR.Spec.SignalFingerprint).To(Equal(liveRR.Spec.SignalFingerprint),
+			"Gap #1: Reconstructed signalFingerprint should match live RR")
+		GinkgoWriter.Printf("  ✅ Gap #1: signalFingerprint=%s (matches live RR)\n", reconstructedRR.Spec.SignalFingerprint)
+
+		// Gap #2: spec.signalLabels — from gateway.signal.received
+		// Labels may be empty depending on the signal source (Kubernetes events lack native labels)
+		GinkgoWriter.Printf("  ✅ Gap #2: signalLabels has %d entries\n", len(reconstructedRR.Spec.SignalLabels))
+
+		// Gap #3: spec.signalAnnotations — from gateway.signal.received
+		// Annotations may be empty depending on the signal source
+		GinkgoWriter.Printf("  ✅ Gap #3: signalAnnotations has %d entries\n", len(reconstructedRR.Spec.SignalAnnotations))
+
+		// Gap #4: spec.originalPayload — from gateway.signal.received
+		Expect(reconstructedRR.Spec.OriginalPayload).ToNot(BeEmpty(),
+			"Gap #4: Reconstructed RR must have spec.originalPayload (original webhook body)")
+		GinkgoWriter.Printf("  ✅ Gap #4: originalPayload present (%d bytes)\n", len(reconstructedRR.Spec.OriginalPayload))
+
+		// Gap #5: status.selectedWorkflowRef — from workflowexecution.selection.completed
+		Expect(reconstructedRR.Status.EnsureWorkflowSelection().SelectedWorkflowRef).ToNot(BeNil(),
+			"Gap #5: Reconstructed RR must have status.selectedWorkflowRef")
+		GinkgoWriter.Printf("  ✅ Gap #5: selectedWorkflowRef.workflowID=%s\n",
+			reconstructedRR.Status.EnsureWorkflowSelection().SelectedWorkflowRef.WorkflowID)
+
+		// Gap #6: status.executionRef — from workflowexecution.execution.started
+		Expect(reconstructedRR.Status.EnsureWorkflowSelection().ExecutionRef).ToNot(BeNil(),
+			"Gap #6: Reconstructed RR must have status.executionRef")
+		GinkgoWriter.Printf("  ✅ Gap #6: executionRef.name=%s\n", reconstructedRR.Status.EnsureWorkflowSelection().ExecutionRef.Name)
+
+		// Gap #7: status.error — NOT implemented in reconstruction pipeline
+		// This is a success path so no error is expected anyway.
+		GinkgoWriter.Println("  ⏭️  Gap #7: status.error (N/A on success path; not implemented in reconstruction)")
+
+		// Gap #8: status.timeoutConfig — from orchestrator.lifecycle.created
+		Expect(reconstructedRR.Status.TimeoutConfig).ToNot(BeNil(),
+			"Gap #8: Reconstructed RR must have status.timeoutConfig")
+		GinkgoWriter.Printf("  ✅ Gap #8: timeoutConfig present (global=%v)\n",
+			reconstructedRR.Status.TimeoutConfig.Global)
+
+		GinkgoWriter.Printf("  ✅ RR reconstruction verified: completeness=%d%%, valid=%t, gaps #1-6,#8 verified\n",
+			reconstructionResp.Validation.Completeness, reconstructionResp.Validation.IsValid)
+		if len(reconstructionResp.Validation.Warnings) > 0 {
+			GinkgoWriter.Printf("  ⚠️  Reconstruction warnings: %v\n", reconstructionResp.Validation.Warnings)
+		}
+
+		// ================================================================
+		// Step 13: Verify EffectivenessAssessment CRD state (ADR-EM-001)
+		// ================================================================
+		// Merged from 02_em_full_pipeline_otlp_test.go and 03_em_full_pipeline_scrape_test.go.
+		// Those tests had a namespace bug (searched kubernaut-system instead of the
+		// dynamic testNamespace) and depended on Ginkgo file ordering which is not
+		// guaranteed. The unique assertions are consolidated here.
+		By("Step 13: Verifying EffectivenessAssessment CRD created by RO and assessed by EM")
+
+		// 13a: Get EA by deterministic name (ea-<RR.Name>) — avoids selecting wrong EA in shared namespace
+		eaName := fmt.Sprintf("ea-%s", remediationRequest.Name)
+		eaKey := client.ObjectKey{Name: eaName, Namespace: namespace}
+		ea := &eav1.EffectivenessAssessment{}
+		Eventually(func() error {
+			return apiReader.Get(testCtx, eaKey, ea)
+		}, 30*time.Second, 2*time.Second).Should(Succeed(),
+			"EA with deterministic name ea-<RR.Name> should be created by RO")
+		Expect(ea.Spec.CorrelationID).To(Equal(remediationRequest.Name),
+			"EA correlationID should match RR name")
+		GinkgoWriter.Printf("  Found EA: %s/%s\n", ea.Namespace, ea.Name)
+		Expect(ea.Spec.RemediationTarget.Kind).ToNot(BeEmpty(),
+			"EA remediationTarget.kind should be set")
+		Expect(ea.Spec.RemediationTarget.Name).ToNot(BeEmpty(),
+			"EA remediationTarget.name should be set")
+		Expect(ea.Spec.RemediationTarget.Namespace).ToNot(BeEmpty(),
+			"EA remediationTarget.namespace should be set (RO must populate)")
+		Expect(ea.Spec.Config.StabilizationWindow.Duration).To(BeNumerically(">", 0),
+			"EA stabilizationWindow should be positive (set by RO config)")
+		Expect(ea.Spec.RemediationRequestPhase).To(Equal("Verifying"),
+			"#280: EA is created when RR enters Verifying, not Completed")
+		Expect(ea.Spec.RemediationCreatedAt).ToNot(BeNil(),
+			"EA remediationCreatedAt should be set (RO copies from RR.CreationTimestamp)")
+		Expect(ea.Spec.SignalName).ToNot(BeEmpty(),
+			"EA signalName should be set (OBS-1: RO copies from RR.Spec.SignalName)")
+
+		// Verify owner reference points to the parent RemediationRequest
+		ownerRefs := ea.GetOwnerReferences()
+		Expect(ownerRefs).ToNot(BeEmpty(), "EA should have an owner reference to the parent RR")
+		foundOwnerRef := false
+		for _, ref := range ownerRefs {
+			if ref.Name == remediationRequest.Name {
+				foundOwnerRef = true
+				break
+			}
+		}
+		Expect(foundOwnerRef).To(BeTrue(),
+			"EA owner reference should point to the parent RemediationRequest")
+
+		GinkgoWriter.Printf("  EA spec: correlationID=%s, remediationTarget=%s/%s/%s, stabilizationWindow=%v, signalName=%s\n",
+			ea.Spec.CorrelationID, ea.Spec.RemediationTarget.Kind, ea.Spec.RemediationTarget.Name,
+			ea.Spec.RemediationTarget.Namespace, ea.Spec.Config.StabilizationWindow.Duration,
+			ea.Spec.SignalName)
+
+		// 13c: Verify EA reached terminal phase (from 02_ and 03_ assertions)
+		Eventually(func() string {
+			fetched := &eav1.EffectivenessAssessment{}
+			if err := apiReader.Get(testCtx, eaKey, fetched); err != nil {
+				return ""
+			}
+			return fetched.Status.Phase
+		}, 3*time.Minute, 2*time.Second).Should(
+			BeElementOf(eav1.PhaseCompleted, eav1.PhaseFailed),
+			"EA should reach terminal phase (Completed or Failed)")
+
+		// Re-fetch to get final state
+		finalEA := &eav1.EffectivenessAssessment{}
+		Expect(apiReader.Get(testCtx, eaKey, finalEA)).To(Succeed())
+
+		// 13d: Verify health and hash components assessed (from 03_ assertions)
+		Expect(finalEA.Status.Components.HealthAssessed).To(BeTrue(),
+			"Health component should be assessed")
+		Expect(finalEA.Status.Components.HashComputed).To(BeTrue(),
+			"Hash component should be computed")
+		Expect(finalEA.Status.Components.PostRemediationSpecHash).ToNot(BeEmpty(),
+			"Post-remediation spec hash should be set")
+
+		// 13e: Verify status fields populated after assessment
+		Expect(finalEA.Status.Components.CurrentSpecHash).ToNot(BeEmpty(),
+			"Current spec hash should be set after assessment (catches empty hash issues)")
+		if finalEA.Status.Components.HealthAssessed {
+			Expect(finalEA.Status.Components.HealthScore).ToNot(BeNil(),
+				"HealthScore should not be nil when HealthAssessed=true")
+		}
+		// Issue #1542: promoted from a soft (log-only) check to a hard assertion.
+		// With the increased stabilization window (10s), the pod should have recovered
+		// from OOMKill by the time EM assesses health, yielding a positive score. A
+		// HealthScore of 0 here means the remediation did not actually recover the
+		// workload and must fail the test, not just print a warning.
+		Expect(*finalEA.Status.Components.HealthScore).To(BeNumerically(">", 0),
+			"HealthScore must be > 0 — the target pod must have genuinely recovered after remediation")
+		GinkgoWriter.Printf("  ✅ Health > 0 (%.2f): pod recovered after remediation\n", *finalEA.Status.Components.HealthScore)
+
+		// Log hash comparison diagnostics for spec drift detection
+		if finalEA.Status.Components.PostRemediationSpecHash != "" && finalEA.Status.Components.CurrentSpecHash != "" {
+			GinkgoWriter.Printf("  ✅ Hash comparison available: post=%s, current=%s\n",
+				finalEA.Status.Components.PostRemediationSpecHash[:16]+"...",
+				finalEA.Status.Components.CurrentSpecHash[:16]+"...")
+		}
+
+		GinkgoWriter.Println("  ┌─────────────────────────────────────────────────────────")
+		GinkgoWriter.Println("  │ EFFECTIVENESS ASSESSMENT RESULTS")
+		GinkgoWriter.Println("  ├─────────────────────────────────────────────────────────")
+		GinkgoWriter.Printf("  │ Phase:   %s\n", finalEA.Status.Phase)
+		GinkgoWriter.Printf("  │ Reason:  %s\n", finalEA.Status.AssessmentReason)
+		GinkgoWriter.Printf("  │ Target:  %s/%s (%s)\n",
+			finalEA.Spec.RemediationTarget.Kind, finalEA.Spec.RemediationTarget.Name, testNamespace)
+		GinkgoWriter.Println("  ├─── Component Scores ────────────────────────────────────")
+		if finalEA.Status.Components.HealthScore != nil {
+			GinkgoWriter.Printf("  │ Health:  %.2f (assessed=%v)\n", *finalEA.Status.Components.HealthScore, finalEA.Status.Components.HealthAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Health:  <nil> (assessed=%v)\n", finalEA.Status.Components.HealthAssessed)
+		}
+		if finalEA.Status.Components.AlertScore != nil {
+			GinkgoWriter.Printf("  │ Alert:   %.2f (assessed=%v)\n", *finalEA.Status.Components.AlertScore, finalEA.Status.Components.AlertAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Alert:   <nil> (assessed=%v)\n", finalEA.Status.Components.AlertAssessed)
+		}
+		if finalEA.Status.Components.MetricsScore != nil {
+			GinkgoWriter.Printf("  │ Metrics: %.2f (assessed=%v)\n", *finalEA.Status.Components.MetricsScore, finalEA.Status.Components.MetricsAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Metrics: <nil> (assessed=%v)\n", finalEA.Status.Components.MetricsAssessed)
+		}
+		GinkgoWriter.Println("  ├─── Spec Drift ──────────────────────────────────────────")
+		GinkgoWriter.Printf("  │ Hash (post-remediation): %s\n", finalEA.Status.Components.PostRemediationSpecHash)
+		GinkgoWriter.Printf("  │ Hash (current):          %s\n", finalEA.Status.Components.CurrentSpecHash)
+		if finalEA.Status.Components.PostRemediationSpecHash != "" && finalEA.Status.Components.CurrentSpecHash != "" {
+			if finalEA.Status.Components.PostRemediationSpecHash == finalEA.Status.Components.CurrentSpecHash {
+				GinkgoWriter.Println("  │ Drift:   NO (hashes match)")
+			} else {
+				GinkgoWriter.Println("  │ Drift:   YES (spec changed since remediation)")
+			}
+		}
+		if finalEA.Status.CompletedAt != nil {
+			GinkgoWriter.Printf("  │ Completed at: %s\n", finalEA.Status.CompletedAt.Format("15:04:05"))
+		}
+		GinkgoWriter.Println("  └─────────────────────────────────────────────────────────")
+		GinkgoWriter.Println("  ✅ EA CRD verified: created by RO, assessed by EM")
+
+		// ================================================================
+		// Step 14: CRD Status Validation [E2E-FP-118-001]
+		// Validates all pipeline CRDs have complete status fields for
+		// downstream consumers (audit, billing, SLA, dashboards).
+		// Uses collect-all-failures pattern per test plan.
+		// ================================================================
+		By("Step 14: Validating CRD status fields across all pipeline stages [E2E-FP-118-001]")
+
+		var allFailures []string
+
+		// SP: re-fetch and validate
+		spList := &signalprocessingv1.SignalProcessingList{}
+		Expect(apiReader.List(ctx, spList, client.InNamespace(namespace))).To(Succeed())
+		for i := range spList.Items {
+			sp := &spList.Items[i]
+			if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+				allFailures = append(allFailures, crdvalidators.ValidateSPStatus(sp)...)
+				break
+			}
+		}
+
+		// AA: already fetched as `aa`
+		allFailures = append(allFailures, crdvalidators.ValidateAAStatus(aa)...)
+
+		// WE: re-fetch
+		weObj := &workflowexecutionv1.WorkflowExecution{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{Name: weName, Namespace: namespace}, weObj)).To(Succeed())
+		allFailures = append(allFailures, crdvalidators.ValidateWEStatus(weObj)...)
+
+		// NT: wait for completion notification to reach terminal phase before validation.
+		Eventually(func() bool {
+			nrList := &notificationv1.NotificationRequestList{}
+			if err := apiReader.List(ctx, nrList, client.InNamespace(namespace)); err != nil {
+				return false
+			}
+			for i := range nrList.Items {
+				nr := &nrList.Items[i]
+				if nr.Spec.RemediationRequestRef != nil &&
+					nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+					nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+					switch nr.Status.Phase {
+					case notificationv1.NotificationPhaseSent,
+						notificationv1.NotificationPhasePartiallySent,
+						notificationv1.NotificationPhaseFailed:
+						return true
+					}
+					return false
+				}
+			}
+			return false
+		}, 2*time.Minute, interval).Should(BeTrue(),
+			"Completion NotificationRequest should reach terminal phase (Sent, PartiallySent, or Failed)")
+
+		nrList := &notificationv1.NotificationRequestList{}
+		Expect(apiReader.List(ctx, nrList, client.InNamespace(namespace))).To(Succeed())
+		for i := range nrList.Items {
+			nr := &nrList.Items[i]
+			if nr.Spec.RemediationRequestRef != nil &&
+				nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+				nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+				allFailures = append(allFailures, crdvalidators.ValidateNTStatus(nr)...)
+				break
+			}
+		}
+
+		// RR: re-fetch
+		finalRR := &remediationv1.RemediationRequest{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{
+			Name: remediationRequest.Name, Namespace: namespace,
+		}, finalRR)).To(Succeed())
+		allFailures = append(allFailures, crdvalidators.ValidateRRStatus(finalRR)...)
+
+		// EA: already fetched as `finalEA`
+		allFailures = append(allFailures, crdvalidators.ValidateEAStatus(finalEA)...)
+
+		if len(allFailures) > 0 {
+			GinkgoWriter.Println("  ⚠️  CRD Status Validation Failures:")
+			for _, f := range allFailures {
+				GinkgoWriter.Printf("    - %s\n", f)
+			}
+		}
+		Expect(allFailures).To(BeEmpty(),
+			"All pipeline CRDs should have complete status fields for downstream consumers. Failures:\n%s",
+			strings.Join(allFailures, "\n"))
+
+		GinkgoWriter.Println("  ✅ CRD status validation passed (all 6 CRDs)")
+
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Println("✅ FULL REMEDIATION LIFECYCLE COMPLETE (with audit verification)")
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Println("  Event → Gateway → RO → SP → AA → KA → WE(Job) → Notification → EM ✅")
+		GinkgoWriter.Println("  Audit Trail: complete, non-duplicated, temporally ordered ✅")
+		GinkgoWriter.Println("  RR Reconstruction: valid, high completeness ✅")
+		GinkgoWriter.Println("  EA CRD: created by RO, assessed by EM ✅")
+		GinkgoWriter.Println("  CRD Status Fields: all populated [E2E-FP-118-001] ✅")
+	})
+
+	// ================================================================
+	// TEST 2: AlertManager as signal source (no K8s event duplication)
+	// ================================================================
+	// Signal flow: memory-eater (high usage) → Prometheus scrape → MemoryExceedsLimit alert
+	//   → AlertManager → Gateway webhook → RemediationRequest → full pipeline
+	//
+	// Key differences from Test 1:
+	// - Namespace: fp-am-* (Prometheus alert rules only target fp-am-*)
+	// - Event-exporter does NOT forward K8s events from fp-am-* (prevents duplication)
+	// - Memory-eater runs at 92% memory usage without OOMKill (stays alive for Prometheus scraping)
+	// - Signal arrives via /api/v1/signals/prometheus endpoint (AlertManager webhook)
+	It("should produce complete status records from AlertManager signal source for downstream consumers [E2E-FP-118-002]", func() {
+		// ================================================================
+		// AM Step 1: Create a managed namespace (fp-am-*)
+		// ================================================================
+		By("AM Step 1: Creating managed test namespace for AlertManager signal")
+		testNamespaceAM = fmt.Sprintf("fp-am-%d", time.Now().Unix())
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: testNamespaceAM,
+				Labels: map[string]string{
+					"kubernaut.ai/managed":     "true",
+					"kubernaut.ai/environment": "staging",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+		GinkgoWriter.Printf("  ✅ Namespace created: %s (staging environment)\n", testNamespaceAM)
+
+		// ================================================================
+		// AM Step 2: Deploy memory-eater at high usage (no OOMKill)
+		// ================================================================
+		By("AM Step 2: Deploying memory-eater (high usage, no OOMKill) for Prometheus alert")
+		err := infrastructure.DeployMemoryEaterHighUsage(testCtx, testNamespaceAM, kubeconfigPath, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred(), "Failed to deploy memory-eater (high usage)")
+
+		// Wait for pod to be running (not OOMKill — it stays alive at 92% memory)
+		By("AM Step 2b: Waiting for memory-eater pod to be running...")
+		var memoryEaterPodName string
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := apiReader.List(ctx, pods, client.InNamespace(testNamespaceAM),
+				client.MatchingLabels{"app": "memory-eater"}); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				for _, cs := range pod.Status.ContainerStatuses {
+					if cs.Ready && cs.State.Running != nil {
+						memoryEaterPodName = pod.Name
+						GinkgoWriter.Printf("  ✅ memory-eater pod is running: %s\n", pod.Name)
+						return true
+					}
+				}
+			}
+			return false
+		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "memory-eater should be running at high memory usage")
+
+		// ================================================================
+		// AM Step 3: Inject alert into AlertManager and wait for RR
+		// ================================================================
+		// We inject the MemoryExceedsLimit alert directly into AlertManager via
+		// its API rather than waiting for the Prometheus alert rule to fire naturally.
+		// The rule requires `for: 10s` of sustained high memory, adding latency that
+		// makes the test timing unpredictable. Direct injection still exercises the
+		// full AlertManager → Gateway webhook → RR path.
+		By("AM Step 3a: Injecting MemoryExceedsLimit alert into AlertManager")
+		alertManagerURL := fmt.Sprintf("http://localhost:%d", infrastructure.AlertManagerHostPort)
+		injectErr := infrastructure.InjectAlerts(alertManagerURL, []infrastructure.TestAlert{
+			{
+				Name: "MemoryExceedsLimit",
+				Labels: map[string]string{
+					"severity":  "critical",
+					"namespace": testNamespaceAM,
+					"pod":       memoryEaterPodName,
+					"container": "memory-eater",
+				},
+				Annotations: map[string]string{
+					"summary":     "Container memory exceeds limit",
+					"description": fmt.Sprintf("Pod %s using >90%% of memory limit", memoryEaterPodName),
+				},
+				Status:   "firing",
+				StartsAt: time.Now(),
+			},
+		})
+		Expect(injectErr).ToNot(HaveOccurred(), "Failed to inject alert into AlertManager")
+		GinkgoWriter.Println("  ✅ MemoryExceedsLimit alert injected into AlertManager")
+
+		// Verify AlertManager received and activated the alert before waiting for Gateway
+		By("AM Step 3a-verify: Confirming alert is active in AlertManager")
+		Eventually(func() bool {
+			resp, err := http.Get(alertManagerURL + "/api/v2/alerts")
+			if err != nil {
+				GinkgoWriter.Printf("  ⚠️  AlertManager API unreachable: %v\n", err)
+				return false
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			alertActive := strings.Contains(string(body), "MemoryExceedsLimit")
+			if !alertActive {
+				GinkgoWriter.Printf("  ⏳ Alert not yet active in AlertManager (response length: %d)\n", len(body))
+			} else {
+				GinkgoWriter.Println("  ✅ MemoryExceedsLimit alert confirmed active in AlertManager")
+			}
+			return alertActive
+		}, 30*time.Second, 2*time.Second).Should(BeTrue(),
+			"MemoryExceedsLimit alert must be active in AlertManager after injection")
+
+		By("AM Step 3b: Waiting for RemediationRequest from AlertManager webhook to Gateway")
+		var remediationRequest *remediationv1.RemediationRequest
+		pollCount := 0
+		Eventually(func() bool {
+			pollCount++
+			rrList := &remediationv1.RemediationRequestList{}
+			if err := apiReader.List(ctx, rrList, client.InNamespace(namespace)); err != nil {
+				return false
+			}
+			for i := range rrList.Items {
+				rr := &rrList.Items[i]
+				if rr.Spec.TargetResource.Namespace != testNamespaceAM {
+					continue
+				}
+				sig := strings.ToLower(rr.Spec.SignalName)
+				if sig == "memoryexceedslimit" || strings.Contains(sig, "oom") {
+					remediationRequest = rr
+					GinkgoWriter.Printf("  ✅ RemediationRequest found (from AlertManager): %s (signal: %s)\n", rr.Name, rr.Spec.SignalName)
+					return true
+				}
+				GinkgoWriter.Printf("  ⏳ Skipping RR %s with signal %q (waiting for MemoryExceedsLimit)\n", rr.Name, rr.Spec.SignalName)
+			}
+			// Periodic diagnostic output every 10 polls (~30s)
+			if pollCount%10 == 0 {
+				GinkgoWriter.Printf("  ⏳ Still waiting for RR from AlertManager webhook (poll #%d)...\n", pollCount)
+				// Check AlertManager alerts state for diagnostics
+				if resp, err := http.Get(alertManagerURL + "/api/v2/alerts"); err == nil {
+					defer resp.Body.Close()
+					body, _ := io.ReadAll(resp.Body)
+					GinkgoWriter.Printf("  📊 AlertManager /api/v2/alerts response (%d bytes): %.500s\n", len(body), string(body))
+				}
+			}
+			return false
+		}, 2*time.Minute, 3*time.Second).Should(BeTrue(),
+			"RemediationRequest should be created by Gateway from AlertManager webhook")
+		Expect(remediationRequest.Spec.ClusterID).To(BeEmpty(),
+			"local-mode AlertManager signals without cluster attribution must remain local")
+
+		// ================================================================
+		// AM Step 4: Verify SignalProcessing completed
+		// ================================================================
+		By("AM Step 4: Waiting for SignalProcessing to complete")
+		Eventually(func() string {
+			spList := &signalprocessingv1.SignalProcessingList{}
+			if err := apiReader.List(ctx, spList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, sp := range spList.Items {
+				if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					GinkgoWriter.Printf("  SP %s phase: %s\n", sp.Name, sp.Status.Phase)
+					return string(sp.Status.Phase)
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("Completed"),
+			"SignalProcessing should reach Completed phase")
+
+		// BR-SP-051, BR-SP-070: Verify environment classification and priority for staging namespace
+		By("AM Step 4b: Verifying SP classified environment as staging and assigned priority [BR-SP-051, BR-SP-070]")
+		amSPFound := false
+		{
+			spList := &signalprocessingv1.SignalProcessingList{}
+			Expect(apiReader.List(ctx, spList, client.InNamespace(namespace))).To(Succeed())
+			for i := range spList.Items {
+				sp := &spList.Items[i]
+				if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					amSPFound = true
+					Expect(sp.Status.EnvironmentClassification).ToNot(BeNil(),
+						"SP EnvironmentClassification must be populated")
+					Expect(sp.Status.EnvironmentClassification.Environment).To(Equal(signalprocessingv1.EnvironmentStaging),
+						"SP should classify namespace as staging (kubernaut.ai/environment label)")
+					Expect(sp.Status.EnvironmentClassification.Source).To(Equal("namespace-labels"),
+						"SP should classify from namespace labels when kubernaut.ai/environment is set")
+					GinkgoWriter.Printf("  ✅ SP environment: %s (source: %s)\n",
+						sp.Status.EnvironmentClassification.Environment, sp.Status.EnvironmentClassification.Source)
+
+					Expect(sp.Status.PriorityAssignment).ToNot(BeNil(),
+						"SP PriorityAssignment must be populated for staging critical signal")
+					Expect(string(sp.Status.PriorityAssignment.Priority)).To(BeElementOf("P0", "P1"),
+						"SP should assign P0 or P1 priority for staging+critical signal")
+					GinkgoWriter.Printf("  ✅ SP priority: %s (source: %s)\n",
+						sp.Status.PriorityAssignment.Priority, sp.Status.PriorityAssignment.Source)
+					break
+				}
+			}
+		}
+		Expect(amSPFound).To(BeTrue(), "SP CR for AM RR %s must exist", remediationRequest.Name)
+
+		// ================================================================
+		// AM Step 5: Verify AIAnalysis completed
+		// ================================================================
+		By("AM Step 5: Waiting for AIAnalysis to complete")
+		var aaName string
+		Eventually(func() string {
+			aaList := &aianalysisv1.AIAnalysisList{}
+			if err := apiReader.List(ctx, aaList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, aa := range aaList.Items {
+				if aa.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					aaName = aa.Name
+					GinkgoWriter.Printf("  AA %s phase: %s\n", aa.Name, aa.Status.Phase)
+					return aa.Status.Phase
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("Completed"),
+			"AIAnalysis should reach Completed phase")
+
+		// Verify AIAnalysis selected a workflow with job engine
+		By("AM Step 5b: Verifying AIAnalysis selected workflow with job engine")
+		aa := &aianalysisv1.AIAnalysis{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{Name: aaName, Namespace: namespace}, aa)).To(Succeed())
+		Expect(aa.Status.GetRCAResult().SelectedWorkflow).ToNot(BeNil(), "AIAnalysis should have selectedWorkflow")
+		Expect(aa.Status.RCAResult.SelectedWorkflow.ExecutionEngine).To(Equal("job"),
+			"AIAnalysis should select job execution engine")
+
+		// Verify AA signal context propagated environment and priority from SP
+		By("AM Step 5c: Verifying AA signal context contains full SP-derived fields (staging)")
+		amSC := aa.Spec.AnalysisRequest.SignalContext
+		Expect(amSC.Environment).To(Equal(string(signalprocessingv1.EnvironmentStaging)),
+			"AA SignalContext.Environment should be 'Staging' (propagated from SP EnvironmentClassification)")
+		Expect(amSC.BusinessPriority).ToNot(BeEmpty(),
+			"AA SignalContext.BusinessPriority must be populated (propagated from SP PriorityAssignment)")
+		Expect(amSC.BusinessPriority).To(BeElementOf("P0", "P1"),
+			"AA SignalContext.BusinessPriority should be P0 or P1 for staging+critical signal")
+		Expect(amSC.Severity).ToNot(BeEmpty(),
+			"AA SignalContext.Severity must be populated (normalized by SP)")
+		Expect(amSC.SignalMode).To(BeElementOf("reactive", "proactive"),
+			"AA SignalContext.SignalMode must be populated (BR-AI-084)")
+		GinkgoWriter.Printf("  ✅ AA signal context: env=%s, priority=%s, severity=%s, mode=%s\n",
+			amSC.Environment, amSC.BusinessPriority, amSC.Severity, amSC.SignalMode)
+
+		// Verify EnrichmentResults propagated from SP (BR-ORCH-025)
+		By("AM Step 5d: Verifying AA EnrichmentResults contains KubernetesContext and BusinessClassification from SP")
+		amER := amSC.EnrichmentResults
+		Expect(amER.KubernetesContext).ToNot(BeNil(),
+			"AA EnrichmentResults.KubernetesContext must be propagated from SP")
+		Expect(amER.BusinessClassification).ToNot(BeNil(),
+			"AA EnrichmentResults.BusinessClassification must be propagated from SP (BR-SP-080, BR-SP-081)")
+		GinkgoWriter.Printf("  ✅ AA enrichment: bizUnit=%s, criticality=%s, customLabels=%d keys\n",
+			amER.BusinessClassification.BusinessUnit, amER.BusinessClassification.Criticality,
+			len(amER.KubernetesContext.CustomLabels))
+
+		// ================================================================
+		// AM Step 6: Verify WorkflowExecution
+		// ================================================================
+		By("AM Step 6: Waiting for WorkflowExecution to be created")
+		var weName string
+		Eventually(func() string {
+			weList := &workflowexecutionv1.WorkflowExecutionList{}
+			if err := apiReader.List(ctx, weList, client.InNamespace(namespace)); err != nil {
+				return ""
+			}
+			for _, we := range weList.Items {
+				if we.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+					weName = we.Name
+					GinkgoWriter.Printf("  WE %s phase: %s, engine: %s\n",
+						we.Name, we.Status.Phase, we.Spec.WorkflowRef.ExecutionEngine)
+					return we.Spec.WorkflowRef.ExecutionEngine
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal("job"),
+			"WorkflowExecution should use job execution engine")
+
+		// ================================================================
+		// AM Step 7: Verify K8s Job ran and completed
+		// ================================================================
+		By("AM Step 7: Waiting for K8s Job to complete")
+		Eventually(func(g Gomega) {
+			// Early-exit: if WE already reached Failed, the Job won't recover.
+			// Fail fast with diagnostic info instead of waiting for TTL garbage collection.
+			we := &workflowexecutionv1.WorkflowExecution{}
+			if getErr := apiReader.Get(ctx, client.ObjectKey{Name: weName, Namespace: namespace}, we); getErr == nil {
+				g.Expect(we.Status.Phase).NotTo(Equal("Failed"),
+					fmt.Sprintf("WorkflowExecution %s reached Failed phase (reason: %s) — Job will not recover", weName, we.Status.FailureReason))
+			}
+
+			jobList := &batchv1.JobList{}
+			g.Expect(apiReader.List(ctx, jobList,
+				client.InNamespace("kubernaut-workflows"),
+				client.MatchingLabels{"kubernaut.ai/workflow-execution": weName})).To(Succeed())
+			g.Expect(jobList.Items).NotTo(BeEmpty(), "No Jobs found for WorkflowExecution %s", weName)
+
+			job := jobList.Items[0]
+			g.Expect(job.Status.Failed).To(BeZero(),
+				fmt.Sprintf("Job %s has %d failed pod(s) — check pod logs for details", job.Name, job.Status.Failed))
+			g.Expect(job.Status.Succeeded).To(BeNumerically(">", 0),
+				fmt.Sprintf("Job %s has not succeeded yet (active=%d)", job.Name, job.Status.Active))
+		}, timeout, interval).Should(Succeed(), "K8s Job should complete successfully")
+
+		// ================================================================
+		// AM Step 8: Verify WorkflowExecution reached Completed phase
+		// ================================================================
+		By("AM Step 8: Waiting for WorkflowExecution to complete")
+		Eventually(func() string {
+			we := &workflowexecutionv1.WorkflowExecution{}
+			if err := apiReader.Get(ctx, client.ObjectKey{
+				Name: weName, Namespace: namespace,
+			}, we); err != nil {
+				return ""
+			}
+			return we.Status.Phase
+		}, timeout, interval).Should(Equal("Completed"),
+			"WorkflowExecution should reach Completed phase")
+		fpAssertSelectionAudit2496(remediationRequest.Name, aa.Status.GetRCAResult().SelectedWorkflow)
+
+		// ================================================================
+		// AM Step 9: Verify NotificationRequest created
+		// ================================================================
+		By("AM Step 9: Waiting for completion NotificationRequest")
+		Eventually(func() bool {
+			nrList := &notificationv1.NotificationRequestList{}
+			if listErr := apiReader.List(ctx, nrList, client.InNamespace(namespace)); listErr != nil {
+				return false
+			}
+			for _, nr := range nrList.Items {
+				if nr.Spec.RemediationRequestRef != nil &&
+					nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+					nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+					GinkgoWriter.Printf("  ✅ Completion NotificationRequest: %s\n", nr.Name)
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(),
+			"Completion NotificationRequest should be created (BR-ORCH-045)")
+
+		// ================================================================
+		// AM Step 10: Verify RemediationRequest completed
+		// ================================================================
+		By("AM Step 10: Verifying RemediationRequest completed")
+		Eventually(func() string {
+			rr := &remediationv1.RemediationRequest{}
+			if err := apiReader.Get(ctx, client.ObjectKey{
+				Name: remediationRequest.Name, Namespace: namespace,
+			}, rr); err != nil {
+				return ""
+			}
+			return string(rr.Status.OverallPhase)
+		}, timeout, interval).Should(Equal("Completed"),
+			"RemediationRequest should reach Completed phase")
+
+		// ================================================================
+		// AM Step 10.5: Resolve injected alert so EM completes normally (#369)
+		// ================================================================
+		// BR-EM-012: Post-remediation, the alert should resolve. Without this,
+		// isAlertDecay treats "healthy + alert firing" as Prometheus lookback
+		// decay and defers assessment until validity expires, preventing the
+		// effectiveness.alert.assessed audit event from being emitted.
+		By("AM Step 10.5: Resolving injected AlertManager alerts post-remediation")
+		resolveErr := infrastructure.ResolveActiveAlerts(alertManagerURL)
+		Expect(resolveErr).ToNot(HaveOccurred(), "Failed to resolve active alerts post-remediation")
+
+		// ================================================================
+		// AM Step 11: Verify audit trail completeness
+		// ================================================================
+		By("AM Step 11: Verifying audit trail completeness (AlertManager signal source)")
+
+		correlationID := remediationRequest.Name
+
+		// Same expected audit events as the K8s event test — the full pipeline is identical
+		// after the signal enters Gateway, regardless of signal source.
+		// Total: 13 exactlyOnce + 22 atLeastOnce = 35 minimum events.
+		// #1111: Promoted 5 events (1 exactlyOnce, 4 atLeastOnce). 5 events
+		// deferred to MAY pending mock LLM tool-call scenario support.
+		// BR-EM-012, #369: effectiveness.alert.assessed is handled separately below
+		// because alert decay may emit effectiveness.alert_decay.detected instead.
+		exactlyOnceEvents := []string{
+			"gateway.signal.received",
+			"gateway.crd.created",
+			"orchestrator.lifecycle.created",
+			"orchestrator.lifecycle.started",
+			"orchestrator.lifecycle.verifying_started",
+			"orchestrator.lifecycle.verification_completed",
+			"orchestrator.lifecycle.completed",
+			"effectiveness.assessment.scheduled",
+			"effectiveness.health.assessed",
+			"effectiveness.hash.computed",
+			"effectiveness.metrics.assessed",
+			"effectiveness.assessment.completed",
+		}
+
+		atLeastOnceEvents := []string{
+			"orchestrator.ea.created",
+			"orchestrator.lifecycle.transitioned",
+			"signalprocessing.enrichment.completed",
+			"signalprocessing.classification.decision",
+			"signalprocessing.signal.processed",
+			"signalprocessing.phase.transition",
+			"signalprocessing.business.classified",
+			"aianalysis.phase.transition",
+			"aianalysis.aiagent.call",
+			"aianalysis.rego.evaluation",
+			"aianalysis.analysis.completed",
+			"aianalysis.approval.decision",
+			string(ogenclient.LLMRequestPayloadAuditEventEventData),
+			string(ogenclient.LLMResponsePayloadAuditEventEventData),
+			string(ogenclient.WorkflowValidationPayloadAuditEventEventData),
+			string(ogenclient.AIAgentResponsePayloadAuditEventEventData),
+			string(ogenclient.AIAgentRCACompletePayloadAuditEventEventData),
+			"workflowexecution.selection.completed",
+			"workflowexecution.execution.started",
+			"workflowexecution.workflow.completed",
+			"notification.message.sent",
+			"remediation.workflow_created",
+		}
+		// MAY events deferred until mock LLM produces tool_call responses (#1111):
+		// "aiagent.llm.tool_call", "workflow.catalog.actions_listed",
+		// "workflow.catalog.workflows_listed", "workflow.catalog.workflow_retrieved",
+		// "workflow.catalog.selection_validated"
+
+		allExpected := append(exactlyOnceEvents, atLeastOnceEvents...)
+
+		var allAuditEvents []ogenclient.AuditEvent
+		eventTypeCounts := map[string]int{}
+		Eventually(func() []string {
+			resp, err := dataStorageClient.QueryAuditEvents(testCtx, ogenclient.QueryAuditEventsParams{
+				CorrelationID: ogenclient.NewOptString(correlationID),
+				Limit:         ogenclient.NewOptInt(200),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("  [AM Step 11] Query error: %v\n", err)
+				return allExpected
+			}
+			allAuditEvents = resp.Data
+
+			eventTypeCounts = map[string]int{}
+			for _, event := range allAuditEvents {
+				eventTypeCounts[event.EventType]++
+			}
+
+			var missing []string
+			for _, eventType := range allExpected {
+				if eventTypeCounts[eventType] == 0 {
+					missing = append(missing, eventType)
+				}
+			}
+			GinkgoWriter.Printf("  [AM Step 11] Found %d audit events (%d unique types), %d required types still missing\n",
+				len(allAuditEvents), len(eventTypeCounts), len(missing))
+			return missing
+		}, 240*time.Second, 2*time.Second).Should(BeEmpty(),
+			"All required audit event types must be present in the trail")
+
+		// Verify exactly-once events
+		for _, eventType := range exactlyOnceEvents {
+			Expect(eventTypeCounts).To(HaveKey(eventType),
+				"Audit trail must contain exactly-once event: %s", eventType)
+			Expect(eventTypeCounts[eventType]).To(Equal(1),
+				"Event %s must appear exactly once, but found %d", eventType, eventTypeCounts[eventType])
+		}
+
+		// Verify at-least-once events
+		for _, eventType := range atLeastOnceEvents {
+			Expect(eventTypeCounts).To(HaveKey(eventType),
+				"Audit trail must contain at-least-once event: %s", eventType)
+			Expect(eventTypeCounts[eventType]).To(BeNumerically(">=", 1),
+				"Event %s must appear at least once, but found %d", eventType, eventTypeCounts[eventType])
+		}
+
+		// BR-EM-012, #369: Alert assessment produces either effectiveness.alert.assessed
+		// (normal path) or effectiveness.alert_decay.detected (decay path, when Prometheus
+		// keeps re-firing the alert after remediation). Accept either.
+		alertAssessed := eventTypeCounts["effectiveness.alert.assessed"]
+		alertDecayDetected := eventTypeCounts["effectiveness.alert_decay.detected"]
+		Expect(alertAssessed+alertDecayDetected).To(BeNumerically(">=", 1),
+			"Either effectiveness.alert.assessed or effectiveness.alert_decay.detected must be present (BR-EM-012)")
+
+		// ================================================================
+		// AM Step 12: Verify EffectivenessAssessment CRD
+		// ================================================================
+		By("AM Step 12: Verifying EffectivenessAssessment CRD created and assessed")
+		eaName := fmt.Sprintf("ea-%s", remediationRequest.Name)
+		eaKey := client.ObjectKey{Name: eaName, Namespace: namespace}
+
+		ea := &eav1.EffectivenessAssessment{}
+		Eventually(func() error {
+			return apiReader.Get(testCtx, eaKey, ea)
+		}, 30*time.Second, 2*time.Second).Should(Succeed(),
+			"EA with deterministic name ea-<RR.Name> should be created by RO")
+		Expect(ea.Spec.CorrelationID).To(Equal(remediationRequest.Name),
+			"EA correlationID should match RR name")
+
+		// Verify EA reached terminal phase
+		Eventually(func() string {
+			fetched := &eav1.EffectivenessAssessment{}
+			if err := apiReader.Get(testCtx, eaKey, fetched); err != nil {
+				return ""
+			}
+			return fetched.Status.Phase
+		}, 3*time.Minute, 2*time.Second).Should(
+			BeElementOf(eav1.PhaseCompleted, eav1.PhaseFailed),
+			"EA should reach terminal phase (Completed or Failed)")
+
+		// Re-fetch to get final state with all component scores
+		finalEA := &eav1.EffectivenessAssessment{}
+		Expect(apiReader.Get(testCtx, eaKey, finalEA)).To(Succeed())
+
+		GinkgoWriter.Println("  ┌─────────────────────────────────────────────────────────")
+		GinkgoWriter.Println("  │ EFFECTIVENESS ASSESSMENT RESULTS (AlertManager Test)")
+		GinkgoWriter.Println("  ├─────────────────────────────────────────────────────────")
+		GinkgoWriter.Printf("  │ Phase:   %s\n", finalEA.Status.Phase)
+		GinkgoWriter.Printf("  │ Reason:  %s\n", finalEA.Status.AssessmentReason)
+		GinkgoWriter.Printf("  │ Target:  %s/%s (%s)\n",
+			finalEA.Spec.RemediationTarget.Kind, finalEA.Spec.RemediationTarget.Name, testNamespaceAM)
+		GinkgoWriter.Println("  ├─── Component Scores ────────────────────────────────────")
+		if finalEA.Status.Components.HealthScore != nil {
+			GinkgoWriter.Printf("  │ Health:  %.2f (assessed=%v)\n", *finalEA.Status.Components.HealthScore, finalEA.Status.Components.HealthAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Health:  <nil> (assessed=%v)\n", finalEA.Status.Components.HealthAssessed)
+		}
+		if finalEA.Status.Components.AlertScore != nil {
+			GinkgoWriter.Printf("  │ Alert:   %.2f (assessed=%v)\n", *finalEA.Status.Components.AlertScore, finalEA.Status.Components.AlertAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Alert:   <nil> (assessed=%v)\n", finalEA.Status.Components.AlertAssessed)
+		}
+		if finalEA.Status.Components.MetricsScore != nil {
+			GinkgoWriter.Printf("  │ Metrics: %.2f (assessed=%v)\n", *finalEA.Status.Components.MetricsScore, finalEA.Status.Components.MetricsAssessed)
+		} else {
+			GinkgoWriter.Printf("  │ Metrics: <nil> (assessed=%v)\n", finalEA.Status.Components.MetricsAssessed)
+		}
+		GinkgoWriter.Println("  ├─── Spec Drift ──────────────────────────────────────────")
+		GinkgoWriter.Printf("  │ Hash (post-remediation): %s\n", finalEA.Status.Components.PostRemediationSpecHash)
+		GinkgoWriter.Printf("  │ Hash (current):          %s\n", finalEA.Status.Components.CurrentSpecHash)
+		if finalEA.Status.Components.PostRemediationSpecHash != "" && finalEA.Status.Components.CurrentSpecHash != "" {
+			if finalEA.Status.Components.PostRemediationSpecHash == finalEA.Status.Components.CurrentSpecHash {
+				GinkgoWriter.Println("  │ Drift:   NO (hashes match)")
+			} else {
+				GinkgoWriter.Println("  │ Drift:   YES (spec changed since remediation)")
+			}
+		}
+		if finalEA.Status.CompletedAt != nil {
+			GinkgoWriter.Printf("  │ Completed at: %s\n", finalEA.Status.CompletedAt.Format("15:04:05"))
+		}
+		GinkgoWriter.Println("  └─────────────────────────────────────────────────────────")
+
+		// ================================================================
+		// AM Step 13: CRD Status Validation [E2E-FP-118-002]
+		// Same comprehensive status validation as Test 1, for AlertManager signal source.
+		// ================================================================
+		By("AM Step 13: Validating CRD status fields across all pipeline stages [E2E-FP-118-002]")
+
+		var allFailures []string
+
+		// SP: fetch and validate
+		amSPList := &signalprocessingv1.SignalProcessingList{}
+		Expect(apiReader.List(ctx, amSPList, client.InNamespace(namespace))).To(Succeed())
+		for i := range amSPList.Items {
+			sp := &amSPList.Items[i]
+			if sp.Spec.RemediationRequestRef.Name == remediationRequest.Name {
+				allFailures = append(allFailures, crdvalidators.ValidateSPStatus(sp)...)
+				break
+			}
+		}
+
+		// AA: already fetched as `aa`
+		allFailures = append(allFailures, crdvalidators.ValidateAAStatus(aa)...)
+
+		// WE: fetch
+		amWE := &workflowexecutionv1.WorkflowExecution{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{Name: weName, Namespace: namespace}, amWE)).To(Succeed())
+		allFailures = append(allFailures, crdvalidators.ValidateWEStatus(amWE)...)
+
+		// NT: wait for completion notification to reach terminal phase before validation.
+		Eventually(func() bool {
+			amNRList := &notificationv1.NotificationRequestList{}
+			if err := apiReader.List(ctx, amNRList, client.InNamespace(namespace)); err != nil {
+				return false
+			}
+			for i := range amNRList.Items {
+				nr := &amNRList.Items[i]
+				if nr.Spec.RemediationRequestRef != nil &&
+					nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+					nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+					switch nr.Status.Phase {
+					case notificationv1.NotificationPhaseSent,
+						notificationv1.NotificationPhasePartiallySent,
+						notificationv1.NotificationPhaseFailed:
+						return true
+					}
+					return false
+				}
+			}
+			return false
+		}, 2*time.Minute, interval).Should(BeTrue(),
+			"Completion NotificationRequest should reach terminal phase (Sent, PartiallySent, or Failed)")
+
+		amNRList := &notificationv1.NotificationRequestList{}
+		Expect(apiReader.List(ctx, amNRList, client.InNamespace(namespace))).To(Succeed())
+		for i := range amNRList.Items {
+			nr := &amNRList.Items[i]
+			if nr.Spec.RemediationRequestRef != nil &&
+				nr.Spec.RemediationRequestRef.Name == remediationRequest.Name &&
+				nr.Spec.Type == notificationv1.NotificationTypeCompletion {
+				allFailures = append(allFailures, crdvalidators.ValidateNTStatus(nr)...)
+				break
+			}
+		}
+
+		// RR: fetch
+		amFinalRR := &remediationv1.RemediationRequest{}
+		Expect(apiReader.Get(ctx, client.ObjectKey{
+			Name: remediationRequest.Name, Namespace: namespace,
+		}, amFinalRR)).To(Succeed())
+		allFailures = append(allFailures, crdvalidators.ValidateRRStatus(amFinalRR)...)
+
+		// EA: already fetched as `finalEA`
+		allFailures = append(allFailures, crdvalidators.ValidateEAStatus(finalEA)...)
+
+		if len(allFailures) > 0 {
+			GinkgoWriter.Println("  ⚠️  CRD Status Validation Failures:")
+			for _, f := range allFailures {
+				GinkgoWriter.Printf("    - %s\n", f)
+			}
+		}
+		Expect(allFailures).To(BeEmpty(),
+			"All pipeline CRDs should have complete status fields for downstream consumers. Failures:\n%s",
+			strings.Join(allFailures, "\n"))
+
+		GinkgoWriter.Println("  ✅ CRD status validation passed (all 6 CRDs)")
+
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Println("✅ ALERTMANAGER SIGNAL SOURCE TEST COMPLETE")
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Println("  AlertManager → Gateway → RO → SP → AA → KA → WE(Job) → Notification → EM ✅")
+		GinkgoWriter.Println("  Audit Trail: complete, non-duplicated ✅")
+		GinkgoWriter.Println("  EA CRD: created by RO, assessed by EM ✅")
+		GinkgoWriter.Println("  CRD Status Fields: all populated [E2E-FP-118-002] ✅")
+	})
+})

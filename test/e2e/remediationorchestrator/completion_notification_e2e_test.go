@@ -1,0 +1,302 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package remediationorchestrator
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"time"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+
+	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sretry "k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+)
+
+// E2E-RO-2449-001: Completion Notification on Successful Local Remediation
+//
+// Business Requirements: BR-FLEET-001, BR-ORCH-045 (Completion Notification)
+// Controls: FedRAMP AU-3, SOC 2 CC7.2, OWASP ASVS V7.1.1/V7.2.1
+// Architecture: BR-ORCH-031 (Cascade Deletion), BR-ORCH-035 (Ref Tracking)
+//
+// Tests that RO creates a NotificationRequest CRD with type=completion
+// when WorkflowExecution completes successfully and the RemediationRequest
+// transitions to the Completed phase.
+//
+// Full lifecycle: RR → SP → AA → WE → Completed → NotificationRequest
+// Pattern: Manual child CRD status updates (no child controllers deployed)
+
+var _ = Describe("E2E-RO-2449-001: Completion Notification", Label("e2e", "notification", "remediationorchestrator"), func() {
+	var (
+		testNS string
+	)
+
+	BeforeEach(func() {
+		testNS = createTestNamespace(ctx, "ro-completion-e2e")
+	})
+
+	AfterEach(func() {
+		deleteTestNamespace(testNS)
+	})
+
+	It("should create NotificationRequest with type=completion when remediation succeeds", func() {
+		By("1. Creating RemediationRequest")
+		rrName := "rr-completion-" + uuid.New().String()[:13]
+		now := metav1.Now()
+		rr := &remediationv1.RemediationRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      rrName,
+				Namespace: controllerNamespace,
+			},
+			Spec: remediationv1.RemediationRequestSpec{
+				SignalFingerprint: func() string {
+					h := sha256.Sum256([]byte(uuid.New().String()))
+					return hex.EncodeToString(h[:])
+				}(),
+				SignalName: signalNameOOMKilledFixture,
+				Severity:   signalprocessingv1.SeverityCritical,
+				SignalType: signalNameOOMKilledFixture,
+				TargetType: "kubernetes",
+				TargetResource: remediationv1.ResourceIdentifier{
+					Kind:      "Pod",
+					Name:      "test-pod-completion",
+					Namespace: testNS,
+				},
+				FiringTime:   now,
+				ReceivedTime: now,
+			},
+		}
+		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, rr) })
+
+		By("2. Waiting for RO to create SignalProcessing CRD")
+		var sp *signalprocessingv1.SignalProcessing
+		Eventually(func() bool {
+			spList := &signalprocessingv1.SignalProcessingList{}
+			_ = k8sClient.List(ctx, spList, client.InNamespace(controllerNamespace))
+			for i := range spList.Items {
+				if len(spList.Items[i].OwnerReferences) > 0 &&
+					spList.Items[i].OwnerReferences[0].Kind == kindRemediationRequestFixture &&
+					spList.Items[i].OwnerReferences[0].Name == rrName {
+					sp = &spList.Items[i]
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(), "SignalProcessing should be created by RO")
+
+		By("3. Manually updating SP status to Completed (simulating SP controller)")
+		Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp); err != nil {
+				return err
+			}
+			sp.Status.Phase = signalprocessingv1.PhaseCompleted
+			classification := sp.Status.EnsureSignalClassification()
+			classification.Severity = signalprocessingv1.SeverityCritical
+			classification.SignalMode = signalprocessingv1.SignalModeReactive
+			classification.SignalName = signalNameOOMKilledFixture
+			sp.Status.EnvironmentClassification = &signalprocessingv1.EnvironmentClassification{
+				Environment:  signalprocessingv1.EnvironmentProduction,
+				Source:       "namespace-labels",
+				ClassifiedAt: metav1.Now(),
+			}
+			sp.Status.PriorityAssignment = &signalprocessingv1.PriorityAssignment{
+				Priority:   signalprocessingv1.PriorityP1,
+				Source:     "rego-policy",
+				AssignedAt: metav1.Now(),
+			}
+			return k8sClient.Status().Update(ctx, sp)
+		})).To(Succeed())
+
+		By("4. Waiting for RO to create AIAnalysis CRD")
+		var analysis *aianalysisv1.AIAnalysis
+		Eventually(func() bool {
+			analysisList := &aianalysisv1.AIAnalysisList{}
+			_ = k8sClient.List(ctx, analysisList, client.InNamespace(controllerNamespace))
+			for i := range analysisList.Items {
+				if len(analysisList.Items[i].OwnerReferences) > 0 &&
+					analysisList.Items[i].OwnerReferences[0].Kind == kindRemediationRequestFixture &&
+					analysisList.Items[i].OwnerReferences[0].Name == rrName {
+					analysis = &analysisList.Items[i]
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(), "AIAnalysis should be created by RO")
+
+		By("5. Manually updating AIAnalysis status to Completed with SelectedWorkflow (simulating AA controller)")
+		Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis); err != nil {
+				return err
+			}
+			analysis.Status.Phase = aianalysisv1.PhaseCompleted
+			analysis.Status.Reason = aianalysisv1.ReasonAnalysisCompleted
+			analysis.Status.Message = "Workflow recommended: restart-pod-v1"
+			analysis.Status.EnsureRCAResult().RootCause = "Memory exhaustion due to unbounded cache growth"
+			analysis.Status.RCAResult.SelectedWorkflow = &aianalysisv1.SelectedWorkflow{
+				WorkflowSnapshot: sharedtypes.WorkflowSnapshot{
+					WorkflowID:            "restart-pod-v1",
+					WorkflowName:          "restart-pod-v1",
+					ActionType:            "RestartPod",
+					Version:               "1.0.0",
+					ExecutionBundle:       "quay.io/kubernaut/restart-pod:v1",
+					ExecutionBundleDigest: "sha256:abc123def456",
+					ExecutionEngine:       "tekton",
+				},
+				Confidence: 0.95,
+				Rationale:  "High confidence match for pod restart scenario",
+				Parameters: map[string]string{
+					"TARGET_POD": "test-pod-completion",
+				},
+			}
+			analysis.Status.RCAResult.RootCauseAnalysis = &aianalysisv1.RootCauseAnalysis{
+				Summary:    "Memory exhaustion due to unbounded cache growth",
+				Severity:   signalprocessingv1.SeverityCritical,
+				SignalType: "alert",
+				RemediationTarget: &aianalysisv1.RemediationTarget{
+					Kind:      "Pod",
+					Name:      "test-pod-completion",
+					Namespace: testNS,
+				},
+			}
+			return k8sClient.Status().Update(ctx, analysis)
+		})).To(Succeed())
+
+		By("6. Waiting for RO to create WorkflowExecution CRD")
+		var we *workflowexecutionv1.WorkflowExecution
+		Eventually(func() bool {
+			weList := &workflowexecutionv1.WorkflowExecutionList{}
+			_ = k8sClient.List(ctx, weList, client.InNamespace(controllerNamespace))
+			for i := range weList.Items {
+				if len(weList.Items[i].OwnerReferences) > 0 &&
+					weList.Items[i].OwnerReferences[0].Kind == kindRemediationRequestFixture &&
+					weList.Items[i].OwnerReferences[0].Name == rrName {
+					we = &weList.Items[i]
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(), "WorkflowExecution should be created by RO")
+
+		By("7. Manually updating WorkflowExecution status to Completed (simulating WE controller)")
+		Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(we), we); err != nil {
+				return err
+			}
+			we.Status.Phase = workflowexecutionv1.PhaseCompleted
+			return k8sClient.Status().Update(ctx, we)
+		})).To(Succeed())
+
+		By("8. Waiting for RemediationRequest to transition to Verifying (#280)")
+		updatedRR := &remediationv1.RemediationRequest{}
+		Eventually(func() remediationv1.RemediationPhase {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(rr), updatedRR); err != nil {
+				GinkgoWriter.Printf("  ⏳ RR Get error: %v\n", err)
+				return ""
+			}
+			if updatedRR.Status.OverallPhase != remediationv1.PhaseVerifying {
+				GinkgoWriter.Printf("  ⏳ RR %s phase=%s blockReason=%s failurePhase=%v failureReason=%v\n",
+					updatedRR.Name, updatedRR.Status.OverallPhase,
+					updatedRR.Status.EnsureRoutingStatus().BlockReason,
+					updatedRR.Status.EnsureCompletionStatus().FailurePhase, updatedRR.Status.EnsureCompletionStatus().FailureReason)
+			}
+			return updatedRR.Status.OverallPhase
+		}, timeout, interval).Should(Equal(remediationv1.PhaseVerifying),
+			fmt.Sprintf("#280: RemediationRequest should transition to Verifying after WE completes (actual phase: %s, blockReason: %s, failurePhase: %v)",
+				updatedRR.Status.OverallPhase, updatedRR.Status.EnsureRoutingStatus().BlockReason, updatedRR.Status.EnsureCompletionStatus().FailurePhase))
+
+		By("8a. Driving EA to completion for Verifying → Completed (#280)")
+		eaDriveName := fmt.Sprintf("ea-%s", rr.Name)
+		eaDrive := &eav1.EffectivenessAssessment{}
+		Eventually(func() error {
+			return k8sClient.Get(ctx, client.ObjectKey{Name: eaDriveName, Namespace: controllerNamespace}, eaDrive)
+		}, timeout, interval).Should(Succeed(), "EA should be created during Verifying phase")
+		eaDrive.Status.Phase = eav1.PhaseCompleted
+		eaDeadline := metav1.NewTime(time.Now().Add(10 * time.Minute))
+		eaDrive.Status.ValidityDeadline = &eaDeadline
+		Expect(k8sClient.Status().Update(ctx, eaDrive)).To(Succeed())
+
+		By("8b. Waiting for RemediationRequest to transition to Completed")
+		Eventually(func() remediationv1.RemediationPhase {
+			_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(rr), updatedRR)
+			return updatedRR.Status.OverallPhase
+		}, timeout, interval).Should(Equal(remediationv1.PhaseCompleted),
+			"RemediationRequest should transition to Completed after EA completes")
+
+		By("9. Waiting for RO to create completion NotificationRequest (BR-ORCH-045)")
+		var notification *notificationv1.NotificationRequest
+		Eventually(func() bool {
+			notificationList := &notificationv1.NotificationRequestList{}
+			_ = k8sClient.List(ctx, notificationList, client.InNamespace(controllerNamespace))
+			for i := range notificationList.Items {
+				if len(notificationList.Items[i].OwnerReferences) > 0 &&
+					notificationList.Items[i].OwnerReferences[0].Kind == kindRemediationRequestFixture &&
+					notificationList.Items[i].OwnerReferences[0].Name == rrName &&
+					notificationList.Items[i].Spec.Type == notificationv1.NotificationTypeCompletion {
+					notification = &notificationList.Items[i]
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue(), "NotificationRequest with type=completion should be created by RO")
+
+		By("10. Validating completion NotificationRequest content")
+		Expect(notification.Spec.Type).To(Equal(notificationv1.NotificationTypeCompletion),
+			"BR-ORCH-045: Notification type must be 'completion'")
+		Expect(notification.Spec.Subject).To(ContainSubstring("Remediation Completed"),
+			"Subject should indicate remediation completed")
+		Expect(notification.Spec.Subject).To(ContainSubstring(rr.Spec.SignalName),
+			"Subject should contain signal name")
+		Expect(notification.Spec.Body).To(ContainSubstring("Memory exhaustion"),
+			"Body should contain root cause analysis")
+		Expect(notification.Spec.Body).To(ContainSubstring("restart-pod-v1"),
+			"Body should contain workflow ID")
+		Expect(notification.Spec.Body).NotTo(HavePrefix("**Cluster**:"),
+			"BR-FLEET-001/AU-3: local completion notification must not fabricate cluster provenance")
+		Expect(notification.Spec.Priority).To(Equal(notificationv1.NotificationPriorityLow),
+			"Completion notifications should be low priority (informational)")
+
+		By("11. Validating NotificationRequest spec fields for routing (Issue #91)")
+		Expect(notification.Spec.Type).To(Equal(notificationv1.NotificationTypeCompletion))
+		Expect(notification.Spec.RemediationRequestRef.Name).To(Equal(rr.Name))
+		Expect(notification.Spec.Severity).To(Equal(signalprocessingv1.SeverityCritical))
+
+		By("12. Validating NotificationRequest context")
+		Expect(notification.Spec.Context.Lineage.RemediationRequest).To(Equal(rr.Name))
+		Expect(notification.Spec.Context.Workflow.WorkflowID).To(Equal("restart-pod-v1"))
+
+		By("13. Validating owner reference for cascade deletion (BR-ORCH-031)")
+		Expect(notification.OwnerReferences).To(HaveLen(1))
+		Expect(notification.OwnerReferences[0].Name).To(Equal(rr.Name))
+		Expect(notification.OwnerReferences[0].Kind).To(Equal(kindRemediationRequestFixture))
+
+		GinkgoWriter.Println("E2E-RO-2449-001: Completion notification validated in Kind cluster")
+	})
+})

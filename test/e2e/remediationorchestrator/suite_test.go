@@ -1,0 +1,399 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package remediationorchestrator_test contains E2E tests for the RemediationOrchestrator controller.
+// These tests use a KIND cluster with full service deployment.
+//
+// Defense-in-Depth Strategy (per 03-testing-strategy.mdc):
+// - Unit tests (70%+): Business logic in isolation (test/unit/remediationorchestrator/)
+// - Integration tests (>50%): Infrastructure interaction with envtest (test/integration/remediationorchestrator/)
+// - E2E tests (10-15%): Complete workflow validation with KIND (this file)
+//
+// CRITICAL: Uses isolated kubeconfig to avoid overwriting ~/.kube/config
+// Per TESTING_GUIDELINES.md: kubeconfig at ~/.kube/ro-e2e-config
+//
+// Test Execution (parallel, 4 procs):
+//
+//	ginkgo -p --procs=4 ./test/e2e/remediationorchestrator/...
+//
+// MANDATORY: All tests use unique namespaces for parallel execution isolation.
+package remediationorchestrator
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	// Import ALL CRD types that RO interacts with
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/jordigilh/kubernaut/test/shared/helpers"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	trueFixture = "true"
+)
+
+// Test constants for timeout and polling intervals
+const (
+	timeout  = 120 * time.Second // Longer timeout for E2E with real services
+	interval = 500 * time.Millisecond
+
+	// Cluster configuration
+	clusterName = "ro-e2e"
+
+	// ADR-057: RemediationRequests live in kubernaut-system, not test namespaces
+	controllerNamespace = "kubernaut-system"
+)
+
+// Package-level variables for test environment
+var (
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// ============================================================================
+	// CRITICAL: Isolated kubeconfig path
+	// Per TESTING_GUIDELINES.md - NEVER overwrite ~/.kube/config
+	// ============================================================================
+	kubeconfigPath string
+
+	k8sClient client.Client
+	apiReader client.Reader // Direct API reader to bypass client cache for Eventually() blocks
+
+	// DataStorage audit client for Gap #8 webhook audit event queries
+	// Per DD-TEST-001: RO E2E uses port 8081 for DataStorage host port allocation
+	auditClient *ogenclient.Client
+
+	// DD-AUTH-014: ServiceAccount token for DataStorage authentication
+	e2eAuthToken string
+
+	// Track test failures for cluster cleanup decision
+	anyTestFailed bool
+)
+
+func TestRemediationOrchestratorE2E(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "RemediationOrchestrator Controller E2E Suite (KIND)")
+}
+
+var _ = SynchronizedBeforeSuite(
+	// This runs on process 1 only - create cluster once
+	func() []byte {
+		logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+		By("Setting up isolated kubeconfig path (per TESTING_GUIDELINES.md)")
+		homeDir, err := os.UserHomeDir()
+		Expect(err).ToNot(HaveOccurred())
+
+		// ============================================================================
+		// CRITICAL: Use isolated kubeconfig - NEVER use ~/.kube/config
+		// This prevents accidentally overwriting user's real cluster credentials
+		// ============================================================================
+		tempKubeconfigPath := fmt.Sprintf("%s/.kube/%s-config", homeDir, clusterName)
+		GinkgoWriter.Printf("📂 Using isolated kubeconfig: %s\n", tempKubeconfigPath)
+
+		By("Setting up RO E2E infrastructure using HYBRID PARALLEL approach (DD-TEST-002)")
+		// This replaces manual cluster creation with the validated hybrid pattern:
+		// 1. Build images in parallel (RO + DataStorage)
+		// 2. Create Kind cluster AFTER builds complete (no idle timeout)
+		// 3. Load images immediately (reliable)
+		// 4. Deploy all services (PostgreSQL, Redis, DataStorage, RO)
+		//
+		// Expected time: ~5-6 minutes (vs 20-25 minutes sequential)
+		// Reliability: 100% (no Kind cluster timeouts)
+		ctx := context.Background()
+		err = infrastructure.SetupROInfrastructureHybridWithCoverage(
+			ctx, clusterName, tempKubeconfigPath, GinkgoWriter,
+		)
+		Expect(err).ToNot(HaveOccurred())
+
+		// DD-AUTH-014: Create E2E ServiceAccount for DataStorage authentication
+		By("🔐 Creating E2E ServiceAccount for DataStorage audit queries (DD-AUTH-014)")
+		e2eSAName := "remediationorchestrator-e2e-sa"
+		namespace := "kubernaut-system"
+
+		err = infrastructure.CreateE2EServiceAccountWithDataStorageAccess(ctx, namespace, tempKubeconfigPath, e2eSAName, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create E2E ServiceAccount")
+
+		// Get ServiceAccount token for Bearer authentication
+		token, err := infrastructure.GetServiceAccountToken(ctx, namespace, e2eSAName, tempKubeconfigPath)
+		Expect(err).ToNot(HaveOccurred(), "Failed to get E2E ServiceAccount token")
+		By("✅ E2E ServiceAccount token retrieved for authenticated DataStorage access")
+
+		By("Setting KUBECONFIG for all processes")
+		err = os.Setenv("KUBECONFIG", tempKubeconfigPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		GinkgoWriter.Println("✅ E2E test environment ready (Process 1)")
+		GinkgoWriter.Printf("   Cluster: %s\n", clusterName)
+		GinkgoWriter.Printf("   Kubeconfig: %s\n", tempKubeconfigPath)
+		GinkgoWriter.Println("   Process 1 will now share kubeconfig + auth token with other processes")
+
+		// Return kubeconfig path and auth token to all processes
+		return []byte(fmt.Sprintf("%s|%s", tempKubeconfigPath, token))
+	},
+	// This runs on ALL processes - connect to the cluster created by process 1
+	func(data []byte) {
+		// Parse data: "kubeconfig|authToken"
+		parts := strings.Split(string(data), "|")
+		kubeconfigPath = parts[0]
+		if len(parts) > 1 {
+			e2eAuthToken = parts[1] // DD-AUTH-014: Store token for authenticated DataStorage access
+		}
+
+		// Initialize context
+		ctx, cancel = context.WithCancel(context.TODO())
+
+		GinkgoWriter.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		GinkgoWriter.Printf("RO E2E Test Suite - Setup (Process %d)\n", GinkgoParallelProcess())
+		GinkgoWriter.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		GinkgoWriter.Printf("Connecting to cluster created by process 1\n")
+		GinkgoWriter.Printf("  • Kubeconfig: %s\n", kubeconfigPath)
+
+		By("Setting KUBECONFIG environment variable for this test process")
+		err := os.Setenv("KUBECONFIG", kubeconfigPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Issue #785: Configure http.DefaultTransport to trust the inter-service CA.
+		tlsTransport, tlsRErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsRErr).ToNot(HaveOccurred(), "Failed to create TLS-aware transport (Issue #785)")
+		http.DefaultTransport = tlsTransport
+
+		By("Registering ALL CRD schemes for RO orchestration")
+		err = remediationv1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = signalprocessingv1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = aianalysisv1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = workflowexecutionv1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = notificationv1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = eav1.AddToScheme(scheme.Scheme) // ADR-EM-001: EA CRD scheme for EA creation verification
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Creating Kubernetes client from isolated kubeconfig")
+		cfg, err := config.GetConfig()
+		Expect(err).ToNot(HaveOccurred())
+
+		k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+
+		// Create direct API reader for Eventually() blocks to bypass client cache
+		// This ensures fresh reads from API server for status polling
+		apiReader, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Setting up authenticated DataStorage audit client for Gap #8 webhook tests")
+		// Per DD-TEST-001: RO E2E uses port 8081 for DataStorage host port allocation
+		// Per DD-AUTH-014: Use ServiceAccount token for authentication
+		dataStorageURL := "https://localhost:8090" // DD-TEST-001: RO → DataStorage (Issue #785: HTTPS)
+		tlsBase, tlsAErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsAErr).ToNot(HaveOccurred(), "TLS transport for DataStorage audit client")
+		saTransport := testauth.NewServiceAccountTransportWithBase(e2eAuthToken, tlsBase)
+		httpClient := &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: saTransport,
+		}
+		auditClient, err = ogenclient.NewClient(dataStorageURL, ogenclient.WithClient(httpClient))
+		Expect(err).ToNot(HaveOccurred())
+		GinkgoWriter.Printf("✅ Authenticated DataStorage audit client configured: %s\n", dataStorageURL)
+
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Printf("Setup Complete - Process %d ready to run tests\n", GinkgoParallelProcess())
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	},
+)
+
+// Track test failures for cluster cleanup decision
+var _ = ReportAfterEach(func(report SpecReport) {
+	if report.Failed() {
+		anyTestFailed = true
+		infrastructure.MarkTestFailure(clusterName)
+	}
+})
+
+var _ = SynchronizedAfterSuite(
+	// This runs on ALL processes - cleanup context
+	func() {
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		GinkgoWriter.Printf("Process %d - Cleaning up\n", GinkgoParallelProcess())
+		GinkgoWriter.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Cancel context for this process
+		if cancel != nil {
+			cancel()
+		}
+	},
+	// This runs on process 1 only - cleanup cluster
+	func() {
+		By("Cleaning up test environment")
+
+		// Detect setup failure: if k8sClient is nil, BeforeSuite failed
+		setupFailed := k8sClient == nil
+		if setupFailed {
+			By("⚠️  Setup failure detected (k8sClient is nil)")
+		}
+
+		// Determine cleanup strategy
+		anyFailure := infrastructure.ResolveAnyFailure(clusterName, setupFailed, anyTestFailed, GinkgoWriter)
+		defer infrastructure.CleanupFailureMarker(clusterName)
+		preserveCluster := os.Getenv("PRESERVE_E2E_CLUSTER") == trueFixture || os.Getenv("KEEP_CLUSTER") == trueFixture
+
+		if preserveCluster {
+			GinkgoWriter.Println("⚠️  CLUSTER PRESERVED FOR DEBUGGING")
+			GinkgoWriter.Printf("   To access: export KUBECONFIG=%s\n", kubeconfigPath)
+			GinkgoWriter.Printf("   To delete: kind delete cluster --name %s\n", clusterName)
+			return
+		}
+
+		// DD-TEST-007: Collect E2E binary coverage BEFORE cluster deletion
+		if os.Getenv("E2E_COVERAGE") == trueFixture && !setupFailed {
+			if err := infrastructure.CollectE2EBinaryCoverage(infrastructure.E2ECoverageOptions{
+				ServiceName:    "remediationorchestrator",
+				ClusterName:    clusterName,
+				DeploymentName: "remediationorchestrator-controller",
+				Namespace:      "kubernaut-system",
+				KubeconfigPath: kubeconfigPath,
+			}, GinkgoWriter); err != nil {
+				GinkgoWriter.Printf("⚠️  Failed to collect E2E binary coverage (non-fatal): %v\n", err)
+			}
+		}
+
+		// DD-TESTING-003 / Issue #2036: production must-gather image as a local
+		// podman container on the cluster's "kind" network, replacing the old
+		// in-process kubectl-log-scraping (MustGatherPodLogs, previously invoked
+		// internally by DeleteCluster below).
+		if anyFailure {
+			// #2036 rollout validation (2026-08-19 CI run): the package-level
+			// `ctx` is already canceled by the first SynchronizedAfterSuite
+			// closure's `cancel()` (runs on ALL processes, before this
+			// process-1-only closure) -- exec.CommandContext against an
+			// already-canceled context fails immediately with "context
+			// canceled" before podman ever runs. Use a fresh, independent
+			// context here so cluster teardown timing can never suppress
+			// diagnostic collection.
+			bgCtx := context.Background()
+			mustGatherImage, buildErr := infrastructure.BuildMustGatherImageForE2E(bgCtx, GinkgoWriter)
+			if buildErr != nil {
+				GinkgoWriter.Printf("⚠️  Failed to build must-gather image (non-fatal, no diagnostics collected): %v\n", buildErr)
+			} else {
+				mustGatherOutputDir := filepath.Join("/tmp", "kubernaut-must-gather", "remediationorchestrator", clusterName)
+				if err := infrastructure.RunMustGatherImage(bgCtx, infrastructure.RunMustGatherImageOptions{
+					ClusterName: clusterName,
+					Image:       mustGatherImage,
+					OutputDir:   mustGatherOutputDir,
+					UsePodman:   true,
+				}, GinkgoWriter); err != nil {
+					GinkgoWriter.Printf("⚠️  Failed to run must-gather image (non-fatal, no diagnostics collected): %v\n", err)
+				}
+			}
+		}
+
+		By("Deleting KIND cluster")
+		if err := infrastructure.DeleteCluster(clusterName, "remediationorchestrator", anyFailure, GinkgoWriter); err != nil {
+			GinkgoWriter.Printf("⚠️  Warning: Failed to delete cluster: %v\n", err)
+		}
+
+		By("Removing isolated kubeconfig file")
+		// ============================================================================
+		// CRITICAL: Only delete the isolated kubeconfig, never the default one
+		// ============================================================================
+		if kubeconfigPath != "" {
+			defaultConfig := os.ExpandEnv("$HOME/.kube/config")
+			if kubeconfigPath != defaultConfig {
+				_ = os.Remove(kubeconfigPath)
+				GinkgoWriter.Printf("🗑️  Removed kubeconfig: %s\n", kubeconfigPath)
+			} else {
+				GinkgoWriter.Println("⚠️  Skipping removal - path matches default kubeconfig")
+			}
+		}
+
+		By("Cleaning up service images built for Kind (DD-TEST-001 v1.1)")
+		// Remove service image built for this test run
+		// Skip in CI/CD mode - image is in GHCR registry, not stored locally
+		imageTag := os.Getenv("IMAGE_TAG") // Set by build/test infrastructure
+		if imageTag != "" && !infrastructure.IsRunningInCICD() {
+			imageName := fmt.Sprintf("remediationorchestrator:%s", imageTag)
+
+			pruneCmd := exec.Command("podman", "rmi", imageName)
+			pruneOutput, pruneErr := pruneCmd.CombinedOutput()
+			if pruneErr != nil {
+				GinkgoWriter.Printf("⚠️  Failed to remove service image: %v\n%s\n", pruneErr, pruneOutput)
+			} else {
+				GinkgoWriter.Printf("✅ Service image removed: %s\n", imageName)
+			}
+		} else if infrastructure.IsRunningInCICD() {
+			GinkgoWriter.Println("⏭️  Skipping service image cleanup (CI/CD registry mode)")
+		}
+
+		By("Pruning dangling images from Kind builds (DD-TEST-001 v1.1)")
+		// Prune any dangling images left from failed builds
+		pruneCmd := exec.Command("podman", "image", "prune", "-f")
+		_, _ = pruneCmd.CombinedOutput()
+
+		GinkgoWriter.Println("✅ E2E cleanup complete")
+	},
+)
+
+// ============================================================================
+// Test Namespace Helpers (delegates to shared helpers)
+// ============================================================================
+
+// createTestNamespace creates a managed test namespace and waits for Active.
+// Delegates to shared helpers.CreateTestNamespaceAndWait with kubernaut.ai/managed=true.
+//
+// Investigated per Issue #1546 review: ctx is intentionally unused here, not a
+// missed-wiring bug. CreateTestNamespaceAndWait uses context.Background() internally
+// per DD-E2E-PARALLEL, since namespace lifecycle must not be affected by test-level
+// timeouts (see test/shared/helpers/namespace.go). The ctx parameter is kept because
+// callers across many other e2e/remediationorchestrator test files (outside this
+// fix's scope) pass it positionally; removing it would require editing those call sites too.
+//
+//nolint:unparam // ctx is unused by design (see comment above); kept for caller compatibility outside this fix's scope.
+func createTestNamespace(ctx context.Context, prefix string) string {
+	return helpers.CreateTestNamespaceAndWait(k8sClient, prefix)
+}
+
+// deleteTestNamespace cleans up a test namespace.
+// Delegates to shared helpers.DeleteTestNamespace.
+func deleteTestNamespace(name string) {
+	helpers.DeleteTestNamespace(ctx, k8sClient, name)
+}

@@ -1,0 +1,20 @@
+# Proactive Signal Name Mappings
+# BR-SP-106: Proactive Signal Mode Classification
+# ADR-054: Proactive Signal Mode Classification and Prompt Strategy
+#
+# Maps proactive signal names to their base names for workflow catalog normalization.
+# Signals matching a key are classified as "proactive" with signalMode = "proactive".
+# Signals NOT in this map default to "reactive" with signalMode = "reactive".
+#
+# This file supports hot-reload (BR-SP-072 pattern): changes are picked up
+# automatically without restarting the SignalProcessing controller.
+#
+# Format: <ProactiveSignalName>: <BaseSignalName>
+#
+# Convention: Prometheus predict_linear() alerts use the "Predicted" prefix.
+# Operators can add mappings for any signal source naming convention.
+proactive_signal_mappings:
+  PredictedOOMKill: OOMKilled
+  PredictedCPUThrottling: CPUThrottling
+  PredictedDiskPressure: DiskPressure
+  PredictedNodeNotReady: NodeNotReady

@@ -1,0 +1,242 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔄 MIGRATED FROM E2E TO INTEGRATION TIER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Migration Date: 2026-01-13
+// Pattern: DD-INTEGRATION-001 v2.0 (envtest + direct business logic calls)
+//
+// Changes from E2E:
+// ❌ REMOVED: HTTP client, gatewayURL, sendWebhook(), HTTP status codes
+// ❌ REMOVED: createPrometheusWebhookPayload helper (E2E-specific)
+// ✅ ADDED: Direct ProcessSignal() calls to Gateway business logic
+// ✅ ADDED: Shared K8s client (suite-level) for immediate CRD visibility
+// ✅ ADDED: Manual CRD status updates to simulate RO behavior
+//
+// Business Requirements:
+// - BR-GATEWAY-181: Duplicate tracking visible in RR status for RO decision-making
+//
+// BUSINESS VALUE:
+// When duplicate alerts arrive for an active incident, the Remediation Orchestrator
+// needs to see occurrence counts in RR.status to:
+// 1. Prioritize incidents with high duplicate counts (recurring issues)
+// 2. Track alert frequency for SLA reporting
+// 3. Make informed decisions about remediation urgency
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+package gateway
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/gateway"
+	"github.com/jordigilh/kubernaut/test/shared/helpers"
+)
+
+// TODO: This test requires investigation of Gateway's deduplication behavior in integration tier
+// Test validates status-based deduplication tracking per DD-GATEWAY-011
+// Fixed: Added Eventually() after status updates to ensure K8s API propagation
+// before deduplication check runs
+var _ = Describe("Test 34: DD-GATEWAY-011 Status-Based Tracking (Integration)", Label("deduplication", "integration", "status-tracking"), func() {
+	var (
+		testLogger    logr.Logger
+		testNamespace string
+		gwServer      *gateway.Server
+	)
+
+	BeforeEach(func() {
+		testLogger = logger.WithValues("test", "status-dedup-integration")
+
+		// Create unique namespace per test for isolation
+		testNamespace = helpers.CreateTestNamespace(ctx, k8sClient, "status-dedup-int")
+
+		// Create Gateway server with shared K8s client
+		cfg := createGatewayConfig(fmt.Sprintf("http://127.0.0.1:%d", gatewayDataStoragePort))
+		var err error
+		gwServer, err = createGatewayServer(cfg, testLogger, k8sClient, sharedAuditStore)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create Gateway server")
+	})
+
+	AfterEach(func() {
+		if CurrentSpecReport().Failed() {
+			testLogger.Info("⚠️  Test FAILED - Preserving namespace for debugging",
+				"namespace", testNamespace)
+		} else {
+			// Cleanup CRDs in controller namespace (ADR-057)
+			crdList := &remediationv1alpha1.RemediationRequestList{}
+			_ = k8sClient.List(ctx, crdList, client.InNamespace(controllerNamespace))
+			for i := range crdList.Items {
+				// Only delete RRs targeting our test namespace
+				if crdList.Items[i].Spec.TargetResource.Namespace == testNamespace {
+					_ = k8sClient.Delete(ctx, &crdList.Items[i])
+				}
+			}
+			// Cleanup workload namespace
+			helpers.DeleteTestNamespace(ctx, k8sClient, testNamespace)
+		}
+	})
+
+	Context("when duplicate alerts arrive for active incident (BR-GATEWAY-181)", func() {
+		It("should track duplicate count in RR status for RO prioritization", func() {
+			// BR-GATEWAY-181: Duplicate Tracking in Status
+			//
+			// BUSINESS SCENARIO:
+			// A pod is crash-looping, generating repeated alerts. The Remediation
+			// Orchestrator needs to see how many times this alert has fired to:
+			// - Prioritize high-frequency incidents
+			// - Report accurate SLA metrics
+			// - Determine remediation urgency
+
+			testLogger.Info("Step 1: Send first signal (creates CRD)")
+			uniqueID := uuid.New().String()[:8]
+			signal := createNormalizedSignal(SignalBuilder{
+				AlertName:    "RecurringPodCrashLoop",
+				Namespace:    testNamespace,
+				ResourceName: fmt.Sprintf("payment-api-%s", uniqueID),
+				Kind:         "Pod",
+				Severity:     "critical",
+				Source:       "prometheus",
+				Labels: map[string]string{
+					"app":       "payment-api",
+					"unique_id": uniqueID,
+				},
+			})
+
+			response1, err := gwServer.ProcessSignal(ctx, signal)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response1.Status).To(Equal(gateway.StatusCreated), "First signal should create new CRD")
+			crdName := response1.RemediationRequestName
+
+			testLogger.Info("Step 2: Verify CRD was created")
+			crd := &remediationv1alpha1.RemediationRequest{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, crd)
+			Expect(err).ToNot(HaveOccurred(), "CRD should exist")
+
+		testLogger.Info("Step 3: Set CRD state to Pending (RO has picked it up)")
+		crd.Status.OverallPhase = "Pending"
+		err = k8sClient.Status().Update(ctx, crd)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Wait for status update to propagate (K8s API eventual consistency)
+		Eventually(func() string {
+			var updated remediationv1alpha1.RemediationRequest
+			_ = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, &updated)
+			return string(updated.Status.OverallPhase)
+		}, 10*time.Second, 500*time.Millisecond).Should(Equal("Pending"),
+			"Status update should propagate before deduplication check")
+
+		testLogger.Info("Step 4: Send duplicate signal")
+		response2, err := gwServer.ProcessSignal(ctx, signal)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(response2.Status).To(Equal(gateway.StatusDeduplicated), "Duplicate signal should return StatusDeduplicated")
+		Expect(response2.Duplicate).To(BeTrue(), "Response should indicate duplicate")
+
+			testLogger.Info("Step 5: BUSINESS OUTCOME - RO can see duplicate count in RR status")
+			// Refresh CRD to see status updates
+			err = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, crd)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Business requirement: RO needs to see deduplication data in status
+			Expect(crd.Status.Deduplication).ToNot(BeNil(), "Deduplication status must be populated")
+			Expect(crd.Status.Deduplication.OccurrenceCount).To(BeNumerically(">=", 1),
+				"Duplicate tracking should be visible to RO (BR-GATEWAY-181)")
+			Expect(crd.Status.Deduplication.LastSeenAt).ToNot(BeNil(),
+				"RO needs timestamp for SLA tracking")
+			Expect(crd.Status.Deduplication.LastSeenAt.IsZero()).To(BeFalse())
+
+			testLogger.Info("✅ RO can read duplicate tracking from RR status",
+				"occurrences", crd.Status.Deduplication.OccurrenceCount,
+				"lastSeen", crd.Status.Deduplication.LastSeenAt)
+		})
+
+		It("should accurately count recurring alerts for SLA reporting (BR-GATEWAY-181)", func() {
+			// BR-GATEWAY-181: Accurate Occurrence Counting
+			//
+			// BUSINESS SCENARIO:
+			// SRE team needs to report on incident frequency. When the same alert
+			// fires multiple times, the occurrence count must be accurate for:
+			// - SLA breach calculations
+			// - Incident frequency dashboards
+			// - Remediation effectiveness metrics
+
+			testLogger.Info("Step 1: Initial signal creates incident")
+			uniqueID := uuid.New().String()[:8]
+			signal := createNormalizedSignal(SignalBuilder{
+				AlertName:    "RecurringPodCrashLoop",
+				Namespace:    testNamespace,
+				ResourceName: fmt.Sprintf("payment-api-%s", uniqueID),
+				Kind:         "Pod",
+				Severity:     "critical",
+				Source:       "prometheus",
+			})
+
+			response1, err := gwServer.ProcessSignal(ctx, signal)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response1.Status).To(Equal(gateway.StatusCreated))
+			crdName := response1.RemediationRequestName
+
+			testLogger.Info("Step 2: Set incident to Pending (being processed)")
+			crd := &remediationv1alpha1.RemediationRequest{}
+			err = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, crd)
+			Expect(err).ToNot(HaveOccurred())
+
+		crd.Status.OverallPhase = "Pending"
+		err = k8sClient.Status().Update(ctx, crd)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Wait for status update to propagate
+		Eventually(func() string {
+			var updated remediationv1alpha1.RemediationRequest
+			_ = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, &updated)
+			return string(updated.Status.OverallPhase)
+		}, 10*time.Second, 500*time.Millisecond).Should(Equal("Pending"),
+			"Status update should propagate before deduplication check")
+
+		testLogger.Info("Step 3: Same alert fires again (pod still crash-looping)")
+		response2, err := gwServer.ProcessSignal(ctx, signal)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(response2.Status).To(Equal(gateway.StatusDeduplicated),
+			"Duplicate alert should return StatusDeduplicated, not create new incident")
+
+		testLogger.Info("Step 4: Alert fires a third time (escalating situation)")
+		response3, err := gwServer.ProcessSignal(ctx, signal)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(response3.Status).To(Equal(gateway.StatusDeduplicated),
+			"Third duplicate should also return StatusDeduplicated")
+
+			testLogger.Info("Step 5: BUSINESS OUTCOME - Accurate occurrence count for SLA reporting")
+			err = k8sClient.Get(ctx, client.ObjectKey{Namespace: controllerNamespace, Name: crdName}, crd)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(crd.Status.Deduplication).ToNot(BeNil(), "Deduplication status must be populated")
+			Expect(crd.Status.Deduplication.OccurrenceCount).To(BeNumerically(">=", 2),
+				"Duplicate tracking should be visible to RO; SLA reporting requires accurate occurrence count (BR-GATEWAY-181)")
+
+			testLogger.Info("✅ SLA Report - Alert occurrence count",
+				"occurrences", crd.Status.Deduplication.OccurrenceCount)
+		})
+	})
+})

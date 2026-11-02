@@ -1,0 +1,63 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  # Upgraded to K8s 1.34.3 (latest z-stream) for CRD selectableFields support (requires 1.30+)
+  # Matches project's k8s.io/api v0.34.1, pinned with digest for reproducibility
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  
+  # Expose Notification Controller metrics via NodePort to host machine
+  # This eliminates kubectl port-forward instability for E2E tests
+  # Using 8081 on host (gateway uses 8080) - proven port pattern
+  extraPortMappings:
+  - containerPort: 30186  # Notification metrics NodePort (per DD-TEST-001)
+    hostPort: 9186        # Port on host machine (localhost:9186)
+    protocol: TCP
+  - containerPort: 30090  # Data Storage NodePort for audit E2E tests
+    hostPort: 30090       # Port on host machine (localhost:30090)
+    protocol: TCP
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 30281       # Port on host machine (localhost:30281)
+    protocol: TCP
+  # Mount host directory for E2E file delivery validation
+  # This allows tests to directly read files written by FileService
+  # Note: hostPath is set dynamically by CreateNotificationCluster:
+  #   - Linux/CI: /tmp/kubernaut-e2e-notifications (direct access)
+  #   - macOS: $HOME/.kubernaut/e2e-notifications (Podman VM limitation)
+  # extraMounts is added programmatically in infrastructure/notification.go
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Tuned for 12 parallel E2E processes (matches DataStorage proven config)
+        # 
+        # Load calculation:
+        # - 12 parallel test processes
+        # - Each creates/updates NotificationRequests (CRD operations)
+        # - Peak: ~50 API calls/sec per process = 600 API calls/sec total
+        # - Burst scenarios: 12 processes × 20 concurrent ops = 240 concurrent API calls
+        #
+        # DataStorage proven values (3x default for stability):
+        max-requests-inflight: "1200"           # 3x default (400 → 1200)
+        max-mutating-requests-inflight: "600"   # 3x default (200 → 600)
+        
+        # Event rate limiting (prevent event spam from overwhelming etcd)
+        event-ttl: "1h"                         # Shorter event retention for E2E
+    
+    etcd:
+      local:
+        extraArgs:
+          # Increase etcd performance for high API server load
+          # DataStorage proven values (prevents cluster instability)
+          quota-backend-bytes: "8589934592"      # 8GB quota (default: 2GB)
+          snapshot-count: "100000"               # Snapshot every 100k ops (default: 10k)
+          heartbeat-interval: "500"              # 500ms heartbeat (default: 100ms, reduce overhead)
+          election-timeout: "5000"               # 5s election timeout (default: 1s)
+    
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        # DataStorage proven values
+        kube-api-qps: "100"
+        kube-api-burst: "200"

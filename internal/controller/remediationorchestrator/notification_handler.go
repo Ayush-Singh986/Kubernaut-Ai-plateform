@@ -1,0 +1,275 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+)
+
+// ========================================
+// NOTIFICATION LIFECYCLE HANDLER (BR-ORCH-029/030)
+// 📋 Design Decision: DD-RO-001 Alternative 3 | ✅ Approved Design | Confidence: 92%
+// See: docs/services/crd-controllers/05-remediationorchestrator/implementation/BR-ORCH-029-030-031-034_RE-TRIAGE.md
+// ========================================
+//
+// NotificationHandler manages notification lifecycle tracking for RemediationRequest.
+//
+// KEY PRINCIPLE: Notification lifecycle is SEPARATE from remediation lifecycle.
+// - Deleting NotificationRequest cancels the NOTIFICATION (not the remediation)
+// - RemediationRequest.Status.OverallPhase is NEVER changed by notification events
+//
+// WHY Alternative 3 (92% confidence)?
+// - ✅ Separation of concerns: Notification ≠ remediation
+// - ✅ Clear audit trail: Conditions track notification outcomes
+// - ✅ User control: Operators can cancel spam/duplicate notifications
+// - ✅ Observable state: Metrics + queryable conditions
+//
+// ⚠️ Trade-off: Added reconciler complexity (+3% watch overhead)
+//    Mitigation: Standard Kubernetes watch pattern, negligible performance impact
+// ========================================
+
+// NotificationHandler handles notification lifecycle events.
+// Business Requirements:
+// - BR-ORCH-029: User-initiated notification cancellation
+// - BR-ORCH-030: Notification status tracking
+// - BR-ORCH-031: Cascade cleanup (via owner references)
+type NotificationHandler struct {
+	client  client.Client
+	Metrics *metrics.Metrics
+}
+
+// NewNotificationHandler creates a new NotificationHandler.
+func NewNotificationHandler(c client.Client, m *metrics.Metrics) *NotificationHandler {
+	return &NotificationHandler{
+		client:  c,
+		Metrics: m,
+	}
+}
+
+// HandleNotificationRequestDeletion handles NotificationRequest deletion events.
+// Distinguishes cascade deletion (expected cleanup) from user cancellation (intentional).
+//
+// TDD REFACTOR (Day 2): Enhanced with defensive programming and structured logging.
+//
+// Reference: BR-ORCH-029 (user cancellation), BR-ORCH-031 (cascade cleanup)
+func (h *NotificationHandler) HandleNotificationRequestDeletion(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) error {
+	// Defensive: Validate input
+	if rr == nil {
+		return fmt.Errorf("RemediationRequest cannot be nil")
+	}
+
+	logger := log.FromContext(ctx).WithValues(
+		"remediationRequest", rr.Name,
+		"namespace", rr.Namespace,
+		"currentPhase", rr.Status.OverallPhase,
+		"notificationRefsCount", len(rr.Status.EnsureCompletionStatus().NotificationRequestRefs),
+	)
+
+	startTime := time.Now()
+	defer func() {
+		logger.V(1).Info("HandleNotificationRequestDeletion completed",
+			"duration", time.Since(startTime),
+		)
+	}()
+
+	// Distinguish cascade deletion from user cancellation
+	if rr.DeletionTimestamp != nil {
+		// Case 1: RemediationRequest being deleted → cascade deletion (expected)
+		logger.V(1).Info("NotificationRequest deleted as part of RemediationRequest cleanup (cascade deletion)",
+			"deletionTimestamp", rr.DeletionTimestamp.Time,
+		)
+		return nil
+	}
+
+	// Defensive: Check for notification refs
+	if len(rr.Status.EnsureCompletionStatus().NotificationRequestRefs) == 0 {
+		logger.V(1).Info("No notification refs found, skipping cancellation update")
+		return nil
+	}
+
+	// Case 2: User-initiated cancellation (NotificationRequest deleted independently)
+	h.applyUserCancellation(rr, logger)
+	return nil
+}
+
+// applyUserCancellation marks rr's notification tracking as Cancelled when a
+// NotificationRequest is deleted independently by the user (BR-ORCH-029).
+// Only notification-tracking fields are touched — overallPhase must never be
+// mutated (DD-RO-001 Alternative 3), verified defensively at the end.
+// Extracted from HandleNotificationRequestDeletion (Wave 6 6e-i GREEN:
+// funlen remediation) — pure code motion, no behavior change.
+func (h *NotificationHandler) applyUserCancellation(rr *remediationv1.RemediationRequest, logger logr.Logger) {
+	logger.Info("NotificationRequest deleted by user (cancellation)",
+		"notificationRefs", len(rr.Status.EnsureCompletionStatus().NotificationRequestRefs),
+		"previousStatus", rr.Status.EnsureCompletionStatus().NotificationStatus,
+	)
+
+	// Update notification tracking ONLY (DO NOT change overallPhase!)
+	phaseBefore := rr.Status.OverallPhase
+	previousStatus := rr.Status.EnsureCompletionStatus().NotificationStatus
+	rr.Status.EnsureCompletionStatus().NotificationStatus = "Cancelled"
+	rr.Status.Message = "NotificationRequest deleted by user before delivery completed"
+
+	logger.V(1).Info("Updated notification status",
+		"previousStatus", previousStatus,
+		"newStatus", rr.Status.EnsureCompletionStatus().NotificationStatus,
+	)
+
+	// Set condition: NotificationDelivered = False
+	remediationrequest.SetNotificationDelivered(rr, false, remediationrequest.ReasonUserCancelled, "NotificationRequest deleted by user", h.Metrics)
+
+	logger.Info("Set NotificationDelivered condition",
+		"conditionStatus", "False",
+		"conditionReason", "UserCancelled",
+	)
+
+	// Defensive: verify this function did not accidentally mutate overallPhase
+	if rr.Status.OverallPhase != phaseBefore {
+		logger.Error(nil, "CRITICAL BUG: overallPhase was mutated by notification cancellation handler",
+			"before", phaseBefore,
+			"after", rr.Status.OverallPhase,
+			"designDecision", "DD-RO-001 Alternative 3",
+		)
+	}
+}
+
+// UpdateNotificationStatus updates RemediationRequest status based on NotificationRequest phase.
+// Maps NotificationRequest delivery status to RemediationRequest notification tracking.
+//
+// TDD REFACTOR (Day 2): Enhanced with defensive programming, structured logging, and error handling.
+//
+// Reference: BR-ORCH-030 (notification status tracking)
+func (h *NotificationHandler) UpdateNotificationStatus(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+	notif *notificationv1.NotificationRequest,
+) error {
+	// Defensive: Validate inputs
+	if rr == nil {
+		return fmt.Errorf("RemediationRequest cannot be nil")
+	}
+	if notif == nil {
+		return fmt.Errorf("NotificationRequest cannot be nil")
+	}
+
+	logger := log.FromContext(ctx).WithValues(
+		"remediationRequest", rr.Name,
+		"notificationRequest", notif.Name,
+		"notificationPhase", notif.Status.Phase,
+		"previousNotificationStatus", rr.Status.EnsureCompletionStatus().NotificationStatus,
+		"currentPhase", rr.Status.OverallPhase,
+	)
+
+	startTime := time.Now()
+	defer func() {
+		logger.V(1).Info("UpdateNotificationStatus completed",
+			"duration", time.Since(startTime),
+		)
+	}()
+
+	phaseBefore := rr.Status.OverallPhase
+	previousStatus := rr.Status.EnsureCompletionStatus().NotificationStatus
+
+	if !h.applyNotificationPhase(rr, notif, startTime, logger) {
+		return nil
+	}
+
+	logger.V(1).Info("Notification status updated",
+		"previousStatus", previousStatus,
+		"newStatus", rr.Status.EnsureCompletionStatus().NotificationStatus,
+		"statusChanged", previousStatus != rr.Status.EnsureCompletionStatus().NotificationStatus,
+	)
+
+	// Defensive: verify this function did not accidentally mutate overallPhase
+	if rr.Status.OverallPhase != phaseBefore {
+		logger.Error(nil, "CRITICAL BUG: overallPhase was mutated by notification status update",
+			"before", phaseBefore,
+			"after", rr.Status.OverallPhase,
+			"designDecision", "DD-RO-001 Alternative 3",
+		)
+	}
+
+	return nil
+}
+
+// applyNotificationPhase maps notif's delivery phase onto rr's notification
+// tracking status and NotificationDelivered condition (BR-ORCH-030),
+// returning false when the phase is unrecognized (no status update
+// performed). Extracted from UpdateNotificationStatus (Wave 6 6e-i GREEN:
+// funlen remediation) — pure code motion, no behavior change.
+func (h *NotificationHandler) applyNotificationPhase(rr *remediationv1.RemediationRequest, notif *notificationv1.NotificationRequest, startTime time.Time, logger logr.Logger) bool {
+	switch notif.Status.Phase {
+	case notificationv1.NotificationPhasePending:
+		rr.Status.EnsureCompletionStatus().NotificationStatus = "Pending"
+		logger.V(1).Info("Notification pending delivery")
+
+	case notificationv1.NotificationPhaseSending:
+		rr.Status.EnsureCompletionStatus().NotificationStatus = "InProgress"
+		logger.V(1).Info("Notification delivery in progress")
+
+	case notificationv1.NotificationPhaseSent:
+		rr.Status.EnsureCompletionStatus().NotificationStatus = "Sent"
+		deliveryDuration := time.Since(startTime)
+
+		remediationrequest.SetNotificationDelivered(rr, true, remediationrequest.ReasonDeliverySucceeded, "Notification delivered successfully", h.Metrics)
+
+		logger.Info("Notification delivered successfully",
+			"deliveryDuration", deliveryDuration,
+		)
+
+	case notificationv1.NotificationPhaseFailed:
+		rr.Status.EnsureCompletionStatus().NotificationStatus = "Failed"
+		deliveryDuration := time.Since(startTime)
+
+		// Defensive: Handle empty failure message
+		failureMessage := notif.Status.Message
+		if failureMessage == "" {
+			failureMessage = "Unknown delivery failure"
+		}
+
+		remediationrequest.SetNotificationDelivered(rr, false, remediationrequest.ReasonDeliveryFailed, fmt.Sprintf("Notification delivery failed: %s", failureMessage), h.Metrics)
+
+		logger.Error(nil, "Notification delivery failed",
+			"reason", failureMessage,
+			"notificationUID", notif.UID,
+			"deliveryDuration", deliveryDuration,
+		)
+
+	default:
+		// Defensive: Handle unexpected phase
+		logger.V(1).Info("Unknown NotificationRequest phase, no status update",
+			"unexpectedPhase", notif.Status.Phase,
+		)
+		return false
+	}
+
+	return true
+}

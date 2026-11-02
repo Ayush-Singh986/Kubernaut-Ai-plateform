@@ -1,0 +1,752 @@
+package infrastructure
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+// ============================================================================
+// E2E Test Image Management (Build + Load to Kind + Cleanup)
+// ============================================================================
+//
+// This file provides abstractions for building, loading, and cleaning up
+// container images for E2E tests running in Kind clusters.
+//
+// Patterns Supported:
+// 1. Standard Pattern: BuildAndLoadImageToKind() - build + load in one step
+// 2. Hybrid Pattern: BuildImageForKind() → create cluster → LoadImageToKind()
+//
+// The hybrid pattern eliminates cluster idle time during image builds (~18% faster).
+//
+// Related:
+// - datastorage_bootstrap.go: DataStorage infrastructure bootstrap
+// - container_management.go: Generic container start/stop operations
+// ============================================================================
+
+// E2EImageConfig configures image building and loading for E2E tests
+type E2EImageConfig struct {
+	ServiceName      string // Service name (e.g., "gateway", "aianalysis")
+	ImageName        string // Base image name (e.g., "kubernaut/datastorage")
+	DockerfilePath   string // Relative to project root (e.g., "docker/data-storage.Dockerfile")
+	KindClusterName  string // Kind cluster name to load image into
+	BuildContextPath string // Build context path, default: "." (project root)
+	EnableCoverage   bool   // Enable Go coverage instrumentation (--build-arg GOFLAGS=-cover)
+}
+
+// IsRunningInCICD returns true if running in CI/CD environment with registry
+// pull/push mode (IMAGE_REGISTRY set). Deliberately excludes artifact-based
+// mode (KUBERNAUT_CI_ARTIFACT_TAG): callers of this function (e.g.
+// ShouldSkipImageExportAndPrune) assume Kind can pull images directly from a
+// registry and skip local export/load, which does NOT hold for artifact mode
+// -- those images are local-only and still need explicit `kind load`.
+func IsRunningInCICD() bool {
+	return os.Getenv("IMAGE_REGISTRY") != ""
+}
+
+// resolvePrebuiltCIArtifact checks whether a CI job has already loaded a
+// pre-built image for serviceName into the local Podman store under the
+// fixed tag advertised via KUBERNAUT_CI_ARTIFACT_TAG. When present, callers
+// should use it directly instead of building or pulling from a registry.
+//
+// This exists because BuildImageForKind's local-build cache-hit check keys
+// on a per-invocation randomly generated tag (see generateInfrastructureImageTag),
+// which a CI-loaded artifact can never match. KUBERNAUT_CI_ARTIFACT_TAG gives
+// CI a stable, predictable tag both the workflow's `podman load` step and this
+// code agree on ahead of time.
+//
+// Authority: CI/CD artifact-based image handoff (no ghcr.io push in ci-pipeline.yml)
+//
+// #1738: `podman image exists` has been observed to miss (non-zero exit)
+// for an image that is demonstrably present -- e.g. kubernautagent's
+// Integration job hits this check successfully for its first Ginkgo suite,
+// then misses it for the next 3 suites within the same job, seconds later,
+// with nothing in between ever removing the image. The leading hypothesis
+// is transient Podman container-storage contention from the burst of
+// `podman network create`/`podman run` calls each suite's own container
+// startup fires immediately before this check. One retry after a short
+// pause absorbs that transient case; on a persistent miss, the command's
+// combined output is now surfaced instead of being silently swallowed, so
+// the next occurrence gives us definitive RCA evidence.
+func resolvePrebuiltCIArtifact(ctx context.Context, serviceName string, writer io.Writer) (string, bool) {
+	artifactTag := os.Getenv("KUBERNAUT_CI_ARTIFACT_TAG")
+	if artifactTag == "" {
+		return "", false
+	}
+
+	localImageName := prebuiltCIArtifactImageName(serviceName, artifactTag)
+
+	const maxAttempts = 2
+	var output []byte
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		checkCmd := exec.CommandContext(ctx, "podman", "image", "exists", localImageName)
+		output, err = checkCmd.CombinedOutput()
+		if err == nil {
+			_, _ = fmt.Fprintf(writer, "   ✅ Using CI-prebuilt artifact: %s\n", localImageName)
+			return localImageName, true
+		}
+		if attempt < maxAttempts {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  KUBERNAUT_CI_ARTIFACT_TAG set but no pre-loaded image found for %s after %d attempts (falling back): %v: %s\n", serviceName, maxAttempts, err, detail)
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  KUBERNAUT_CI_ARTIFACT_TAG set but no pre-loaded image found for %s after %d attempts (falling back): %v\n", serviceName, maxAttempts, err)
+	}
+	return "", false
+}
+
+func prebuiltCIArtifactImageName(serviceName, artifactTag string) string {
+	return fmt.Sprintf("localhost/%s:%s", serviceName, artifactTag)
+}
+
+// ShouldSkipImageExportAndPrune returns true if image export and Podman prune should be skipped.
+// In CI/CD mode, images are pushed to GHCR and pulled directly by Kind, so local export is unnecessary.
+//
+// Authority: CI/CD optimization - saves ~2-3 minutes and ~5-9 GB disk space per test suite
+func ShouldSkipImageExportAndPrune() bool {
+	return IsRunningInCICD()
+}
+
+// GetImagePullPolicy returns the appropriate imagePullPolicy based on environment.
+// - Registry mode (IMAGE_REGISTRY set): Returns "IfNotPresent" (Kind pulls from registry)
+// - Local mode: Returns "Never" (uses images loaded into Kind)
+//
+// Authority: CI/CD optimization - avoid unnecessary image pulls/loads
+func GetImagePullPolicy() string {
+	if IsRunningInCICD() {
+		return "IfNotPresent" // Let Kind pull from registry on-demand
+	}
+	return "Never" // Use images loaded into Kind cluster
+}
+
+// GetImagePullPolicyV1 returns the appropriate corev1.PullPolicy based on environment.
+// - Registry mode (IMAGE_REGISTRY set): Returns corev1.PullIfNotPresent
+// - Local mode: Returns corev1.PullNever
+//
+// Use this for Go API-based deployments (v1.Deployment, v1.Pod)
+// Use GetImagePullPolicy() for YAML manifest-based deployments
+func GetImagePullPolicyV1() corev1.PullPolicy {
+	if os.Getenv("IMAGE_REGISTRY") != "" {
+		return corev1.PullIfNotPresent
+	}
+	return corev1.PullNever
+}
+
+// PullImageFromRegistry pulls a container image from a registry (ghcr.io for CI/CD).
+// This is used in GitHub Actions CI/CD to avoid building images locally (saves ~60% disk space).
+//
+// Registry Configuration (Environment Variables):
+//   - IMAGE_REGISTRY: Registry URL (e.g., "ghcr.io/jordigilh/kubernaut")
+//   - IMAGE_TAG: Image tag (e.g., "pr-123", "main-abc1234")
+//
+// Returns the full image name for later loading to Kind.
+//
+// Example (CI/CD):
+//
+//	IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut IMAGE_TAG=pr-123
+//	imageName, err := PullImageFromRegistry("datastorage", writer)
+//	// Returns: "ghcr.io/jordigilh/kubernaut/datastorage:pr-123"
+func PullImageFromRegistry(serviceName string, writer io.Writer) (string, error) {
+	registry := os.Getenv("IMAGE_REGISTRY")
+	tag := os.Getenv("IMAGE_TAG")
+
+	if registry == "" || tag == "" {
+		return "", fmt.Errorf("IMAGE_REGISTRY or IMAGE_TAG not set (required for registry pull)")
+	}
+
+	fullImageName := fmt.Sprintf("%s/%s:%s", registry, serviceName, tag)
+	_, _ = fmt.Fprintf(writer, "📥 Pulling image from registry: %s\n", fullImageName)
+
+	// Pull image using podman (GitHub Actions uses podman for Kind)
+	pullCmd := exec.CommandContext(context.Background(), "podman", "pull", fullImageName)
+	pullCmd.Stdout = writer
+	pullCmd.Stderr = writer
+	pullStartTime := time.Now()
+	_, _ = fmt.Fprintf(writer, "   ⏱️  Pull started: %s\n", pullStartTime.Format("15:04:05"))
+
+	if err := pullCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to pull image from registry: %w", err)
+	}
+
+	pullDuration := time.Since(pullStartTime)
+	_, _ = fmt.Fprintf(writer, "   ✅ Image pulled in %s: %s\n", pullDuration.Round(time.Second), fullImageName)
+
+	return fullImageName, nil
+}
+
+// BuildImageForKind builds a container image for E2E testing.
+// Returns the image name (with localhost/ prefix) for later loading to Kind.
+//
+// This is Phase 1 of the hybrid E2E pattern:
+//
+//	Phase 1: Build images (BEFORE cluster creation) ← THIS FUNCTION
+//	Phase 2: Create Kind cluster
+//	Phase 3: Load images to cluster (using LoadImageToKind)
+//
+// CI/CD Optimization (Fallback Strategy):
+//   - If IMAGE_REGISTRY + IMAGE_TAG are set: Pull from registry (ghcr.io)
+//   - Otherwise: Build locally (existing behavior for local dev)
+//
+// Authority: E2E_PATTERN_PERFORMANCE_ANALYSIS_JAN07.md
+// Performance: Eliminates cluster idle time during image builds
+//
+// Example (CI/CD with registry):
+//
+//	IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut IMAGE_TAG=pr-123
+//	imageName, err := BuildImageForKind(cfg, writer)
+//	// Pulls from registry instead of building
+//
+// Example (Local dev):
+//
+//	// No IMAGE_REGISTRY/IMAGE_TAG set
+//	imageName, err := BuildImageForKind(cfg, writer)
+//	// Builds locally as before
+func BuildImageForKind(ctx context.Context, cfg E2EImageConfig, writer io.Writer) (string, error) {
+	// CI/CD Optimization: Use a CI-loaded artifact if one was already
+	// podman-loaded for this service under the agreed-upon fixed tag.
+	// Skip build entirely - the image is already local.
+	if prebuilt, ok := resolvePrebuiltCIArtifact(ctx, cfg.ServiceName, writer); ok {
+		return prebuilt, nil
+	}
+
+	// CI/CD Optimization: Use registry reference directly if configured
+	// Skip pull + load - let Kind pull from registry on-demand
+	registry := os.Getenv("IMAGE_REGISTRY")
+	tag := os.Getenv("IMAGE_TAG")
+
+	if registry != "" && tag != "" {
+		// Extract service name from ImageName (remove repo prefix if present)
+		// e.g., "kubernaut/datastorage" → "datastorage"
+		parts := strings.Split(cfg.ImageName, "/")
+		serviceName := parts[len(parts)-1]
+
+		registryImage := fmt.Sprintf("%s/%s:%s", registry, serviceName, tag)
+		_, _ = fmt.Fprintf(writer, "🔄 Registry mode: Using %s\n", registryImage)
+		_, _ = fmt.Fprintf(writer, "   ⏭️  Skipping pull + load (Kind will pull on-demand)\n")
+
+		// Return registry image reference (no local pull/build needed)
+		return registryImage, nil
+	}
+	projectRoot := getProjectRoot()
+
+	if cfg.BuildContextPath == "" {
+		cfg.BuildContextPath = projectRoot
+	} else if !filepath.IsAbs(cfg.BuildContextPath) {
+		// Resolve relative BuildContextPath against project root
+		// (ginkgo CWD is the test suite directory, not the project root)
+		cfg.BuildContextPath = filepath.Join(projectRoot, cfg.BuildContextPath)
+	}
+
+	// Generate DD-TEST-001 v1.3 compliant tag
+	// Use ServiceName for infrastructure field (not full ImageName with repo prefix)
+	// to avoid "/" in tags which Docker/Podman rejects
+	imageTag := generateInfrastructureImageTag(cfg.ServiceName)
+	fullImageName := fmt.Sprintf("%s:%s", cfg.ImageName, imageTag)
+
+	// Podman automatically prefixes images with "localhost/" if no registry is specified
+	// We need to use the same name for both build and load operations
+	localImageName := fmt.Sprintf("localhost/%s", fullImageName)
+
+	// Check if image already exists (cache hit) - DD-TEST-002 optimization
+	checkCmd := exec.CommandContext(ctx, "podman", "image", "exists", localImageName)
+	if checkCmd.Run() == nil {
+		_, _ = fmt.Fprintf(writer, "   ✅ Image already exists (using cache): %s\n", fullImageName)
+		return localImageName, nil
+	}
+
+	_, _ = fmt.Fprintf(writer, "🔨 Building E2E image: %s\n", fullImageName)
+
+	// Build image with optional coverage instrumentation
+	buildArgs := []string{"build", "-t", localImageName, "--no-cache",
+		"--build-arg", fmt.Sprintf("GOARCH=%s", runtime.GOARCH),
+	}
+
+	// Mount host Go module cache to avoid GCS download failures in Podman VM
+	if volumeArgs := goModCacheVolumeArgs(); len(volumeArgs) > 0 {
+		buildArgs = append(buildArgs, volumeArgs...)
+		_, _ = fmt.Fprintf(writer, "   📦 Mounting host Go module cache for faster builds\n")
+	}
+
+	// DD-TEST-007: E2E Coverage Collection
+	// Support coverage instrumentation when E2E_COVERAGE=true or EnableCoverage flag is set
+	if cfg.EnableCoverage || os.Getenv("E2E_COVERAGE") == trueFixture {
+		buildArgs = append(buildArgs, "--build-arg", "GOFLAGS=-cover")
+		_, _ = fmt.Fprintf(writer, "   📊 Building with coverage instrumentation (GOFLAGS=-cover)\n")
+	}
+
+	_, _ = fmt.Fprintf(writer, "   🚫 Building with --no-cache to ensure fresh code\n")
+	buildArgs = append(buildArgs, "-f", filepath.Join(projectRoot, cfg.DockerfilePath), cfg.BuildContextPath)
+
+	// DD-TEST-009: Add 15-minute timeout to prevent infinite hangs
+	// Context: E2E tests were hanging indefinitely when Podman build processes stalled
+	// during dependency downloads (especially Python packages in legacy HolmesGPT stacks)
+	buildCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+
+	buildCmd := exec.CommandContext(buildCtx, "podman", buildArgs...)
+	buildCmd.Stdout = writer
+	buildCmd.Stderr = writer
+	buildStartTime := time.Now()
+	_, _ = fmt.Fprintf(writer, "   ⏱️  Build started: %s (15min timeout)\n", buildStartTime.Format("15:04:05"))
+
+	if err := buildCmd.Run(); err != nil {
+		if buildCtx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("build timed out after 15 minutes for %s", cfg.ServiceName)
+		}
+		return "", fmt.Errorf("failed to build E2E image: %w", err)
+	}
+
+	buildDuration := time.Since(buildStartTime)
+	_, _ = fmt.Fprintf(writer, "   ✅ Image built in %s: %s\n", buildDuration.Round(time.Second), localImageName)
+
+	return localImageName, nil
+}
+
+// LoadImageToKind loads a pre-built image to a Kind cluster.
+// Steps: Export to tar → Load to Kind → Remove tar → Remove Podman image
+//
+// This is Phase 3 of the hybrid E2E pattern:
+//
+//	Phase 1: Build images (using BuildImageForKind)
+//	Phase 2: Create Kind cluster
+//	Phase 3: Load images to cluster ← THIS FUNCTION
+//
+// Authority: E2E_PATTERN_PERFORMANCE_ANALYSIS_JAN07.md
+// Performance: Explicit load step after cluster creation eliminates idle time
+//
+// Parameters:
+//   - imageName: Full image name with localhost/ prefix (from BuildImageForKind)
+//   - serviceName: Service name for tar file naming (e.g., "datastorage")
+//   - clusterName: Kind cluster name to load image into
+//   - writer: Output writer for logging
+//
+// Example:
+//
+//	imageName, _ := BuildImageForKind(cfg, writer)
+//	err := LoadImageToKind(imageName, "datastorage", "gateway-e2e", writer)
+func LoadImageToKind(ctx context.Context, imageName, serviceName, clusterName string, writer io.Writer) error {
+	return loadImageToKindIntoCluster(ctx, imageName, serviceName, clusterName, true, writer)
+}
+
+// LoadImageToKindRetainingImage loads the image into a Kind cluster but keeps
+// the Podman copy available for another cluster in the same E2E journey.
+func LoadImageToKindRetainingImage(ctx context.Context, imageName, serviceName, clusterName string, writer io.Writer) error {
+	return loadImageToKindIntoCluster(ctx, imageName, serviceName, clusterName, false, writer)
+}
+
+// LoadImagesToKindBatch exports local images into one archive and imports that
+// archive once. Kind image imports are intentionally kept serial; batching
+// removes repeated Podman/Kind process and containerd setup without adding
+// concurrent load pressure to a single-node runner.
+func LoadImagesToKindBatch(ctx context.Context, imageNames []string, clusterName string, writer io.Writer) error {
+	if len(imageNames) == 0 {
+		return nil
+	}
+
+	archive, err := os.CreateTemp("", "kubernaut-kind-images-*.tar")
+	if err != nil {
+		return fmt.Errorf("create batch image archive: %w", err)
+	}
+	archivePath := archive.Name()
+	if err := archive.Close(); err != nil {
+		_ = os.Remove(archivePath)
+		return fmt.Errorf("close batch image archive: %w", err)
+	}
+	defer func() { _ = os.Remove(archivePath) }()
+
+	args := []string{"save", "-o", archivePath}
+	args = append(args, imageNames...)
+	_, _ = fmt.Fprintf(writer, "📦 Exporting %d local images as one Kind archive\n", len(imageNames))
+	saveCmd := exec.CommandContext(ctx, "podman", args...)
+	saveCmd.Stdout = writer
+	saveCmd.Stderr = writer
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("export batch image archive: %w", err)
+	}
+
+	if err := loadImageArchiveWithRetry(ctx, archivePath, clusterName, writer); err != nil {
+		return fmt.Errorf("load batch image archive into Kind: %w", err)
+	}
+
+	removeArgs := append([]string{"rmi", "-f"}, imageNames...)
+	removeCmd := exec.CommandContext(ctx, "podman", removeArgs...)
+	removeCmd.Stdout = writer
+	removeCmd.Stderr = writer
+	if err := removeCmd.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove batch Podman images (non-fatal): %v\n", err)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Loaded %d local images to Kind in one archive\n", len(imageNames))
+	return nil
+}
+
+func loadImageToKindIntoCluster(ctx context.Context, imageName, serviceName, clusterName string, removePodmanImage bool, writer io.Writer) error {
+	// In CI mode (IMAGE_REGISTRY set), pull the image onto the runner first
+	// then load it into Kind. Kind nodes lack GHCR credentials so on-demand
+	// pulling fails with ErrImagePull for private packages.
+	registry := os.Getenv("IMAGE_REGISTRY")
+	if registry != "" && strings.Contains(imageName, registry) {
+		_, _ = fmt.Fprintf(writer, "📦 CI mode: Pulling registry image for Kind load: %s\n", imageName)
+		pullCmd := exec.CommandContext(ctx, "podman", "pull", imageName)
+		pullCmd.Stdout = writer
+		pullCmd.Stderr = writer
+		if err := pullCmd.Run(); err != nil {
+			_, _ = fmt.Fprintf(writer, "⚠️  Pull failed, falling back to on-demand: %v\n", err)
+			return nil
+		}
+	}
+
+	_, _ = fmt.Fprintf(writer, "📦 Loading image to Kind cluster: %s\n", clusterName)
+
+	// Extract tag from image name for tar filename
+	// imageName format: "localhost/kubernaut/datastorage:tag-abc123"
+	parts := strings.Split(imageName, ":")
+	imageTag := "latest"
+	if len(parts) > 1 {
+		imageTag = parts[1]
+	}
+
+	// Create temporary tar file
+	tmpFile := fmt.Sprintf("/tmp/%s-%s.tar", serviceName, imageTag)
+	_, _ = fmt.Fprintf(writer, "   📦 Exporting image to: %s\n", tmpFile)
+	saveCmd := exec.CommandContext(ctx, "podman", "save", "-o", tmpFile, imageName)
+	saveCmd.Stdout = writer
+	saveCmd.Stderr = writer
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to export image: %w", err)
+	}
+
+	// Load tar file into Kind
+	_, _ = fmt.Fprintf(writer, "   📦 Importing archive into Kind cluster...\n")
+	if err := loadImageArchiveWithRetry(ctx, tmpFile, clusterName, writer); err != nil {
+		// Clean up tar file on error
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to load image to Kind: %w", err)
+	}
+
+	// Clean up tar file
+	if err := os.Remove(tmpFile); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove temp file %s: %v\n", tmpFile, err)
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ✅ Removed tar file: %s\n", tmpFile)
+	}
+
+	if removePodmanImage {
+		// CRITICAL: Delete the Podman copy immediately after Kind load to free disk space.
+		_, _ = fmt.Fprintf(writer, "   🗑️  Removing Podman image to free disk space...\n")
+		rmiCmd := exec.CommandContext(ctx, "podman", "rmi", "-f", imageName)
+		rmiCmd.Stdout = writer
+		rmiCmd.Stderr = writer
+		if err := rmiCmd.Run(); err != nil {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove Podman image (non-fatal): %v\n", err)
+		} else {
+			_, _ = fmt.Fprintf(writer, "   ✅ Podman image removed: %s\n", imageName)
+		}
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ♻️  Retaining Podman image for a subsequent Kind cluster: %s\n", imageName)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Image loaded to Kind\n")
+
+	return nil
+}
+
+// loadImageArchiveMaxAttempts bounds the retry loop in loadImageArchiveWithRetry.
+const loadImageArchiveMaxAttempts = 3
+
+// loadImageArchiveWithRetry runs `kind load image-archive` with a short bounded
+// retry for a specific, known-transient failure: kind's experimental podman
+// provider occasionally reports "no nodes found for cluster" on the very next
+// command immediately after `kind create cluster` itself reported success
+// (control-plane started, kubectl context set) -- a lookup race between the
+// node container becoming visible to `kind create`'s own success path and to a
+// brand-new `kind load` process's independent podman node query. Observed
+// reproducing in ~75% of consecutive fleet E2E attempts on the same host
+// (CI RCA, PR #2327/helios08 triage), always on the first `kind load` call
+// right after cluster creation, never mid-suite -- consistent with a
+// short-lived race rather than a genuine missing cluster. Retrying blind
+// (without inspecting output) would mask a real "cluster doesn't exist"
+// bug, so this only retries when the captured output matches that exact
+// signature; any other failure returns immediately on the first attempt.
+func loadImageArchiveWithRetry(ctx context.Context, tarPath, clusterName string, writer io.Writer) error {
+	var lastErr error
+	for attempt := 1; attempt <= loadImageArchiveMaxAttempts; attempt++ {
+		var captured bytes.Buffer
+		tee := io.MultiWriter(writer, &captured)
+
+		loadCmd := exec.CommandContext(ctx, "kind", "load", "image-archive", tarPath, "--name", clusterName)
+		loadCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+		loadCmd.Stdout = tee
+		loadCmd.Stderr = tee
+		err := loadCmd.Run()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		isNoNodesRace := strings.Contains(captured.String(), "no nodes found for cluster")
+		if !isNoNodesRace || attempt == loadImageArchiveMaxAttempts {
+			return err
+		}
+		_, _ = fmt.Fprintf(writer, "   ⚠️  kind load hit the known no-nodes-found race (attempt %d/%d), retrying in 5s...\n",
+			attempt, loadImageArchiveMaxAttempts)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return lastErr
+}
+
+// PreloadExternalImage pulls a third-party image (e.g., postgres:16-alpine) and loads it into
+// Kind so the in-cluster pull resolves from the pre-loaded cache. This prevents Docker Hub
+// rate-limit or slow-pull failures during E2E setup in CI.
+func PreloadExternalImage(ctx context.Context, imageName, clusterName string, writer io.Writer) error {
+	_, err := PreloadExternalImageWithReference(ctx, imageName, clusterName, writer)
+	return err
+}
+
+// PreloadExternalImageWithReference loads an external image and returns the
+// deterministic local tag that was imported into Kind. Digest-only Podman
+// saves have no RepoTags, so Kind/containerd invents an ephemeral import name
+// that kubelet cannot reliably resolve by image ID. The returned tag gives the
+// archive a stable name while the caller retains the original immutable digest
+// as provenance.
+func PreloadExternalImageWithReference(ctx context.Context, imageName, clusterName string, writer io.Writer) (string, error) {
+	_, _ = fmt.Fprintf(writer, "   📥 Pre-loading external image: %s\n", imageName)
+
+	pullCmd := exec.CommandContext(ctx, "podman", "pull", "--quiet", imageName)
+	pullCmd.Stdout = writer
+	pullCmd.Stderr = writer
+	if err := pullCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to pull %s: %w", imageName, err)
+	}
+
+	archiveImage := preloadedExternalImageReference(imageName)
+	tagCmd := exec.CommandContext(ctx, "podman", "tag", imageName, archiveImage)
+	tagCmd.Stdout = writer
+	tagCmd.Stderr = writer
+	if err := tagCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to tag %s as %s: %w", imageName, archiveImage, err)
+	}
+
+	sanitized := strings.NewReplacer("/", "_", ":", "_").Replace(imageName)
+	tmpFile := fmt.Sprintf("/tmp/preload-%s.tar", sanitized)
+
+	saveCmd := exec.CommandContext(ctx, "podman", "save", "-o", tmpFile, archiveImage)
+	saveCmd.Stdout = writer
+	saveCmd.Stderr = writer
+	if err := saveCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to save %s: %w", imageName, err)
+	}
+
+	// Remove Podman copy immediately after save — the tar has the bits and
+	// keeping both wastes disk during the Kind load that follows.
+	rmiCmd := exec.CommandContext(ctx, "podman", "rmi", "-f", imageName)
+	rmiCmd.Stdout = writer
+	rmiCmd.Stderr = writer
+	if err := rmiCmd.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove Podman image (non-fatal): %v\n", err)
+	}
+
+	loadCmd := exec.CommandContext(ctx, "kind", "load", "image-archive", tmpFile, "--name", clusterName)
+	loadCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	loadCmd.Stdout = writer
+	loadCmd.Stderr = writer
+	if err := loadCmd.Run(); err != nil {
+		_ = os.Remove(tmpFile)
+		return "", fmt.Errorf("failed to load %s into Kind: %w", imageName, err)
+	}
+
+	_ = os.Remove(tmpFile)
+	for _, ref := range []string{archiveImage, imageName} {
+		rmiCmd := exec.CommandContext(ctx, "podman", "rmi", "-f", ref)
+		rmiCmd.Stdout = writer
+		rmiCmd.Stderr = writer
+		if err := rmiCmd.Run(); err != nil {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove preloaded Podman reference %s (non-fatal): %v\n", ref, err)
+		}
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Pre-loaded %s into Kind as %s\n", imageName, archiveImage)
+	return archiveImage, nil
+}
+
+func preloadedExternalImageReference(imageName string) string {
+	if _, digest, found := strings.Cut(imageName, "@sha256:"); found && digest != "" {
+		return "localhost/kind-preload:sha256-" + digest
+	}
+	hash := sha256.Sum256([]byte(imageName))
+	return fmt.Sprintf("localhost/kind-preload:ref-%x", hash[:])
+}
+
+// BuildAndLoadImageToKind builds and loads an image to Kind in one step.
+// This is a convenience wrapper for the standard (non-hybrid) E2E pattern.
+//
+// For hybrid pattern (build-before-cluster), use BuildImageForKind() and LoadImageToKind() separately.
+//
+// Authority: E2E_PATTERN_PERFORMANCE_ANALYSIS_JAN07.md
+// Pattern: Standard (cluster-first, images build while cluster idles)
+// Performance: 18% slower than hybrid pattern, but simpler for small services
+//
+// Example (Standard Pattern):
+//
+//	imageName, err := BuildAndLoadImageToKind(cfg, writer)
+//
+// Example (Hybrid Pattern - RECOMMENDED):
+//
+//	imageName, err := BuildImageForKind(cfg, writer)
+//	createKindCluster(ctx, ...)
+//	err = LoadImageToKind(imageName, cfg.ServiceName, cfg.KindClusterName, writer)
+func BuildAndLoadImageToKind(ctx context.Context, cfg E2EImageConfig, writer io.Writer) (string, error) {
+	imageName, err := BuildImageForKind(ctx, cfg, writer)
+	if err != nil {
+		return "", err
+	}
+
+	if err := LoadImageToKind(ctx, imageName, cfg.ServiceName, cfg.KindClusterName, writer); err != nil {
+		return "", err
+	}
+
+	return imageName, nil
+}
+
+// CleanupE2EImage removes a service image built for E2E tests
+// Per DD-TEST-001 v1.3: Only kubernaut-built images are cleaned, not base images
+//
+// This should be called in AfterSuite to prevent disk space exhaustion.
+//
+// Example:
+//
+//	var _ = AfterSuite(func() {
+//	    if e2eImageName != "" {
+//	        _ = infrastructure.CleanupE2EImage(e2eImageName, GinkgoWriter)
+//	    }
+//	})
+func CleanupE2EImage(imageName string, writer io.Writer) error {
+	if imageName == "" {
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(writer, "🗑️  Removing E2E image: %s\n", imageName)
+	rmiCmd := exec.CommandContext(context.Background(), "podman", "rmi", "-f", imageName)
+	if err := rmiCmd.Run(); err != nil {
+		_, _ = fmt.Fprintf(writer, "   ⚠️  Failed to remove image (may not exist): %v\n", err)
+		return err
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ E2E image removed\n")
+	return nil
+}
+
+// CleanupE2EImages removes multiple service images (batch cleanup)
+// Useful when multiple images were built for a test run.
+//
+// Example:
+//
+//	var _ = AfterSuite(func() {
+//	    images := []string{gatewayImage, dataStorageImage, kaImage}
+//	    _ = infrastructure.CleanupE2EImages(images, GinkgoWriter)
+//	})
+func CleanupE2EImages(imageNames []string, writer io.Writer) error {
+	var errs []error
+	for _, imageName := range imageNames {
+		if err := CleanupE2EImage(imageName, writer); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to cleanup %d images", len(errs))
+	}
+	return nil
+}
+
+// ============================================================================
+// Registry Image Verification (Lightweight Check - No Pull)
+// ============================================================================
+
+// VerifyImageExistsInRegistry verifies an image exists in a registry using skopeo inspect.
+// This is much more efficient than pulling the entire image - it only fetches metadata.
+//
+// Benefits vs podman pull:
+// - No disk space used (metadata only, ~2KB vs multi-GB image)
+// - No network transfer of layers (90%+ bandwidth savings)
+// - Faster execution (~1s vs 10-30s for full pull)
+//
+// Authority: ADR-028 (Container Registry Policy) - Use skopeo inspect for verification
+//
+// Example:
+//
+//	exists, err := VerifyImageExistsInRegistry(
+//	    "ghcr.io/jordigilh/kubernaut/datastorage:pr-24",
+//	    GinkgoWriter,
+//	)
+//	if !exists {
+//	    return fmt.Errorf("image not found in registry")
+//	}
+//
+// Returns:
+// - bool: true if image exists and is accessible
+// - error: Any errors during verification (authentication, network, etc.)
+func VerifyImageExistsInRegistry(ctx context.Context, registryImage string, writer io.Writer) (bool, error) {
+	_, _ = fmt.Fprintf(writer, "   🔍 Verifying image exists in registry: %s\n", registryImage)
+
+	// Use skopeo inspect --raw to verify image existence. The --raw flag
+	// returns the manifest as-is without resolving a platform-specific image,
+	// so it works correctly with multi-arch manifest lists (unlike the default
+	// skopeo inspect which fails when the local arch isn't in the manifest).
+	inspectURL := registryImage
+	if !strings.HasPrefix(registryImage, "docker://") {
+		inspectURL = "docker://" + registryImage
+	}
+
+	cmd := exec.CommandContext(ctx, "skopeo", "inspect", "--raw", inspectURL)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		_, _ = fmt.Fprintf(writer, "   ❌ Image verification failed: %v\n", err)
+		_, _ = fmt.Fprintf(writer, "   📋 Output: %s\n", string(output))
+		return false, fmt.Errorf("image not found or not accessible: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "   ✅ Image exists in registry (verified without pull)\n")
+	return true, nil
+}
+
+// goModCacheVolumeArgs returns Podman volume arguments to mount the host Go module
+// cache into the build container, avoiding redundant module downloads during image builds.
+// Returns an empty slice if GOMODCACHE is not set or empty.
+func goModCacheVolumeArgs() []string {
+	goModCache := os.Getenv("GOMODCACHE")
+	if goModCache == "" {
+		// Fall back to default GOPATH/pkg/mod
+		gopath := os.Getenv("GOPATH")
+		if gopath == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil
+			}
+			gopath = filepath.Join(home, "go")
+		}
+		goModCache = filepath.Join(gopath, "pkg", "mod")
+	}
+
+	// Only mount if the directory exists
+	if _, err := os.Stat(goModCache); err != nil {
+		return nil
+	}
+
+	return []string{"-v", fmt.Sprintf("%s:/go/pkg/mod:ro", goModCache)}
+}

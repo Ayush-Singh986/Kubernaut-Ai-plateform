@@ -1,0 +1,111 @@
+# F-011 / ADR-022: AF SA unified security model.
+# All K8s operations (MCP bridge and A2A agent) use AF's ServiceAccount.
+# MCP RBAC (SubjectAccessReview) is the application-level access gate;
+# users do not need direct K8s RBAC for kubernaut CRDs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: apifrontend
+rules:
+  # InvestigationSession controller (owned CRD) — AC-6 least privilege
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["investigationsessions"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["investigationsessions/status"]
+    verbs: ["get", "update"]
+  # RemediationRequest management (MCP bridge + A2A agent)
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationrequests"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationrequests/status"]
+    verbs: ["get", "update", "patch"]
+  # RemediationApprovalRequest management (MCP kubernaut_approve + kubernaut_watch)
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationapprovalrequests"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["remediationapprovalrequests/status"]
+    verbs: ["get", "update", "patch"]
+  # Events for controller status reporting + kubectl_list_events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "create", "patch"]
+  # Internal triage tools (kubectl_get, kubectl_list) — aligned with gvk.go static kinds
+  - apiGroups: [""]
+    resources: ["pods", "replicationcontrollers", "services", "endpoints", "configmaps", "secrets", "namespaces", "nodes", "persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list"]
+  # Lease observation: sync KA lease state to IS CRD status (SESSION-JOIN-06)
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch"]
+  # AIAnalysis read-only: kubernaut_await_session watches for KA session readiness
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["aianalyses"]
+    verbs: ["get", "list", "watch"]
+  # AgentSession (#2214 AF-owned IS terminal-close, DD-AA-KA-001 amendment):
+  # AgentSessionTerminalCloseReconciler watches AgentSession and closes the
+  # correlated InvestigationSession on terminal phase; adds/removes its own
+  # metadata-only finalizer (agentsessionv1.TerminalCloseFinalizer) to
+  # reliably observe deletion via Reconcile instead of a best-effort raw
+  # watch delete event -- no "agentsessions/status" grant, AF never writes
+  # Status, only KA does (BR-AA-KA-065.9). This base manifest (used only by
+  # the AF-only E2E deployment path, test/infrastructure/apifrontend_e2e.go's
+  # afDeployE2ERBAC -- full-pipeline E2E instead deploys the real Helm chart)
+  # had drifted from operator-managed manifests/apifrontend/apifrontend.yaml,
+  # which already carries this grant: the AgentSession informer could never
+  # complete its initial List, so AgentSessionTerminalCloseReconciler's cache
+  # sync timed out ~5 min into the run and crashed the session controller
+  # manager (CI run 32529373504, "E2E (apifrontend)": cascading "connection
+  # reset by peer" once the pod's readyz started failing).
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["agentsessions"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # EffectivenessAssessment: fetch stabilizationWindow for progress artifacts (#1403),
+  # watch EA sub-phase transitions for status/subscribe SSE stream (#1460)
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["effectivenessassessments"]
+    verbs: ["get", "list", "watch"]
+  # SubjectAccessReview: SAR-based tool authorization (ADR-021)
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+  # TokenReview: validate ServiceAccount tokens (BR-INTERACTIVE-010)
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # DD-AUTH-014: KA auth middleware SAR gate — AF SA must be authorized
+  # to invoke KA's API (virtual SAR resource, not an actual service create)
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["kubernaut-agent"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: apifrontend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: apifrontend
+subjects:
+  - kind: ServiceAccount
+    name: apifrontend
+    namespace: kubernaut-system

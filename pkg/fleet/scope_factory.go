@@ -1,0 +1,163 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package fleet
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	"github.com/jordigilh/kubernaut/pkg/fleet/acm"
+	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
+	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+)
+
+// ScopeCheckerOption configures optional behavior for NewScopeChecker.
+type ScopeCheckerOption func(*scopeCheckerOptions)
+
+type scopeCheckerOptions struct {
+	clusterLookup ClusterLookup
+}
+
+// WithClusterRegistry adds a cluster-level precondition to scope checks using
+// the provided ClusterLookup. When set, remote scope checks first verify the
+// cluster is known before proceeding to resource-level checks.
+func WithClusterRegistry(lookup ClusterLookup) ScopeCheckerOption {
+	return func(o *scopeCheckerOptions) {
+		o.clusterLookup = lookup
+	}
+}
+
+// caReloaderTransportOrNil builds a hot-reloadable CA-verified RoundTripper
+// from caFile, or returns (nil, nil) when caFile is empty. Extracted from
+// the BackendFMC/BackendACM branches below (Issue #1683 REFACTOR) -- both
+// mirror the same "load CA, wrap the error with the backend's name" pattern.
+func caReloaderTransportOrNil(backendName, caFile string) (http.RoundTripper, error) {
+	if caFile == "" {
+		return nil, nil //nolint:nilnil // "not configured" is a valid, non-error outcome; callers check the returned transport for nil, not the error alone
+	}
+	reloader, err := sharedtls.NewCAReloaderFromFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("fleet: failed to load %s TLS CA from %s: %w", backendName, caFile, err)
+	}
+	return reloader, nil
+}
+
+// NewScopeChecker creates a scope.ScopeChecker appropriate for the given FleetConfig.
+//
+// When fleet is disabled (or no endpoint configured), returns the local checker unchanged.
+// When fleet is enabled, wraps the local checker with a FederatedScopeChecker that
+// routes local checks to scope.Manager and remote checks to the configured backend.
+//
+// Options:
+//   - WithClusterRegistry: adds cluster-level precondition (3-level hierarchy)
+//
+// Supported backends:
+//   - "fmc": FMC HTTP client — queries the FMC REST API for scope checks (ADR-068)
+//   - "acm": ACM Search GraphQL adapter — queries ACM Search for scope checks (ADR-068)
+//
+// References: ADR-068, BR-INTEGRATION-065
+func NewScopeChecker(localChecker scope.ScopeChecker, cfg FleetConfig, logger logr.Logger, opts ...ScopeCheckerOption) (scope.ScopeChecker, error) {
+	if !cfg.Enabled {
+		return localChecker, nil
+	}
+
+	endpoint := cfg.EffectiveEndpoint()
+	if endpoint == "" {
+		return localChecker, nil
+	}
+
+	o := &scopeCheckerOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	var checkerOpts []FederatedScopeCheckerOption
+	if o.clusterLookup != nil {
+		checkerOpts = append(checkerOpts, WithClusterLookup(o.clusterLookup))
+	}
+
+	backend := cfg.effectiveBackend()
+	switch backend {
+	case BackendFMC:
+		// Issue #1683: mirrors the ACM branch below -- when a CA bundle is
+		// configured, verify FMC's server cert against it (with hot-reload
+		// support via CAReloader) instead of relying on plaintext or an
+		// unverified TLS connection.
+		//
+		// Issue #1993: unlike ACM (auth attached only when cfg.TokenPath is
+		// explicitly set), FMC's bearer token is mandatory and always
+		// attached -- FMC's server-side TokenReview/SAR middleware requires
+		// it on every request (ADR-068's original "no auth required if same
+		// namespace" reasoning for this path is superseded). Prefer
+		// cfg.TokenPath when set (test seam / non-default mount path);
+		// otherwise fall back to the in-cluster SA token auto-mounted at
+		// auth.NewDefaultTokenSource()'s default path -- the same
+		// ServiceAccount identity that GW/RO's ClusterRoleBinding authorizes.
+		transport := http.DefaultTransport
+		fmcTransport, err := caReloaderTransportOrNil("FMC", cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+		if fmcTransport != nil {
+			transport = fmcTransport
+		}
+		tokenSource := auth.NewDefaultTokenSource()
+		if cfg.TokenPath != "" {
+			tokenSource = auth.NewTokenSource(cfg.TokenPath)
+		}
+		transport = auth.NewAuthTransport(tokenSource, transport)
+		remoteChecker := fmc.NewHTTPClient(endpoint, fmc.WithHTTPClient(&http.Client{
+			Timeout:   5 * time.Second,
+			Transport: transport,
+		}))
+		return NewFederatedScopeChecker(localChecker, remoteChecker, logger, checkerOpts...), nil
+	case BackendACM:
+		// #1556: ACM Search mandatorily requires bearer-token auth.
+		// FleetConfig.Validate() hard-requires cfg.TokenPath for BackendACM, so
+		// in practice this branch always composes auth.AuthTransport. The
+		// TokenPath=="" fallback below only matters for direct FleetConfig
+		// construction that bypasses Validate() (e.g. test helpers) — it must
+		// never fabricate a partial/malformed Authorization header.
+		transport := http.DefaultTransport
+		acmTransport, err := caReloaderTransportOrNil("ACM", cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+		if acmTransport != nil {
+			transport = acmTransport
+		}
+		if cfg.TokenPath != "" {
+			transport = auth.NewAuthTransport(auth.NewTokenSource(cfg.TokenPath), transport)
+		}
+		var acmOpts []acm.ClientOption
+		if cfg.TLSCAFile != "" || cfg.TokenPath != "" {
+			acmOpts = append(acmOpts, acm.WithHTTPClient(&http.Client{
+				Timeout:   10 * time.Second,
+				Transport: transport,
+			}))
+		}
+		remoteChecker := acm.NewClient(endpoint, acmOpts...)
+		return NewFederatedScopeChecker(localChecker, remoteChecker, logger, checkerOpts...), nil
+	default:
+		return nil, fmt.Errorf("fleet: unsupported backend %q", backend)
+	}
+}

@@ -1,0 +1,612 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+// BridgeEventsToA2A reads investigation events from the KA MCP session and
+// emits filtered reasoning artifacts to the A2A stream. A keepalive is sent
+// every 5s to prevent idle SSE timeouts during long KA tool executions.
+// This complements the streaming executor-level keepalive which covers
+// gaps between tool calls.
+//
+// NOTE: This is the non-blocking (legacy) bridge path. It does NOT handle
+// EventTypeAlignmentVerdict structured emission — that is handled only by
+// bridgeEventsCollectSummary (the blocking path used by the A2A agent).
+// The non-blocking path emits the raw event text via emitEventToA2A, but
+// FormatEventForUser returns "" for alignment_verdict, so the event is
+// effectively dropped. If the non-blocking path needs alignment verdict
+// support in the future, add a handler here and inject WithRRID on the
+// bridgeCtx at the call site in HandleInvestigationMCPWithRegistry.
+func BridgeEventsToA2A(ctx context.Context, events <-chan ka.InvestigationEvent, inactivityTimeout time.Duration) {
+	keepalive := time.NewTicker(5 * time.Second)
+	defer keepalive.Stop()
+
+	inactivity := time.NewTimer(inactivityTimeout)
+	defer inactivity.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-inactivity.C:
+			return
+		case <-keepalive.C:
+			_ = launcher.EmitKeepaliveDotSafe(ctx)
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			if !inactivity.Stop() {
+				select {
+				case <-inactivity.C:
+				default:
+				}
+			}
+			inactivity.Reset(inactivityTimeout)
+
+			if evt.Type == ka.EventTypeSessionEnded {
+				phase := mapReasonToPhase(evt.Phase)
+				_ = launcher.EmitStatusWithMetaSafe(ctx,
+					FormatEventForUser(evt),
+					map[string]any{
+						"type":     launcher.MetaTypeInvestigation,
+						"phase":    phase,
+						"reason":   evt.Phase,
+						"terminal": true,
+					})
+				return
+			}
+			emitEventToA2A(ctx, evt, FormatEventForUser(evt))
+			if evt.Type == ka.EventTypeComplete || evt.Type == ka.EventTypeCancelled {
+				return
+			}
+		}
+	}
+}
+
+// NonBlockingBridgeTTL bounds the maximum lifetime of a non-blocking bridge
+// goroutine. This prevents goroutine leaks if KA never sends a terminal event.
+// Matches the per-tool investigate timeout (15m) from production config.
+var NonBlockingBridgeTTL = 15 * time.Minute
+
+// BridgeInactivityTimeout is the maximum silence duration (no events from KA)
+// before the bridge assumes the investigation is hung and returns whatever
+// summary has been collected so far. Each received event resets the timer,
+// so investigations of any wall-clock duration succeed as long as KA keeps
+// producing events (token deltas, tool calls, keepalives).
+// Exported so that tests can override it without modifying production code.
+var BridgeInactivityTimeout = 180 * time.Second
+
+// Exit reason constants returned as the third value from bridgeEventsCollectSummary.
+const (
+	ExitReasonInactivityTimeout = "inactivity_timeout"
+	ExitReasonChannelClosed     = "channel_closed"
+	ExitReasonCtxCancelled      = "ctx_cancelled"
+)
+
+// BridgeEventsCollectSummary is the exported entry point for bridgeEventsCollectSummary.
+// It is used by integration tests and the blocking MCP investigation path.
+//
+// The fourth return value (#2071, forward-port of release/v1.5's #2034 Stage
+// 3b) is the last AlignmentVerdictResult seen (nil if none arrived), letting
+// the caller wire KA's optional #1096 shadow-agent verdict into
+// InvestigateMCPResult -- previously this was only used locally to fire the
+// human-facing SSE alignment_check_failed notification and then discarded,
+// leaving phase_guard.go's #2047 grounding guard with no way to consult it.
+func BridgeEventsCollectSummary(ctx context.Context, events <-chan ka.InvestigationEvent, inactivityTimeout time.Duration) (string, *InvestigateRCA, string, *katypes.AlignmentVerdictResult) {
+	return bridgeEventsCollectSummary(ctx, events, inactivityTimeout)
+}
+
+// ExitReasonToStatus maps the exit reason returned by bridgeEventsCollectSummary
+// to a user-facing investigation status string.
+func ExitReasonToStatus(exitReason string) string {
+	switch exitReason {
+	case ExitReasonInactivityTimeout:
+		return "timed_out"
+	case ExitReasonCtxCancelled:
+		return "timeout"
+	default:
+		return "completed"
+	}
+}
+
+// bridgeEventsCollectSummary bridges events (same as BridgeEventsToA2A) and
+// accumulates reasoning_delta text into a summary returned when the channel
+// closes, the context is cancelled, or no events arrive within
+// inactivityTimeout (hang detection).
+func bridgeEventsCollectSummary(ctx context.Context, events <-chan ka.InvestigationEvent, inactivityTimeout time.Duration) (string, *InvestigateRCA, string, *katypes.AlignmentVerdictResult) {
+	var summary strings.Builder
+	var rcaResult *InvestigateRCA
+	var verdictResult *katypes.AlignmentVerdictResult
+	keepalive := time.NewTicker(5 * time.Second)
+	defer keepalive.Stop()
+	inactivity := time.NewTimer(inactivityTimeout)
+	defer inactivity.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return summary.String(), rcaResult, ExitReasonCtxCancelled, verdictResult
+		case <-inactivity.C:
+			return summary.String(), rcaResult, ExitReasonInactivityTimeout, verdictResult
+		case <-keepalive.C:
+			_ = launcher.EmitKeepaliveDotSafe(ctx)
+		case evt, ok := <-events:
+			if !ok {
+				return summary.String(), rcaResult, ExitReasonChannelClosed, verdictResult
+			}
+			inactivity.Reset(inactivityTimeout)
+			if done, exitReason := processBridgeEvent(ctx, evt, &summary, &rcaResult, &verdictResult); done {
+				return summary.String(), rcaResult, exitReason, verdictResult
+			}
+		}
+	}
+}
+
+// processBridgeEvent handles a single investigation event: emits it to A2A,
+// accumulates streamed text into summary, and captures the RCA result when
+// the investigation completes. Returns done=true (with the terminal exit
+// reason) when bridgeEventsCollectSummary's loop should stop.
+func processBridgeEvent(ctx context.Context, evt ka.InvestigationEvent, summary *strings.Builder, rcaResult **InvestigateRCA, verdictResult **katypes.AlignmentVerdictResult) (bool, string) {
+	// #1438: Handle session_ended before generic emit to avoid double-emit.
+	if evt.Type == ka.EventTypeSessionEnded {
+		phase := mapReasonToPhase(evt.Phase)
+		_ = launcher.EmitStatusWithMetaSafe(ctx,
+			FormatEventForUser(evt),
+			map[string]any{
+				"type":     launcher.MetaTypeInvestigation,
+				"phase":    phase,
+				"reason":   evt.Phase,
+				"terminal": true,
+			})
+		return true, ExitReasonChannelClosed
+	}
+	emitEventToA2A(ctx, evt, FormatEventForUser(evt))
+	// #1635 / DD-LLM-009: EventTypeReasoningContentDelta (genuine captured LLM
+	// reasoning) is deliberately NOT accumulated into summary here, unlike
+	// EventTypeReasoningDelta (orchestration narration). Raw model
+	// deliberation must never leak into the final chat-answer/RCA summary
+	// text shown to the operator; the live SSE channel (emitEventToA2A above)
+	// and the audit trail are its only surfaces.
+	switch evt.Type {
+	case ka.EventTypeReasoningDelta:
+		if chunk := extractJSONField(evt.Data, "text"); chunk != "" {
+			summary.WriteString(chunk)
+		}
+	case ka.EventTypeTokenDelta:
+		if chunk := extractJSONField(evt.Data, "delta"); chunk != "" {
+			summary.WriteString(chunk)
+		}
+	case ka.EventTypeAlignmentVerdict:
+		captureAlignmentVerdict(ctx, evt, verdictResult)
+	case ka.EventTypeComplete:
+		captureCompleteEventRCA(ctx, evt, summary, rcaResult)
+		return true, ExitReasonChannelClosed
+	case ka.EventTypeCancelled:
+		return true, ExitReasonChannelClosed
+	}
+	return false, ""
+}
+
+// captureAlignmentVerdict parses evt's AlignmentVerdictResult payload and
+// stores it in verdictResult for the caller (#2071, forward-port of
+// release/v1.5's #2034 Stage 3b) -- previously this only fired the
+// human-facing SSE alignment_check_failed notification and discarded the
+// verdict, leaving phase_guard.go's #2047 grounding guard with no way to
+// consult it (investigateHasGroundedContent). The SSE notification itself is
+// unchanged: only emitted when the verdict is not "aligned".
+func captureAlignmentVerdict(ctx context.Context, evt ka.InvestigationEvent, verdictResult **katypes.AlignmentVerdictResult) {
+	if len(evt.Data) == 0 {
+		return
+	}
+	var avr katypes.AlignmentVerdictResult
+	if json.Unmarshal(evt.Data, &avr) != nil {
+		return
+	}
+	*verdictResult = &avr
+	if avr.Result == "aligned" {
+		return
+	}
+	meta := map[string]any{
+		"type":  launcher.MetaTypeAlignmentCheckFailed,
+		"rr_id": extractRRIDFromContext(ctx),
+	}
+	_ = launcher.EmitStructuredMetaSafe(ctx, string(evt.Data), meta)
+}
+
+// captureCompleteEventRCA parses the terminal "complete" event's RCA payload,
+// stores it in rcaResult, seeds summary with the RCA text when no streamed
+// text was accumulated, and emits the progressive early-RCA artifact.
+func captureCompleteEventRCA(ctx context.Context, evt ka.InvestigationEvent, summary *strings.Builder, rcaResult **InvestigateRCA) {
+	if len(evt.Data) == 0 {
+		return
+	}
+	var rca InvestigateRCA
+	if json.Unmarshal(evt.Data, &rca) != nil || rca.Severity == "" {
+		return
+	}
+	*rcaResult = &rca
+	rca.LiveSelectionContext = rca.SafeCopy()
+	if rca.RCASummary != "" && summary.Len() == 0 {
+		summary.WriteString(rca.RCASummary)
+	}
+	emitEarlyRCA(ctx, &rca)
+}
+
+// emitEarlyRCA emits a progressive RCA status-update via the EventBridge so
+// the console can render investigation findings immediately (before workflow
+// discovery completes). Uses metadata.type="decision" with schema="early_rca"
+// to differentiate from the final present_decision artifact.
+// FedRAMP: SI-4 (audit classification), AU-3 (content traceability).
+func emitEarlyRCA(ctx context.Context, rca *InvestigateRCA) {
+	if rca == nil {
+		return
+	}
+	payload := fmt.Sprintf(
+		`{"severity":"%s","confidence":%.2f,"target":"%s","rca_summary":"%s"}`,
+		rca.Severity, rca.Confidence, rca.Target, rca.RCASummary,
+	)
+	meta := map[string]any{
+		"type":           launcher.MetaTypeDecision,
+		"schema":         "early_rca",
+		"schema_version": "1.0",
+	}
+	_ = launcher.EmitStructuredMetaSafe(ctx, payload, meta)
+}
+
+// emitInvestigationSummaryArtifact emits the investigation_summary artifact
+// for a genuine RCA returned by KA. The field names match the final
+// present_decision RCAData shape (SI-10), while values remain exactly those
+// observed in KA's complete event (AU-3). The existing truthful status
+// placeholder is retained for a KA RCA that contains no causal-chain entries;
+// only the locally synthesized no-RCA path is excluded from this artifact.
+const missingCausalChainStatus = "Full investigation in progress; preliminary severity assessed from resource metadata only"
+
+func emitInvestigationSummaryArtifact(ctx context.Context, rca *InvestigateRCA, rrID string) {
+	if rca == nil {
+		return
+	}
+	causalChain := rca.CausalChain
+	if len(causalChain) == 0 {
+		causalChain = []string{missingCausalChainStatus}
+	}
+	data := map[string]any{
+		"session_id": rrID,
+		"summary":    rca.RCASummary,
+		"rca": map[string]any{
+			"explanation":      rca.RCASummary,
+			"severity":         rca.Severity,
+			"confidence":       rca.Confidence,
+			"causal_chain":     causalChain,
+			"tool_calls_count": rca.TotalToolCalls,
+			"llm_turns":        rca.TotalLLMTurns,
+		},
+	}
+	if rca.SelectedWorkflow != nil {
+		data["selected_workflow"] = rca.SelectedWorkflow
+	}
+	if rca.SelectionAssessment != nil {
+		data["selection_assessment"] = rca.SelectionAssessment
+	}
+	meta := map[string]any{
+		"type":           launcher.MetaTypeDecision,
+		"schema":         "investigation_summary",
+		"schema_version": "1.0",
+	}
+	_ = launcher.EmitArtifactSafe(ctx, data, fmt.Sprintf("Severity: %s (confidence %.0f%%)\n%s", rca.Severity, rca.Confidence*100, rca.RCASummary), meta)
+}
+
+// FormatEventForUser converts an investigation event into user-readable text.
+// Returns empty string for event types that should not be shown to the user.
+func FormatEventForUser(evt ka.InvestigationEvent) string {
+	switch evt.Type {
+	case ka.EventTypeReasoningDelta:
+		return extractJSONField(evt.Data, "text")
+	case ka.EventTypeReasoningContentDelta:
+		// #1635 / BR-AI-086 AC10: KA's wire payload is redaction-transparent
+		// (empty text on a redacted turn) — extractJSONField naturally
+		// returns "" in that case, and emitEventToA2A's text=="" guard
+		// no-ops, matching EmitReasoning's existing empty-text behavior.
+		return extractJSONField(evt.Data, "text")
+	case ka.EventTypeTokenDelta:
+		return extractJSONField(evt.Data, "delta")
+	case ka.EventTypeToolCallStart:
+		// #2090 (main port of #2089): KA's real emission (investigator's
+		// emitToSink calls, e.g. runLLMLoop's tool-dispatch block) uses key
+		// "tool_name" -- this previously read "tool", a wire-format
+		// mismatch AF's own unit tests never caught because they
+		// hand-constructed fixtures with the wrong key instead of
+		// exercising the real KA emission path.
+		toolName := extractJSONField(evt.Data, "tool_name")
+		if toolName != "" {
+			return "Calling " + toolName + "..."
+		}
+		return ""
+	case ka.EventTypeError:
+		errMsg := extractJSONField(evt.Data, "error")
+		if errMsg != "" {
+			return "Error: " + security.RedactError(fmt.Errorf("%s", errMsg))
+		}
+		return "Investigation error occurred"
+	case ka.EventTypeComplete:
+		return "Investigation complete."
+	case ka.EventTypeSessionEnded:
+		reason := evt.Phase
+		if reason == "" {
+			reason = unknownValue
+		}
+		return "Session ended: " + reason
+	case ka.EventTypeAlignmentVerdict:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// isStatusEvent returns true for event types that should be routed to the
+// A2A status channel (TaskStatusUpdateEvent) rather than the artifact channel.
+// LLM-generated content (reasoning_delta, token_delta) belongs on the artifact
+// stream. Orchestration updates (tool_call_start, complete, cancelled) and
+// errors belong on the status channel as ephemeral messages (AC-4).
+func isStatusEvent(evtType string) bool {
+	switch evtType {
+	case ka.EventTypeToolCallStart, ka.EventTypeComplete, ka.EventTypeCancelled, ka.EventTypeError, ka.EventTypeAlignmentVerdict, ka.EventTypeSessionEnded:
+		return true
+	default:
+		return false
+	}
+}
+
+// emitEventToA2A routes a formatted event text to the correct A2A channel
+// based on the event type: status channel for orchestration events, artifact
+// channel for LLM content. Write failures are logged by the Safe helpers (AU-2).
+//
+// EventTypeReasoningContentDelta has its own branch, checked before the
+// generic text=="" guard below: a redacted turn (#1716, DD-LLM-009 redaction
+// sub-decision revisited) carries redacted=true with empty text on the wire,
+// and must still emit a content-free live signal rather than no-op, so
+// Console can render a "reasoning hidden by provider" placeholder.
+func emitEventToA2A(ctx context.Context, evt ka.InvestigationEvent, text string) {
+	if evt.Type == ka.EventTypeToolCallDelta {
+		// Tool-call fragments are structured observer data, not executable tool
+		// events. Preserve the raw payload so consumers can reconstruct the
+		// provider stream without parsing a lossy human-readable string.
+		_ = launcher.EmitStructuredMetaSafe(ctx, string(evt.Data), map[string]any{
+			"type":  launcher.MetaTypeToolCallDelta,
+			"turn":  evt.Turn,
+			"phase": evt.Phase,
+		})
+		return
+	}
+	if evt.Type == ka.EventTypeReasoningContentDelta {
+		redacted := extractJSONBool(evt.Data, "redacted")
+		if text == "" && !redacted {
+			return
+		}
+		// #1635 / DD-LLM-009: dedicated channel, kept distinct from the
+		// EmitReasoningSafe path used by orchestration narration below.
+		if err := launcher.EmitReasoningContentSafe(ctx, text, redacted); err != nil {
+			logr.FromContextOrDiscard(ctx).Error(err, "failed to emit reasoning content event to A2A",
+				"rr_id", extractRRIDFromContext(ctx),
+				"turn", evt.Turn,
+				"phase", evt.Phase)
+		} else {
+			logr.FromContextOrDiscard(ctx).V(1).Info("emitted reasoning content event to A2A",
+				"rr_id", extractRRIDFromContext(ctx),
+				"turn", evt.Turn,
+				"phase", evt.Phase,
+				"redacted", redacted)
+		}
+		return
+	}
+	if text == "" {
+		return
+	}
+	switch {
+	case isStatusEvent(evt.Type):
+		_ = launcher.EmitStatusSafe(ctx, text)
+	default:
+		_ = launcher.EmitReasoningSafe(ctx, text)
+	}
+}
+
+// watchTerminalEventsSafetyNetNs bounds how long WatchTerminalEvents will
+// wait for a terminal event before giving up (#2094, v1.6 clone #2095). It
+// is deliberately much larger than KA's own inactivity timeout (~10m
+// default) or DefaultSessionTTL (30m per ka/session_pool.go) so it never
+// fires for a legitimately long-running session -- it only bounds the case
+// where the expected session_ended/done signal is truly lost (a pool
+// onRelease callback that never fires, or a dropped events channel). Stored
+// as an atomic.Int64 (nanoseconds) rather than a plain var: WatchTerminalEvents
+// reads it from a newly-spawned goroutine with no happens-before
+// relationship to a test's setup/teardown, so a plain var would be a data
+// race under -race whenever a test overrides it via
+// SetWatchTerminalEventsSafetyNetForTest while a previously-spawned watcher
+// goroutine is still starting up.
+var watchTerminalEventsSafetyNetNs atomic.Int64
+
+func init() {
+	watchTerminalEventsSafetyNetNs.Store(int64(30 * time.Minute))
+}
+
+// SetWatchTerminalEventsSafetyNetForTest overrides the WatchTerminalEvents
+// safety-net timeout for the duration of a test. Test-only. Returns a
+// restore function that must be deferred to reset the previous value.
+func SetWatchTerminalEventsSafetyNetForTest(d time.Duration) (restore func()) {
+	prev := watchTerminalEventsSafetyNetNs.Swap(int64(d))
+	return func() { watchTerminalEventsSafetyNetNs.Store(prev) }
+}
+
+// WatchTerminalEvents watches a residual event channel for events arriving
+// on a pooled MCP session after handoff. When a session_ended event is
+// received, it publishes a terminal event to the session's active subscribers
+// and exits. Exits deterministically on:
+// session_ended received, events closed, done closed (pool
+// Release/EvictIdle/DrainAll), or the safety-net timer
+// (watchTerminalEventsSafetyNetNs) elapsing (#2094, v1.6 clone #2095). The
+// safety-net timer is created once, before the loop, so a steady stream of
+// non-terminal events cannot indefinitely postpone the deadline.
+//
+// router is non-nil only for entries handed off via KASessionPool.InjectVerified
+// (#1637/DD-AF-015). Pooled calls and kubernaut_watch subscribe for their own
+// call lifetime. When the router has no subscribers, non-terminal events are
+// dropped and terminal events do not target the stale handoff context. A nil
+// router preserves #1438's direct-call fallback for legacy MCP wiring and
+// focused tests.
+func WatchTerminalEvents(ctx context.Context, events <-chan ka.InvestigationEvent, rrID string, done <-chan struct{}, router *ka.EventRouter) {
+	safetyNetTimeout := time.Duration(watchTerminalEventsSafetyNetNs.Load())
+	safetyNet := time.NewTimer(safetyNetTimeout)
+	defer safetyNet.Stop()
+
+	for {
+		select {
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			if evt.Type == ka.EventTypeSessionEnded {
+				publishTerminalEvent(ctx, router, evt)
+				return
+			}
+			subscribers := publishSessionEvent(router, evt)
+			if evt.Type == ka.EventTypeReasoningContentDelta {
+				logr.FromContextOrDiscard(ctx).V(1).Info("WatchTerminalEvents published reasoning content event",
+					"rr_id", rrID,
+					"event_type", evt.Type,
+					"turn", evt.Turn,
+					"phase", evt.Phase,
+					"subscribers", subscribers)
+			}
+		case <-done:
+			drainBufferedTerminalEvent(ctx, events, router)
+			return
+		case <-safetyNet.C:
+			logr.FromContextOrDiscard(ctx).Info(
+				"WatchTerminalEvents: safety-net timeout reached without a terminal event; exiting to prevent goroutine leak",
+				"rr_id", rrID, "timeout", safetyNetTimeout)
+			return
+		}
+	}
+}
+
+// EmitKAEventToA2A adapts a KA session event to the current A2A EventBridge.
+// It is injected into KA's session router so the KA package remains unaware of
+// A2A presentation details.
+func EmitKAEventToA2A(ctx context.Context, evt ka.InvestigationEvent) {
+	if evt.Type == ka.EventTypeSessionEnded {
+		emitWatcherTerminal(ctx, evt)
+		return
+	}
+	emitEventToA2A(ctx, evt, FormatEventForUser(evt))
+}
+
+// drainBufferedTerminalEvent performs a non-blocking check for a
+// session_ended event that may already be buffered when the pool fires
+// onRelease, publishing it before the watcher exits (#1438).
+func drainBufferedTerminalEvent(ctx context.Context, events <-chan ka.InvestigationEvent, router *ka.EventRouter) {
+	select {
+	case evt, ok := <-events:
+		if ok && evt.Type == ka.EventTypeSessionEnded {
+			publishTerminalEvent(ctx, router, evt)
+		}
+	default:
+	}
+}
+
+func publishSessionEvent(router *ka.EventRouter, evt ka.InvestigationEvent) int {
+	if router != nil {
+		return router.Publish(evt)
+	}
+	return 0
+}
+
+func publishTerminalEvent(ctx context.Context, router *ka.EventRouter, evt ka.InvestigationEvent) {
+	if router == nil {
+		emitWatcherTerminal(ctx, evt)
+		return
+	}
+	router.Publish(evt)
+}
+
+func emitWatcherTerminal(ctx context.Context, evt ka.InvestigationEvent) {
+	phase := mapReasonToPhase(evt.Phase)
+	launcher.UpdatePhaseSafe(ctx, phase)
+	_ = launcher.EmitStatusWithMetaSafe(ctx,
+		FormatEventForUser(evt),
+		map[string]any{
+			"type":     launcher.MetaTypeInvestigation,
+			"phase":    phase,
+			"reason":   evt.Phase,
+			"terminal": true,
+		})
+}
+
+func mapReasonToPhase(reason string) string {
+	switch reason {
+	case "inactivity_timeout", "ttl_expired":
+		return "TimedOut"
+	case "disconnect":
+		return "Disconnected"
+	default:
+		return reason
+	}
+}
+
+// extractJSONField extracts a string field from a JSON RawMessage.
+func extractJSONField(data json.RawMessage, field string) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return ""
+	}
+	if v, ok := m[field].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// extractJSONBool extracts a boolean field from a JSON RawMessage. Used by
+// emitEventToA2A (#1716) to read KA's "redacted" flag on a
+// reasoning_content_delta event without changing FormatEventForUser's
+// string-only return type.
+func extractJSONBool(data json.RawMessage, field string) bool {
+	if len(data) == 0 {
+		return false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	v, _ := m[field].(bool)
+	return v
+}

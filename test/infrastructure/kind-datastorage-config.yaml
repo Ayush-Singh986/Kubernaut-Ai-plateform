@@ -1,0 +1,88 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  # DD-AUTH-014: Allocate more resources for API server under SAR middleware load
+  # SAR middleware adds 2 K8s API calls per HTTP request (TokenReview + SAR)
+  # With 12 parallel test processes, API server needs more CPU/memory
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  
+  # Expose Data Storage NodePort to host machine
+  # This eliminates kubectl port-forward instability
+  # Per DD-TEST-001: E2E tests use 25433-28139 range
+  extraPortMappings:
+  - containerPort: 30081  # Data Storage NodePort in cluster
+    hostPort: 28090       # Port on host machine (localhost:28090) - Per DD-TEST-001
+    protocol: TCP
+  - containerPort: 30181  # DataStorage Metrics NodePort in cluster (Issue #283, DD-TEST-001 v3.1)
+    hostPort: 28091       # Port on host machine (localhost:28091) - Per DD-TEST-001 v3.1
+    protocol: TCP
+  - containerPort: 30281  # DataStorage Health NodePort in cluster (Issue #753)
+    hostPort: 28092       # Port on host machine (localhost:28092) - Per DD-TEST-001
+    protocol: TCP
+  - containerPort: 30432  # PostgreSQL NodePort in cluster
+    hostPort: 25433       # Port on host machine (localhost:25433) - Per DD-TEST-001
+    protocol: TCP
+  # Issue #1661 Phase 56: second, test-owned/isolated DataStorage instance for the
+  # DS-restart-and-cache-recovery E2E case (27_ds_restart_cache_recovery_test.go).
+  # Deployed in its own namespace within this SAME cluster so the restart doesn't
+  # disturb the shared instance above. Ports allocated from DS's DD-TEST-001 block
+  # (28090-28099); 28090-28092 are already used by the shared instance above.
+  - containerPort: 30082  # Isolated DataStorage API NodePort
+    hostPort: 28093       # Per DD-TEST-001 Data Storage block (28090-28099)
+    protocol: TCP
+  - containerPort: 30282  # Isolated DataStorage Health NodePort
+    hostPort: 28094       # Per DD-TEST-001 Data Storage block (28090-28099)
+    protocol: TCP
+  # DD-TEST-007: Mount coverage directory for E2E coverage collection
+  extraMounts:
+  - hostPath: ./coverdata
+    containerPath: /coverdata
+    readOnly: false
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # DD-AUTH-014: Tuned for SAR middleware with 12 parallel E2E processes
+        # 
+        # Load calculation:
+        # - 12 parallel test processes
+        # - Each HTTP request → 2 K8s API calls (TokenReview + SubjectAccessReview)
+        # - Peak: ~50 HTTP req/sec × 2 = 100 K8s API calls/sec
+        # - Burst scenarios: 12 processes × 20 concurrent requests × 2 API calls = 480 concurrent
+        #
+        # Defaults (too low for SAR middleware):
+        #   max-requests-inflight: 400
+        #   max-mutating-requests-inflight: 200
+        #
+        # DD-AUTH-014 tuning (3x headroom for SAR load):
+        max-requests-inflight: "1200"           # 3x default (400 → 1200)
+        max-mutating-requests-inflight: "600"   # 3x default (200 → 600)
+        
+        # Authentication/Authorization tuning for high TokenReview/SAR load
+        # These prevent queueing delays during burst authentication requests
+        authentication-token-webhook-cache-ttl: "10s"  # Cache TokenReview for 10s (reduces load)
+        authorization-webhook-cache-authorized-ttl: "5m"     # Cache SAR "allowed" for 5min
+        authorization-webhook-cache-unauthorized-ttl: "30s"  # Cache SAR "denied" for 30s
+        
+        # Event rate limiting (prevent event spam from overwhelming etcd)
+        event-ttl: "1h"                          # Shorter event retention for E2E
+    
+    etcd:
+      local:
+        extraArgs:
+          # Increase etcd performance for high API server load
+          # DD-AUTH-014: SAR checks generate more etcd reads/writes
+          quota-backend-bytes: "8589934592"      # 8GB quota (default: 2GB)
+          snapshot-count: "100000"               # Snapshot every 100k ops (default: 10k)
+          heartbeat-interval: "500"              # 500ms heartbeat (default: 100ms, reduce overhead)
+          election-timeout: "5000"               # 5s election timeout (default: 1s)
+    
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        # DD-AUTH-014: Higher limits prevent delays during parallel testing
+        kube-api-qps: "100"
+        kube-api-burst: "200"
+

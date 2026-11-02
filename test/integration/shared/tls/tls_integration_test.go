@@ -1,0 +1,449 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tls
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+)
+
+var _ = Describe("TLS Integration Tests (#493)", func() {
+
+	var (
+		certDir    string
+		caCertPath string
+		caKeyPath  string
+		caKey      *ecdsa.PrivateKey
+		caCert     *x509.Certificate
+	)
+
+	// Generate a self-signed CA and server cert for each test
+	BeforeEach(func() {
+		var err error
+		certDir, err = os.MkdirTemp("", "tls-it-*")
+		Expect(err).ToNot(HaveOccurred())
+
+		// Generate CA
+		caKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+
+		caTemplate := &x509.Certificate{
+			SerialNumber:          big.NewInt(1),
+			Subject:               pkix.Name{CommonName: "Test CA"},
+			NotBefore:             time.Now().Add(-1 * time.Hour),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		}
+
+		caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+		Expect(err).ToNot(HaveOccurred())
+		caCert, err = x509.ParseCertificate(caCertDER)
+		Expect(err).ToNot(HaveOccurred())
+
+		caCertPath = filepath.Join(certDir, "ca.crt")
+		caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+		Expect(os.WriteFile(caCertPath, caCertPEM, 0644)).To(Succeed())
+
+		caKeyDER, err := x509.MarshalECPrivateKey(caKey)
+		Expect(err).ToNot(HaveOccurred())
+		caKeyPath = filepath.Join(certDir, "ca.key")
+		caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: caKeyDER})
+		Expect(os.WriteFile(caKeyPath, caKeyPEM, 0600)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		_ = os.RemoveAll(certDir)
+	})
+
+	// Helper: generate server cert signed by the CA
+	generateServerCert := func() (certFile, keyFile string) {
+		srvKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+
+		srvTemplate := &x509.Certificate{
+			SerialNumber: big.NewInt(2),
+			Subject:      pkix.Name{CommonName: "localhost"},
+			NotBefore:    time.Now().Add(-1 * time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+			DNSNames:     []string{"localhost"},
+		}
+
+		srvCertDER, err := x509.CreateCertificate(rand.Reader, srvTemplate, caCert, &srvKey.PublicKey, caKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		certFile = filepath.Join(certDir, "tls.crt")
+		srvCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srvCertDER})
+		Expect(os.WriteFile(certFile, srvCertPEM, 0644)).To(Succeed())
+
+		keyFile = filepath.Join(certDir, "tls.key")
+		srvKeyDER, err := x509.MarshalECPrivateKey(srvKey)
+		Expect(err).ToNot(HaveOccurred())
+		srvKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: srvKeyDER})
+		Expect(os.WriteFile(keyFile, srvKeyPEM, 0600)).To(Succeed())
+
+		return certFile, keyFile
+	}
+
+	// Helper: start a TLS server on a random port and return its URL
+	startTLSServer := func() (*http.Server, string) {
+		generateServerCert()
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+
+		server := &http.Server{Handler: mux}
+		isTLS, _, err := sharedtls.ConfigureRequiredTLS(server, certDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(isTLS).To(BeTrue())
+
+		listener, err := tls.Listen("tcp", "127.0.0.1:0", server.TLSConfig)
+		Expect(err).ToNot(HaveOccurred())
+
+		go func() {
+			defer GinkgoRecover()
+			_ = server.Serve(listener)
+		}()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		return server, fmt.Sprintf("https://127.0.0.1:%d", addr.Port)
+	}
+
+	// IT-TLS-493-001: HTTPS request to server with valid cert succeeds
+	It("IT-TLS-493-001: should accept HTTPS request with valid client CA", func() {
+		server, url := startTLSServer()
+		defer func() { _ = server.Close() }()
+
+		transport, err := sharedtls.NewTLSTransport(caCertPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		client := &http.Client{Transport: transport}
+		resp, err := client.Get(url + "/health")
+		Expect(err).ToNot(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	})
+
+	// IT-TLS-493-002: Plain HTTP fails when server only speaks TLS
+	It("IT-TLS-493-002: should reject plain HTTP when server runs TLS", func() {
+		server, url := startTLSServer()
+		defer func() { _ = server.Close() }()
+
+		plainURL := "http" + url[5:] // Replace "https" with "http"
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get(plainURL + "/health")
+		if err != nil {
+			// Connection-level failure: error must relate to TLS/HTTP protocol mismatch
+			Expect(err.Error()).To(SatisfyAny(
+				ContainSubstring("tls"),
+				ContainSubstring("http"),
+				ContainSubstring("EOF"),
+				ContainSubstring("connection reset"),
+			), "error should indicate protocol mismatch")
+		} else {
+			// Server responded with HTTP 400 ("Client sent an HTTP request to an HTTPS server")
+			defer func() { _ = resp.Body.Close() }()
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		}
+	})
+
+	// IT-TLS-493-003: HTTPS request with correct CA succeeds (same as 001 but verifies handshake)
+	It("IT-TLS-493-003: should complete TLS handshake with correct CA", func() {
+		server, url := startTLSServer()
+		defer func() { _ = server.Close() }()
+
+		pool, err := sharedtls.LoadCACert(caCertPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		transport := &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		}
+		client := &http.Client{Transport: transport}
+		resp, err := client.Get(url + "/health")
+		Expect(err).ToNot(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	})
+
+	// IT-TLS-493-004: Client with wrong CA cert fails TLS handshake
+	It("IT-TLS-493-004: should fail TLS handshake with wrong CA", func() {
+		server, url := startTLSServer()
+		defer func() { _ = server.Close() }()
+
+		// Generate a different CA (not the one that signed the server cert)
+		wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+		wrongTemplate := &x509.Certificate{
+			SerialNumber:          big.NewInt(99),
+			Subject:               pkix.Name{CommonName: "Wrong CA"},
+			NotBefore:             time.Now().Add(-1 * time.Hour),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+		}
+		wrongCertDER, err := x509.CreateCertificate(rand.Reader, wrongTemplate, wrongTemplate, &wrongKey.PublicKey, wrongKey)
+		Expect(err).ToNot(HaveOccurred())
+		wrongCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: wrongCertDER})
+		wrongCAPath := filepath.Join(certDir, "wrong-ca.crt")
+		Expect(os.WriteFile(wrongCAPath, wrongCertPEM, 0644)).To(Succeed())
+
+		transport, err := sharedtls.NewTLSTransport(wrongCAPath)
+		Expect(err).ToNot(HaveOccurred())
+		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+
+		_, err = client.Get(url + "/health")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("certificate"))
+	})
+
+	// IT-TLS-493-005: Client using default system trust rejects server cert signed by private CA
+	It("IT-TLS-493-005: should fail when client uses system trust for private CA server", func() {
+		server, url := startTLSServer()
+		defer func() { _ = server.Close() }()
+
+		client := &http.Client{Timeout: 2 * time.Second}
+		_, err := client.Get(url + "/health")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("certificate"))
+	})
+
+	// --- mTLS tests (Issue #1342) ---
+
+	// Helper: generate client cert signed by the CA
+	generateClientCert := func() (clientCertPath, clientKeyPath string) {
+		clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+
+		clientTemplate := &x509.Certificate{
+			SerialNumber: big.NewInt(3),
+			Subject:      pkix.Name{CommonName: "test-client"},
+			NotBefore:    time.Now().Add(-1 * time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+
+		clientCertDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, &clientKey.PublicKey, caKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		clientCertPath = filepath.Join(certDir, "client.crt")
+		clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER})
+		Expect(os.WriteFile(clientCertPath, clientCertPEM, 0644)).To(Succeed())
+
+		clientKeyPath = filepath.Join(certDir, "client.key")
+		clientKeyDER, err := x509.MarshalECPrivateKey(clientKey)
+		Expect(err).ToNot(HaveOccurred())
+		clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER})
+		Expect(os.WriteFile(clientKeyPath, clientKeyPEM, 0600)).To(Succeed())
+
+		return clientCertPath, clientKeyPath
+	}
+
+	// Helper: start a TLS server that requires client certificates (mTLS)
+	startMTLSServer := func() (*http.Server, string) {
+		generateServerCert()
+
+		caPool, err := sharedtls.LoadCACert(caCertPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+
+		serverCert, err := tls.LoadX509KeyPair(
+			filepath.Join(certDir, "tls.crt"),
+			filepath.Join(certDir, "tls.key"),
+		)
+		Expect(err).ToNot(HaveOccurred())
+
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{serverCert},
+			ClientCAs:    caPool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+			MinVersion:   tls.VersionTLS12,
+		}
+
+		listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+		Expect(err).ToNot(HaveOccurred())
+
+		server := &http.Server{Handler: mux}
+		go func() {
+			defer GinkgoRecover()
+			_ = server.Serve(listener)
+		}()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		return server, fmt.Sprintf("https://127.0.0.1:%d", addr.Port)
+	}
+
+	// IT-TLS-1342-001: mTLS handshake succeeds with valid client cert
+	// BR-NET-002: Certificate-based authentication
+	It("IT-TLS-1342-001: should complete mTLS handshake with valid client certificate", func() {
+		server, url := startMTLSServer()
+		defer func() { _ = server.Close() }()
+
+		clientCertPath, clientKeyPath := generateClientCert()
+
+		transport, err := sharedtls.NewTLSTransport(caCertPath,
+			sharedtls.WithClientCert(clientCertPath, clientKeyPath),
+		)
+		Expect(err).ToNot(HaveOccurred())
+
+		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+		resp, err := client.Get(url + "/health")
+		Expect(err).ToNot(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	})
+
+	// IT-TLS-1342-002: mTLS handshake fails without client cert when server requires it
+	It("IT-TLS-1342-002: should fail mTLS handshake when client cert is missing", func() {
+		server, url := startMTLSServer()
+		defer func() { _ = server.Close() }()
+
+		transport, err := sharedtls.NewTLSTransport(caCertPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+		_, err = client.Get(url + "/health")
+		Expect(err).To(HaveOccurred())
+	})
+
+	// IT-TLS-1342-003: mTLS handshake fails with client cert signed by wrong CA
+	It("IT-TLS-1342-003: should fail mTLS handshake when client cert is signed by wrong CA", func() {
+		server, url := startMTLSServer()
+		defer func() { _ = server.Close() }()
+
+		wrongCAKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+		wrongCATemplate := &x509.Certificate{
+			SerialNumber:          big.NewInt(99),
+			Subject:               pkix.Name{CommonName: "Wrong CA"},
+			NotBefore:             time.Now().Add(-1 * time.Hour),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign,
+		}
+		wrongCACertDER, err := x509.CreateCertificate(rand.Reader, wrongCATemplate, wrongCATemplate, &wrongCAKey.PublicKey, wrongCAKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		wrongClientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+		wrongCACert, err := x509.ParseCertificate(wrongCACertDER)
+		Expect(err).ToNot(HaveOccurred())
+		wrongClientTemplate := &x509.Certificate{
+			SerialNumber: big.NewInt(4),
+			Subject:      pkix.Name{CommonName: "wrong-client"},
+			NotBefore:    time.Now().Add(-1 * time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		wrongClientCertDER, err := x509.CreateCertificate(rand.Reader, wrongClientTemplate, wrongCACert, &wrongClientKey.PublicKey, wrongCAKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		wrongClientCertPath := filepath.Join(certDir, "wrong-client.crt")
+		Expect(os.WriteFile(wrongClientCertPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: wrongClientCertDER}), 0644)).To(Succeed())
+		wrongClientKeyPath := filepath.Join(certDir, "wrong-client.key")
+		wrongClientKeyDER, err := x509.MarshalECPrivateKey(wrongClientKey)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(os.WriteFile(wrongClientKeyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: wrongClientKeyDER}), 0600)).To(Succeed())
+
+		transport, err := sharedtls.NewTLSTransport(caCertPath,
+			sharedtls.WithClientCert(wrongClientCertPath, wrongClientKeyPath),
+		)
+		Expect(err).ToNot(HaveOccurred())
+
+		client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+		_, err = client.Get(url + "/health")
+		Expect(err).To(HaveOccurred())
+	})
+
+	// IT-TLS-2545-001: BR-SECURITY-2545 requires ambient CA bootstrap to work
+	// through the production shared helper in a read-only UBI container, with
+	// both private and public/system trust available and no writable /tmp.
+	It("IT-TLS-2545-001: should bootstrap private and system trust in read-only UBI", func() {
+		caMountDir := filepath.Join(certDir, "ambient-ca-mount")
+		Expect(os.Mkdir(caMountDir, 0755)).To(Succeed())
+		caPEM, err := os.ReadFile(caCertPath)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(caMountDir, "ca.crt"), caPEM, 0444)).To(Succeed())
+		caKey, err := os.ReadFile(caKeyPath)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(caMountDir, "ca.key"), caKey, 0444)).To(Succeed())
+
+		repoRoot, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
+		Expect(err).ToNot(HaveOccurred())
+		binaryDir, err := os.MkdirTemp("", "ambient-ca-child-bin-*")
+		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(binaryDir)).To(Succeed()) })
+		binaryPath := filepath.Join(binaryDir, "ambient-ca-child")
+
+		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelBuild()
+		build := exec.CommandContext(buildCtx, "go", "build", "-o", binaryPath, "./test/integration/shared/tls/ambientchild")
+		build.Dir = repoRoot
+		build.Env = append(os.Environ(),
+			"CGO_ENABLED=0",
+			"GOOS=linux",
+			"GOARCH="+runtime.GOARCH,
+		)
+		buildOutput, buildErr := build.CombinedOutput()
+		Expect(buildErr).ToNot(HaveOccurred(), string(buildOutput))
+
+		runCtx, cancelRun := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelRun()
+		run := exec.CommandContext(runCtx, "podman", "run", "--rm", "--read-only", "--user", "1001",
+			"--volume", caMountDir+":/custom-ca:ro",
+			"--volume", binaryPath+":/ambient-ca-child:ro",
+			"registry.access.redhat.com/ubi10/ubi-minimal:10.2",
+			"/ambient-ca-child", "/custom-ca/ca.crt", "/custom-ca/ca.key", "https://example.com/")
+		runOutput, runErr := run.CombinedOutput()
+		Expect(runErr).ToNot(HaveOccurred(), strings.TrimSpace(string(runOutput)))
+	})
+})

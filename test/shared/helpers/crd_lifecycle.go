@@ -1,0 +1,312 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package helpers
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+
+	. "github.com/onsi/ginkgo/v2" //nolint:revive
+	. "github.com/onsi/gomega"    //nolint:revive
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sretry "k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+)
+
+// WaitForSPCreation waits for the RO controller to create a SignalProcessing CRD
+// owned by the given RR in the given namespace. Filters by OwnerReference to
+// avoid cross-test contamination when multiple RRs coexist in controllerNamespace.
+func WaitForSPCreation(ctx context.Context, k8sClient client.Client, namespace, rrName string, timeout, interval time.Duration) *signalprocessingv1.SignalProcessing {
+	var sp *signalprocessingv1.SignalProcessing
+	By("Waiting for RO to create SignalProcessing CRD for RR " + rrName)
+	Eventually(func() bool {
+		spList := &signalprocessingv1.SignalProcessingList{}
+		_ = k8sClient.List(ctx, spList, client.InNamespace(namespace))
+		for i := range spList.Items {
+			if isOwnedByRR(&spList.Items[i], rrName) {
+				sp = &spList.Items[i]
+				return true
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue(), "SignalProcessing should be created by RO for RR "+rrName)
+	return sp
+}
+
+// SimulateSPCompletion updates the given SP status to Completed with standard
+// enrichment fields, simulating what the SP controller would do.
+// Uses RetryOnConflict to handle races with the RO controller.
+func SimulateSPCompletion(ctx context.Context, k8sClient client.Client, sp *signalprocessingv1.SignalProcessing) {
+	By("Simulating SP completion (SP controller behavior)")
+	Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp); err != nil {
+			return err
+		}
+		sp.Status.Phase = signalprocessingv1.PhaseCompleted
+		classification := sp.Status.EnsureSignalClassification()
+		classification.Severity = normalizeSeverity(sp.Spec.Signal.Severity)
+		classification.SignalMode = "reactive"
+		classification.SignalName = sp.Spec.Signal.Name
+		sp.Status.EnvironmentClassification = &signalprocessingv1.EnvironmentClassification{
+			Environment:  signalprocessingv1.EnvironmentProduction,
+			Source:       "namespace-labels",
+			ClassifiedAt: metav1.Now(),
+		}
+		sp.Status.PriorityAssignment = &signalprocessingv1.PriorityAssignment{
+			Priority:   signalprocessingv1.PriorityP1,
+			Source:     "rego-policy",
+			AssignedAt: metav1.Now(),
+		}
+		return k8sClient.Status().Update(ctx, sp)
+	})).To(Succeed())
+}
+
+// normalizeSeverity maps raw severity values (from RR/signal sources) to the
+// SP CRD status enum: critical, high, warning, info, unknown.
+// ADR-066: canonical model is critical > high > warning > info.
+func normalizeSeverity(raw string) string {
+	switch strings.ToLower(raw) {
+	case signalprocessingv1.SeverityCritical, signalprocessingv1.SeverityHigh, signalprocessingv1.SeverityWarning, signalprocessingv1.SeverityInfo, signalprocessingv1.SeverityUnknown:
+		return strings.ToLower(raw)
+	case "medium":
+		return signalprocessingv1.SeverityWarning
+	case "low":
+		return signalprocessingv1.SeverityInfo
+	case "informational":
+		return signalprocessingv1.SeverityInfo
+	default:
+		return signalprocessingv1.SeverityUnknown
+	}
+}
+
+// WaitForAICreation waits for the RO controller to create an AIAnalysis CRD
+// owned by the given RR in the given namespace. Filters by OwnerReference to
+// avoid cross-test contamination when multiple RRs coexist in controllerNamespace.
+func WaitForAICreation(ctx context.Context, k8sClient client.Client, namespace, rrName string, timeout, interval time.Duration) *aianalysisv1.AIAnalysis {
+	var ai *aianalysisv1.AIAnalysis
+	By("Waiting for RO to create AIAnalysis CRD for RR " + rrName)
+	Eventually(func() bool {
+		aiList := &aianalysisv1.AIAnalysisList{}
+		_ = k8sClient.List(ctx, aiList, client.InNamespace(namespace))
+		for i := range aiList.Items {
+			if isOwnedByRR(&aiList.Items[i], rrName) {
+				ai = &aiList.Items[i]
+				return true
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue(), "AIAnalysis should be created by RO for RR "+rrName)
+	return ai
+}
+
+// AICompletionOpts configures how the AI status should be simulated.
+type AICompletionOpts struct {
+	ApprovalRequired bool
+	ApprovalReason   string
+	Confidence       float64
+	TargetKind       string
+	TargetName       string
+	TargetNamespace  string
+}
+
+// SimulateAICompletedWithWorkflow updates AI status as completed with a workflow
+// selection and RemediationTarget (required for routing to WorkflowExecution).
+// Uses RetryOnConflict to handle races with the RO controller.
+func SimulateAICompletedWithWorkflow(ctx context.Context, k8sClient client.Client, ai *aianalysisv1.AIAnalysis, opts AICompletionOpts) {
+	By("Simulating AI completion with workflow selection (AA controller behavior)")
+	confidence := opts.Confidence
+	if confidence == 0 {
+		confidence = 0.92
+	}
+	targetKind := opts.TargetKind
+	if targetKind == "" {
+		targetKind = "Deployment"
+	}
+	targetName := opts.TargetName
+	if targetName == "" {
+		targetName = "test-app"
+	}
+
+	Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(ai), ai); err != nil {
+			return err
+		}
+		ai.Status.Phase = aianalysisv1.PhaseCompleted
+		ai.Status.Reason = aianalysisv1.ReasonAnalysisCompleted
+		ai.Status.Message = "Workflow recommended"
+		ai.Status.EnsureRCAResult().RootCause = "Root cause identified"
+		ai.Status.EnsureApproval().ApprovalRequired = opts.ApprovalRequired
+		if opts.ApprovalReason != "" {
+			ai.Status.Approval.ApprovalReason = opts.ApprovalReason
+		}
+		ai.Status.RCAResult.SelectedWorkflow = &aianalysisv1.SelectedWorkflow{
+			WorkflowSnapshot: sharedtypes.WorkflowSnapshot{
+				WorkflowID: "restart-pod-v1",
+				// WorkflowName/ActionType: Issue #1711 cascade (DD-KA-001 v1.1) made
+				// these required fields on validateSelectedWorkflow.
+				WorkflowName:    "restart-pod-v1",
+				ActionType:      "RestartPod",
+				Version:         "1.0.0",
+				ExecutionBundle: "ghcr.io/kubernaut/workflows/restart-pod:v1.0.0",
+				ExecutionEngine: "job",
+			},
+			// Issue #1661 Change 11d (DD-WORKFLOW-018): required, no DS fallback
+			Confidence: confidence,
+		}
+		ai.Status.RCAResult.RootCauseAnalysis = &aianalysisv1.RootCauseAnalysis{
+			Summary:    "Root cause identified",
+			Severity:   signalprocessingv1.SeverityCritical,
+			SignalType: "alert",
+			RemediationTarget: &aianalysisv1.RemediationTarget{
+				Kind:      targetKind,
+				Name:      targetName,
+				Namespace: opts.TargetNamespace,
+			},
+		}
+		return k8sClient.Status().Update(ctx, ai)
+	})).To(Succeed())
+}
+
+// SimulateAIWorkflowNotNeeded updates AI status as completed with WorkflowNotNeeded outcome.
+// Uses RetryOnConflict to handle races with the RO controller.
+func SimulateAIWorkflowNotNeeded(ctx context.Context, k8sClient client.Client, ai *aianalysisv1.AIAnalysis) {
+	By("Simulating AI completion with WorkflowNotNeeded (AA controller behavior)")
+	Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(ai), ai); err != nil {
+			return err
+		}
+		ai.Status.Phase = aianalysisv1.PhaseCompleted
+		ai.Status.Reason = aianalysisv1.ReasonWorkflowNotNeeded
+		ai.Status.SubReason = "ProblemResolved"
+		ai.Status.Message = "Problem self-resolved: transient error no longer present"
+		return k8sClient.Status().Update(ctx, ai)
+	})).To(Succeed())
+}
+
+// SimulateAINeedsHumanReview updates AI status as failed with NeedsHumanReview.
+// Uses RetryOnConflict to handle races with the RO controller.
+func SimulateAINeedsHumanReview(ctx context.Context, k8sClient client.Client, ai *aianalysisv1.AIAnalysis) {
+	By("Simulating AI failure with NeedsHumanReview (AA controller behavior)")
+	Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(ai), ai); err != nil {
+			return err
+		}
+		ai.Status.Phase = aianalysisv1.PhaseFailed
+		ai.Status.Reason = aianalysisv1.ReasonWorkflowResolutionFailed
+		ai.Status.EnsureReview().NeedsHumanReview = true
+		ai.Status.Review.HumanReviewReason = "rca_incomplete"
+		ai.Status.Message = "RCA analysis incomplete: missing remediationTarget field in incident data"
+		return k8sClient.Status().Update(ctx, ai)
+	})).To(Succeed())
+}
+
+// WaitForWECreation waits for the RO controller to create a WorkflowExecution CRD
+// owned by the given RR in the given namespace. Filters by OwnerReference to
+// avoid cross-test contamination when multiple RRs coexist in controllerNamespace.
+func WaitForWECreation(ctx context.Context, k8sClient client.Client, namespace, rrName string, timeout, interval time.Duration) *workflowexecutionv1.WorkflowExecution {
+	var we *workflowexecutionv1.WorkflowExecution
+	By("Waiting for RO to create WorkflowExecution CRD for RR " + rrName)
+	Eventually(func() bool {
+		weList := &workflowexecutionv1.WorkflowExecutionList{}
+		_ = k8sClient.List(ctx, weList, client.InNamespace(namespace))
+		for i := range weList.Items {
+			if isOwnedByRR(&weList.Items[i], rrName) {
+				we = &weList.Items[i]
+				return true
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue(), "WorkflowExecution should be created by RO for RR "+rrName)
+	return we
+}
+
+// SimulateWECompletion updates the given WE status to Completed.
+// Uses RetryOnConflict to handle races with the RO controller.
+func SimulateWECompletion(ctx context.Context, k8sClient client.Client, we *workflowexecutionv1.WorkflowExecution) {
+	By("Simulating WE completion (WE controller behavior)")
+	Expect(k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(we), we); err != nil {
+			return err
+		}
+		we.Status.Phase = workflowexecutionv1.PhaseCompleted
+		return k8sClient.Status().Update(ctx, we)
+	})).To(Succeed())
+}
+
+// WaitForRARCreation waits for the RO controller to create a RemediationApprovalRequest CRD
+// owned by the given RR in the given namespace. Filters by OwnerReference to
+// avoid cross-test contamination when multiple RRs coexist in controllerNamespace.
+func WaitForRARCreation(ctx context.Context, k8sClient client.Client, namespace, rrName string, timeout, interval time.Duration) *remediationv1.RemediationApprovalRequest {
+	var rar *remediationv1.RemediationApprovalRequest
+	By("Waiting for RO to create RemediationApprovalRequest CRD for RR " + rrName)
+	Eventually(func() bool {
+		rarList := &remediationv1.RemediationApprovalRequestList{}
+		_ = k8sClient.List(ctx, rarList, client.InNamespace(namespace))
+		for i := range rarList.Items {
+			if isOwnedByRR(&rarList.Items[i], rrName) {
+				rar = &rarList.Items[i]
+				return true
+			}
+		}
+		return false
+	}, timeout, interval).Should(BeTrue(), "RemediationApprovalRequest should be created by RO for RR "+rrName)
+	return rar
+}
+
+// isOwnedByRR checks whether a Kubernetes object has an OwnerReference
+// with Kind=RemediationRequest and the given name.
+func isOwnedByRR(obj client.Object, rrName string) bool {
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.Kind == "RemediationRequest" && ref.Name == rrName {
+			return true
+		}
+	}
+	return false
+}
+
+// CountOwnedBy counts how many items in a list are owned by the given RR name.
+// Useful for "NOT exists" assertions in parallel test scenarios.
+func CountOwnedBy[T client.Object](items []T, rrName string) int {
+	count := 0
+	for _, item := range items {
+		if isOwnedByRR(item, rrName) {
+			count++
+		}
+	}
+	return count
+}
+
+// WaitForRRPhase waits for a RemediationRequest to reach the specified phase.
+func WaitForRRPhase(ctx context.Context, k8sClient client.Client, rr *remediationv1.RemediationRequest, phase remediationv1.RemediationPhase, timeout, interval time.Duration) {
+	By("Waiting for RR to reach phase: " + string(phase))
+	Eventually(func() remediationv1.RemediationPhase {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(rr), rr); err != nil {
+			return ""
+		}
+		return rr.Status.OverallPhase
+	}, timeout, interval).Should(Equal(phase),
+		"RemediationRequest should reach phase "+string(phase))
+}

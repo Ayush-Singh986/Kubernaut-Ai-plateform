@@ -1,0 +1,638 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
+
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+)
+
+var _ = Describe("addFleetWorkloadNamespaces", func() {
+	It("UT-INFRA-FLEET-026: allocates isolated workload namespaces outside kubernaut-system", func() {
+		namespaces := map[string]string{}
+		addFleetWorkloadNamespaces(namespaces)
+
+		Expect(namespaces).To(HaveKey("fleet-crashloop"))
+		Expect(namespaces).To(HaveKey("fleet-oomkill"))
+		Expect(namespaces).To(HaveKey("fleet-organic-gateway"))
+		Expect(namespaces).To(HaveKey("fleet-ka-interactive"))
+
+		seen := map[string]struct{}{}
+		for key, namespace := range namespaces {
+			Expect(namespace).NotTo(Equal("kubernaut-system"), "workload %s must not use the control-plane namespace", key)
+			Expect(seen).NotTo(HaveKey(namespace), "workload namespace %s must be isolated", namespace)
+			seen[namespace] = struct{}{}
+		}
+	})
+})
+
+// Issue found 2026-09-02 (demo team report): the fleet demo's AlertManager
+// runs in a dedicated "monitoring" namespace (DD-EM-005's fleet-wide
+// platform-monitoring instance), but Gateway's Service lives in
+// "kubernaut-system". DeployAlertManager previously took a single namespace
+// argument and used it for BOTH AlertManager's own manifest AND the
+// gateway-webhook receiver's URL, so the fleet caller's monitoringNamespace
+// leaked into the webhook URL too -- producing an unresolvable
+// gateway-service.monitoring.svc.cluster.local address. AlertManager's own
+// logs confirmed it: "dial tcp: lookup gateway-service.monitoring.svc.
+// cluster.local ... no such host". buildAlertManagerManifest now takes
+// gatewayNamespace separately; these tests prove the webhook URL tracks it,
+// independent of namespace.
+var _ = Describe("buildAlertManagerManifest", func() {
+	It("UT-INFRA-FLEETDEMO-026: gateway-webhook URL uses gatewayNamespace, not namespace, when they differ", func() {
+		manifest := buildAlertManagerManifest("monitoring", "kubernaut-system", "")
+		Expect(manifest).To(ContainSubstring("https://gateway-service.kubernaut-system.svc.cluster.local:8443/api/v1/signals/prometheus"))
+		Expect(manifest).NotTo(ContainSubstring("gateway-service.monitoring.svc.cluster.local"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-027: AlertManager's own ConfigMap/Deployment/Service still use namespace, not gatewayNamespace", func() {
+		manifest := buildAlertManagerManifest("monitoring", "kubernaut-system", "")
+		Expect(manifest).To(ContainSubstring("name: alertmanager-config\n  namespace: monitoring"))
+		Expect(manifest).To(ContainSubstring("name: alertmanager\n  namespace: monitoring"))
+		Expect(manifest).To(ContainSubstring("name: alertmanager-svc\n  namespace: monitoring"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-028: single-cluster callers passing the same value for both still resolve correctly", func() {
+		manifest := buildAlertManagerManifest("kubernaut-system", "kubernaut-system", "")
+		Expect(manifest).To(ContainSubstring("https://gateway-service.kubernaut-system.svc.cluster.local:8443/api/v1/signals/prometheus"))
+	})
+
+	It("UT-INFRA-FLEETDEMO-029: BR-GATEWAY-036/037 bearer token is still added to the webhook's http_config when provided", func() {
+		manifest := buildAlertManagerManifest("kubernaut-system", "kubernaut-system", "test-token")
+		Expect(manifest).To(ContainSubstring("bearer_token: 'test-token'"))
+	})
+
+	It("UT-INFRA-FLEET-TLS-001: AlertManager uses the Gateway HTTPS endpoint and mounted CA", func() {
+		manifest := buildAlertManagerManifest("monitoring", "kubernaut-system", "test-token")
+		Expect(manifest).To(ContainSubstring("https://gateway-service.kubernaut-system.svc.cluster.local:8443/api/v1/signals/prometheus"))
+		Expect(manifest).To(ContainSubstring("tls_config:"))
+		Expect(manifest).To(ContainSubstring("ca_file: /etc/tls-ca/ca.crt"))
+		Expect(manifest).To(ContainSubstring("mountPath: /etc/tls-ca"))
+		Expect(manifest).To(ContainSubstring("name: inter-service-ca"))
+	})
+
+	It("UT-INFRA-FLEET-TLS-004: AlertManager's required CA volume is namespace-local", func() {
+		manifest := buildAlertManagerManifest("monitoring", "kubernaut-system", "test-token")
+		Expect(manifest).To(ContainSubstring("name: alertmanager\n  namespace: monitoring"))
+		Expect(manifest).To(ContainSubstring("- name: inter-service-ca\n          mountPath: /etc/tls-ca"))
+		Expect(manifest).To(ContainSubstring("- name: inter-service-ca\n        configMap:\n          name: inter-service-ca"))
+	})
+
+	It("UT-INFRA-FLEET-TLS-003: AlertManager embedded configuration is valid YAML", func() {
+		manifest := buildAlertManagerManifest("monitoring", "kubernaut-system", "test-token")
+		config := strings.SplitN(manifest, "  alertmanager.yml: |\n", 2)
+		Expect(config).To(HaveLen(2))
+		configLines := strings.SplitN(config[1], "\n---\n", 2)
+		Expect(configLines).To(HaveLen(2))
+		indentedLines := strings.Split(configLines[0], "\n")
+		for i, line := range indentedLines {
+			indentedLines[i] = strings.TrimPrefix(line, "    ")
+		}
+		var parsed yaml.Node
+		Expect(yaml.Unmarshal([]byte(strings.Join(indentedLines, "\n")), &parsed)).To(Succeed())
+	})
+})
+
+var _ = Describe("Fleet-only identity and webhook setup", func() {
+	It("UT-INFRA-FLEET-OIDC-001: skips Dex when Fleet infrastructure is provisioned", func() {
+		Expect(shouldDeployDexForAF(nil)).To(BeTrue())
+		Expect(shouldDeployDexForAF(func(context.Context, string, string, io.Writer) (*FleetHelmOptions, error) {
+			return nil, nil
+		})).To(BeFalse())
+	})
+
+	It("UT-INFRA-FLEET-OIDC-002: excludes Dex from Fleet readiness checks", func() {
+		fleetDeployments := fullPipelineReadinessDeployments(func(context.Context, string, string, io.Writer) (*FleetHelmOptions, error) {
+			return nil, nil
+		})
+		Expect(fleetDeployments).ToNot(ContainElement("dex"))
+
+		fullPipelineDeployments := fullPipelineReadinessDeployments(nil)
+		Expect(fullPipelineDeployments).To(ContainElement("dex"))
+		Expect(fullPipelineDeployments).ToNot(ContainElement("prometheus"))
+		Expect(fullPipelineDeployments).ToNot(ContainElement("alertmanager"))
+	})
+
+	It("UT-INFRA-FLEET-TLS-002: event exporter uses the Gateway HTTPS endpoint and mounted CA", func() {
+		manifest := buildEventExporterManifest("kubernaut-system", "test-token")
+		Expect(manifest).To(ContainSubstring("https://gateway-service.kubernaut-system.svc.cluster.local:8080/api/v1/signals/kubernetes-event"))
+		Expect(manifest).To(ContainSubstring("Authorization: \"Bearer test-token\""))
+		Expect(manifest).To(ContainSubstring("tls:"))
+		Expect(manifest).To(ContainSubstring("caFile: /etc/tls-ca/ca.crt"))
+		Expect(manifest).To(ContainSubstring("mountPath: /etc/tls-ca"))
+		Expect(manifest).To(ContainSubstring("name: inter-service-ca"))
+	})
+})
+
+var _ = Describe("Fleet OAuth2 credential ownership", func() {
+	It("UT-2492-FLEET-OAUTH-001 [BR-FLEET-054]: keeps read and WorkflowExecution write Secret contracts separate", func() {
+		read := buildFleetOAuth2SecretManifest("kubernaut-system", fleetOAuth2SecretName, "kubernaut-fleet-read", "e2e-fleet-secret")
+		write := buildFleetOAuth2SecretManifest("kubernaut-system", fleetOAuth2WriteSecretName, "kubernaut-fleet-write", "e2e-fleet-write-secret")
+		Expect(read).To(ContainSubstring("name: fleet-oauth2-creds"))
+		Expect(read).To(ContainSubstring("client-id: \"kubernaut-fleet-read\""))
+		Expect(write).To(ContainSubstring("name: fleet-workflowexecution-oauth2-creds"))
+		Expect(write).To(ContainSubstring("client-id: \"kubernaut-fleet-write\""))
+		Expect(write).NotTo(Equal(read))
+	})
+})
+
+var _ = Describe("FullPipeline event exporter resilience", func() {
+	It("UT-INFRA-FP-EVENT-001: keeps Warning events fresh for the full lifecycle budget", func() {
+		manifest := buildEventExporterManifest("kubernaut-system", "test-token")
+		Expect(manifest).To(ContainSubstring("omitLookup: true"),
+			"the event exporter must avoid cluster-wide metadata lookups that backlog Warning events")
+		Expect(manifest).To(ContainSubstring("maxEventAgeSeconds: 300"),
+			"the exporter window must stay aligned with Gateway's 5-minute event freshness guard")
+	})
+
+	It("UT-INFRA-FP-EVENT-002 [BR-E2E-001]: routes dynamic A2A fixture namespaces", func() {
+		manifest := buildEventExporterManifest("kubernaut-system", "test-token")
+		for _, pattern := range []string{
+			`namespace: "fp-auto-*"`,
+			`namespace: "fp-int-*"`,
+			`namespace: "fp-ints-*"`,
+			`namespace: "fp-comb-*"`,
+			`namespace: "fp-full-*"`,
+			`namespace: "fp-cg2-*"`,
+			`namespace: "fp-cg3-*"`,
+			`namespace: "fp-t1912-*"`,
+			`namespace: "fp-na1918-*"`,
+			`namespace: "fp-standalone-2378-*"`,
+			`namespace: "fp-fp-*"`,
+		} {
+			Expect(manifest).To(ContainSubstring(pattern), "A2A Warning events must reach Gateway from %s", pattern)
+		}
+	})
+})
+
+var _ = Describe("kube-mcp-server E2E configuration", func() {
+	It("UT-INFRA-FLEET-030: pins the E2E image to the current validated digest", func() {
+		Expect(KubeMCPServerImage).To(Equal("ghcr.io/containers/kubernetes-mcp-server@sha256:4219880ffae9b61f5cf8e27c0536d4001336016a6af77dc5a63dfaf9ce938b97"))
+	})
+
+	It("UT-INFRA-FLEET-032: gives preloaded MCP images a deterministic local tag", func() {
+		Expect(preloadedExternalImageReference(KubeMCPServerImage)).To(Equal("localhost/kind-preload:sha256-4219880ffae9b61f5cf8e27c0536d4001336016a6af77dc5a63dfaf9ce938b97"))
+	})
+
+	It("UT-INFRA-FLEET-033: uses the preloaded reference only when supplied", func() {
+		Expect(kubeMCPServerImageReference(KubeMCPServerAuthConfig{})).To(Equal(KubeMCPServerImage))
+		Expect(kubeMCPServerImageReference(KubeMCPServerAuthConfig{ImageReference: "localhost/kind-preload:sha256-test"})).To(Equal("localhost/kind-preload:sha256-test"))
+	})
+
+	It("UT-INFRA-FLEET-031: renders the current RFC 8693 token exchange schema", func() {
+		config := KubeMCPServerAuthConfig{
+			Mode:             KubeMCPServerAuthModePassthrough,
+			RequireOAuth:     true,
+			AuthorizationURL: "https://keycloak.example/realms/fleet",
+			OAuthAudience:    "kube-mcp-server",
+			StsClientID:      "kube-mcp-server",
+			StsClientSecret:  "secret",
+			StsAudience:      "k8s-api",
+			StsScopes:        []string{"k8s-api-audience"},
+			CAFilePath:       "/etc/tls-ca/ca.crt",
+		}
+
+		toml := config.tomlString()
+		Expect(toml).To(ContainSubstring("[token_exchange]"))
+		Expect(toml).To(ContainSubstring("strategy = \"rfc8693\""))
+		Expect(toml).To(ContainSubstring("audience = \"k8s-api\""))
+		Expect(toml).To(ContainSubstring("scopes = [\"k8s-api-audience\"]"))
+		Expect(toml).To(ContainSubstring("[token_exchange.client_auth]"))
+		Expect(toml).To(ContainSubstring("method = \"client_secret_basic\""))
+		Expect(toml).To(ContainSubstring("client_id = \"kube-mcp-server\""))
+		Expect(toml).To(ContainSubstring("client_secret = \"secret\""))
+		Expect(toml).NotTo(ContainSubstring("sts_client_id"))
+		Expect(toml).NotTo(ContainSubstring("sts_audience"))
+	})
+})
+
+var _ = Describe("fleet gateway cluster registration identities", func() {
+	It("UT-INFRA-FLEET-MCP-002: falls back to the application namespace for legacy callers", func() {
+		Expect(effectiveMCPGatewayNamespace("kubernaut-system", "")).To(Equal("kubernaut-system"))
+	})
+
+	It("UT-INFRA-FLEET-MCP-003: keeps the MCP infrastructure in its dedicated namespace", func() {
+		Expect(effectiveMCPGatewayNamespace("kubernaut-system", "mcp-system")).To(Equal("mcp-system"))
+	})
+
+	It("UT-INFRA-FLEET-MCP-004: resolves the remote MCP server namespace independently", func() {
+		Expect(effectiveRemoteMCPServerNamespace("")).To(Equal(DefaultRemoteMCPServerNamespace))
+		Expect(effectiveRemoteMCPServerNamespace("remote-mcp")).To(Equal("remote-mcp"))
+	})
+
+	It("UT-INFRA-FLEET-MCP-007: rewrites all pinned Kuadrant namespace references together", func() {
+		rendered := `metadata:
+  namespace: mcp-system
+subjects:
+- namespace: mcp-system
+value: mcp-system`
+
+		rewritten := rewriteKuadrantOverlayNamespace(rendered, "fleet-mcp")
+		Expect(rewritten).To(Equal(`metadata:
+  namespace: fleet-mcp
+subjects:
+- namespace: fleet-mcp
+value: fleet-mcp`))
+	})
+
+	It("UT-INFRA-FLEET-2441-001: uses hub and EAIGW's hub__ tool prefix for the demo", func() {
+		clusterID, toolPrefix := fleetHubRegistrationIdentity(KubeMCPServerAuthConfig{
+			GatewayType:  registry.GatewayEAIGW,
+			HubClusterID: "hub",
+		})
+
+		Expect(clusterID).To(Equal("hub"))
+		Expect(toolPrefix).To(Equal("hub__"))
+	})
+
+	It("UT-INFRA-FLEET-2441-002: keeps the remote-only EAIGW identity unchanged", func() {
+		clusterID, toolPrefix := fleetClusterRegistrationIdentity(KubeMCPServerAuthConfig{
+			GatewayType:            registry.GatewayEAIGW,
+			AllRegistrationsRemote: true,
+			RemoteBridge:           &RemoteClusterBridgeConfig{},
+			HubClusterID:           "hub",
+		})
+
+		Expect(clusterID).To(Equal("remote-cluster"))
+		Expect(toolPrefix).To(Equal("remote-cluster__"))
+	})
+
+	It("UT-INFRA-FLEET-2441-003: preserves the Kuadrant prefix convention", func() {
+		clusterID, toolPrefix := fleetHubRegistrationIdentity(KubeMCPServerAuthConfig{
+			GatewayType:  registry.GatewayKuadrant,
+			HubClusterID: "hub",
+		})
+
+		Expect(clusterID).To(Equal("hub"))
+		Expect(toolPrefix).To(Equal("hub_"))
+	})
+
+	It("UT-INFRA-FLEET-2441-004: keeps the primary remote identity while adding hub separately", func() {
+		clusterID, toolPrefix := fleetClusterRegistrationIdentity(KubeMCPServerAuthConfig{
+			GatewayType:            registry.GatewayEAIGW,
+			HubClusterID:           "hub",
+			AllRegistrationsRemote: true,
+		})
+		Expect(clusterID).To(Equal("remote-cluster"))
+		Expect(toolPrefix).To(Equal("remote-cluster__"))
+	})
+
+	It("UT-INFRA-FLEET-2441-005: aliases the dedicated IdP namespace to the stable issuer hostname", func() {
+		manifest := buildKeycloakServiceAliasManifest("kubernaut-system", "idp")
+
+		Expect(manifest).To(ContainSubstring("type: ExternalName"))
+		Expect(manifest).To(ContainSubstring("namespace: kubernaut-system"))
+		Expect(manifest).To(ContainSubstring("externalName: keycloak.idp.svc.cluster.local"))
+	})
+
+	It("UT-INFRA-FLEET-2441-006: skips the alias when IdP and application share a namespace", func() {
+		Expect(buildKeycloakServiceAliasManifest("kubernaut-system", "kubernaut-system")).To(BeEmpty())
+	})
+
+	It("IT-INFRA-FLEET-2441-007: renders hub and remote EAIGW backends with authorization forwarding", func() {
+		manifest := captureKubectlManifest(func() error {
+			return deployEnvoyAIGatewayRegistrations(context.Background(), "kubernaut-system", "test-kubeconfig", "http://gateway/mcp", KubeMCPServerAuthConfig{
+				GatewayType:            registry.GatewayEAIGW,
+				AuthorizationURL:       "https://keycloak:8443/realms/kubernaut-demo",
+				OAuthAudience:          "kube-mcp-server",
+				HubClusterID:           "hub",
+				AllRegistrationsRemote: true,
+			}, io.Discard)
+		})
+
+		Expect(manifest).To(ContainSubstring("name: hub"))
+		Expect(manifest).To(ContainSubstring("name: remote-cluster"))
+		Expect(manifest).To(ContainSubstring("name: prod-east"))
+		Expect(manifest).To(ContainSubstring("name: prod-west"))
+		Expect(manifest).To(ContainSubstring("forwardHeaders:"))
+		expectValidYAMLDocuments(manifest)
+	})
+
+	It("IT-INFRA-FLEET-2441-008: renders hub and remote Kuadrant registrations", func() {
+		manifest := captureKubectlManifest(func() error {
+			return deployKuadrantRegistrations(context.Background(), "kubernaut-system", "test-kubeconfig", KubeMCPServerAuthConfig{
+				GatewayType:            registry.GatewayKuadrant,
+				HubClusterID:           "hub",
+				AllRegistrationsRemote: true,
+				BrokerCredentialToken:  "token",
+			}, io.Discard)
+		})
+
+		Expect(manifest).To(ContainSubstring("name: hub"))
+		Expect(manifest).To(ContainSubstring("prefix: \"hub_\""))
+		Expect(manifest).To(ContainSubstring("name: remote-cluster"))
+		Expect(manifest).To(ContainSubstring("prefix: \"remote_cluster_\""))
+		Expect(manifest).To(ContainSubstring("name: prod-east"))
+		Expect(manifest).To(ContainSubstring("name: prod-west"))
+		expectValidYAMLDocuments(manifest)
+	})
+
+	It("IT-INFRA-FLEET-MCP-005: renders EAIGW registration resources in the configured MCP namespace", func() {
+		manifest := captureKubectlManifest(func() error {
+			return deployEnvoyAIGatewayRegistrations(context.Background(), "kubernaut-system", "test-kubeconfig", "http://gateway/mcp", KubeMCPServerAuthConfig{
+				GatewayType:         registry.GatewayEAIGW,
+				MCPGatewayNamespace: "mcp-system",
+				AuthorizationURL:    "https://keycloak:8443/realms/kubernaut-demo",
+				OAuthAudience:       "kube-mcp-server",
+				HubClusterID:        "hub",
+			}, io.Discard)
+		})
+
+		Expect(manifest).To(ContainSubstring("namespace: mcp-system"))
+		Expect(manifest).To(ContainSubstring("hostname: kube-mcp-server.mcp-system.svc.cluster.local"))
+		Expect(manifest).NotTo(ContainSubstring("namespace: kubernaut-system"))
+		expectValidYAMLDocuments(manifest)
+	})
+
+	It("IT-INFRA-FLEET-MCP-006: renders Kuadrant registration resources in the configured MCP namespace", func() {
+		manifest := captureKubectlManifest(func() error {
+			return deployKuadrantRegistrations(context.Background(), "kubernaut-system", "test-kubeconfig", KubeMCPServerAuthConfig{
+				GatewayType:           registry.GatewayKuadrant,
+				MCPGatewayNamespace:   "mcp-system",
+				HubClusterID:          "hub",
+				BrokerCredentialToken: "token",
+			}, io.Discard)
+		})
+
+		Expect(manifest).To(ContainSubstring("namespace: mcp-system"))
+		Expect(manifest).NotTo(ContainSubstring("namespace: kubernaut-system"))
+		expectValidYAMLDocuments(manifest)
+	})
+
+	It("IT-INFRA-AF-FLEET-2462-001 [BR-FLEET-054]: renders one hub Gateway backend without loopback or spoke aliases", func() {
+		manifest := captureKubectlManifest(func() error {
+			return deployEnvoyAIGatewayRegistrations(context.Background(), "kubernaut-system", "test-kubeconfig", "http://gateway/mcp", KubeMCPServerAuthConfig{
+				GatewayType:      registry.GatewayEAIGW,
+				AuthorizationURL: "https://keycloak:8443/realms/kubernaut-demo",
+				OAuthAudience:    "kube-mcp-server",
+				HubClusterID:     "hub",
+			}, io.Discard)
+		})
+
+		type backendEndpoint struct {
+			FQDN struct {
+				Hostname string `yaml:"hostname"`
+				Port     int    `yaml:"port"`
+			} `yaml:"fqdn"`
+		}
+		type backendRef struct {
+			Name           string `yaml:"name"`
+			ForwardHeaders []struct {
+				Name string `yaml:"name"`
+			} `yaml:"forwardHeaders"`
+		}
+		type gatewayDocument struct {
+			Kind     string `yaml:"kind"`
+			Metadata struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+			Spec struct {
+				Endpoints   []backendEndpoint `yaml:"endpoints"`
+				BackendRefs []backendRef      `yaml:"backendRefs"`
+			} `yaml:"spec"`
+		}
+
+		decoder := yaml.NewDecoder(strings.NewReader(manifest))
+		var fleetBackendNames []string
+		var hubBackendName string
+		var hubBackendHost string
+		var hubBackendPort int
+		var hubRouteRefs []string
+		hubForwardsAuthorization := false
+		for {
+			var doc gatewayDocument
+			err := decoder.Decode(&doc)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			Expect(err).NotTo(HaveOccurred(), "Gateway manifest document must parse")
+
+			switch doc.Kind {
+			case "Backend":
+				if doc.Metadata.Name == "keycloak-jwks" {
+					continue
+				}
+				fleetBackendNames = append(fleetBackendNames, doc.Metadata.Name)
+				if doc.Metadata.Name == "hub" && len(doc.Spec.Endpoints) == 1 {
+					hubBackendName = doc.Metadata.Name
+					hubBackendHost = doc.Spec.Endpoints[0].FQDN.Hostname
+					hubBackendPort = doc.Spec.Endpoints[0].FQDN.Port
+				}
+			case "MCPRoute":
+				for _, ref := range doc.Spec.BackendRefs {
+					hubRouteRefs = append(hubRouteRefs, ref.Name)
+					if ref.Name == "hub" {
+						for _, header := range ref.ForwardHeaders {
+							if header.Name == "Authorization" {
+								hubForwardsAuthorization = true
+							}
+						}
+					}
+				}
+			}
+		}
+
+		Expect(fleetBackendNames).To(Equal([]string{"hub"}),
+			"hub-only AF Fleet mode must not publish implicit loopback or spoke registrations")
+		Expect(hubBackendName).To(Equal("hub"))
+		Expect(hubBackendHost).To(Equal("kube-mcp-server.kubernaut-system.svc.cluster.local"))
+		Expect(hubBackendPort).To(Equal(8080))
+		Expect(hubRouteRefs).To(Equal([]string{"hub"}), "the MCP route must expose only the explicit hub backend")
+		Expect(hubForwardsAuthorization).To(BeTrue(), "the caller token must reach the registered hub MCP backend")
+		expectValidYAMLDocuments(manifest)
+	})
+
+	It("UT-INFRA-AF-FLEET-2462-002 [BR-FLEET-054]: detects an explicit single-cluster hub registration", func() {
+		Expect(isHubOnlyRegistration(KubeMCPServerAuthConfig{
+			GatewayType:  registry.GatewayEAIGW,
+			HubClusterID: "hub",
+		})).To(BeTrue())
+		Expect(isHubOnlyRegistration(KubeMCPServerAuthConfig{
+			GatewayType:            registry.GatewayEAIGW,
+			HubClusterID:           "hub",
+			AllRegistrationsRemote: true,
+		})).To(BeFalse(), "full Fleet routing must keep its existing remote registration behavior")
+	})
+
+	It("IT-INFRA-AF-FLEET-2462-003 [BR-INTEGRATION-065]: standalone FMC setup requires an image", func() {
+		fleetOptions, err := SetupFMCHubOnlyInfrastructure(context.Background(), "", "", "", "", io.Discard)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("fmc image is required"))
+		Expect(fleetOptions).To(BeNil())
+	})
+})
+
+var _ = Describe("EAIGW version overrides", func() {
+	It("UT-INFRA-FLEET-2519-001 [BR-PLATFORM-014]: uses the validated matrix when overrides are omitted", func() {
+		versions := resolveFleetGatewayVersions(FleetGatewayVersionOverrides{})
+
+		Expect(versions.EnvoyGatewayVersion).To(Equal(defaultEnvoyGatewayHelmVersion))
+		Expect(versions.AgentRouterVersion).To(Equal(defaultAgentRouterHelmVersion))
+	})
+
+	It("UT-INFRA-FLEET-2519-002 [BR-PLATFORM-014]: preserves explicit operator overrides", func() {
+		versions := resolveFleetGatewayVersions(FleetGatewayVersionOverrides{
+			EnvoyGatewayVersion: "v1.10.0",
+			AgentRouterVersion:  "v1.3.0",
+		})
+
+		Expect(versions.EnvoyGatewayVersion).To(Equal("v1.10.0"))
+		Expect(versions.AgentRouterVersion).To(Equal("v1.3.0"))
+	})
+
+	It("UT-INFRA-FLEET-2519-003 [BR-PLATFORM-014]: reports the effective compatibility matrix", func() {
+		report := resolveFleetGatewayVersions(FleetGatewayVersionOverrides{
+			EnvoyGatewayVersion: "v1.10.0",
+			AgentRouterVersion:  "v1.3.0",
+		}).Report()
+
+		Expect(report).To(ContainSubstring("Envoy Gateway: v1.10.0"))
+		Expect(report).To(ContainSubstring("Agent Router: v1.3.0"))
+		Expect(report).To(ContainSubstring("operator-supplied"))
+	})
+
+	It("UT-INFRA-FLEET-2519-004 [BR-PLATFORM-014]: renders a stable session seed Secret", func() {
+		manifest := buildFleetMCPSessionSeedSecretManifest("mcp-system", "stable-seed")
+
+		Expect(manifest).To(ContainSubstring("name: " + fleetMCPSessionSeedSecretName))
+		Expect(manifest).To(ContainSubstring("namespace: mcp-system"))
+		Expect(manifest).To(ContainSubstring("seed: stable-seed"))
+	})
+
+	It("UT-INFRA-FLEET-2519-005 [BR-PLATFORM-014]: builds the supported ordered Helm arguments", func() {
+		versions := resolveFleetGatewayVersions(FleetGatewayVersionOverrides{})
+
+		Expect(buildEnvoyGatewayCRDsHelmArgs(versions)).To(Equal([]string{
+			"--version", "v1.9.2",
+			"--set", "crds.gatewayAPI.enabled=true",
+			"--set", "crds.envoyGateway.enabled=true",
+		}))
+		Expect(buildEnvoyGatewayHelmArgs(versions)).To(Equal([]string{
+			"--version", "v1.9.2",
+			"--set", "crds.enabled=false",
+			"-f", "https://raw.githubusercontent.com/theagentrouter/agent-router/v1.2.0/manifests/envoy-gateway-values.yaml",
+			"--set", "config.envoyGateway.provider.type=Kubernetes",
+			"--set", "config.envoyGateway.extensionApis.enableEnvoyPatchPolicy=true",
+			"--set", "config.envoyGateway.extensionApis.enableBackend=true",
+			"--set", "config.envoyGateway.extensionManager.service.fqdn.hostname=ai-gateway-controller.envoy-ai-gateway-system.svc.cluster.local",
+			"--set", "config.envoyGateway.extensionManager.service.fqdn.port=1063",
+			"--set", "config.envoyGateway.extensionManager.hooks.xdsTranslator.translation.listener.includeAll=true",
+			"--set", "config.envoyGateway.extensionManager.hooks.xdsTranslator.translation.route.includeAll=true",
+			"--set", "config.envoyGateway.extensionManager.hooks.xdsTranslator.translation.cluster.includeAll=true",
+			"--set", "config.envoyGateway.extensionManager.hooks.xdsTranslator.translation.secret.includeAll=true",
+			"--set-json", `config.envoyGateway.extensionManager.hooks.xdsTranslator.post=["Translation","Cluster","Route"]`,
+			"--set-json", `config.envoyGateway.extensionManager.resources=[{"group":"aigateway.envoyproxy.io","version":"v1beta1","kind":"MCPRoute"}]`,
+			"--set", "config.envoyGateway.gateway.controllerName=gateway.envoyproxy.io/gatewayclass-controller",
+			"--set", "config.envoyGateway.logging.level.default=info",
+		}))
+		Expect(buildAgentRouterHelmArgs(versions)).To(Equal([]string{
+			"--version", "v1.2.0",
+			"--set", "controller.mcp.sessionEncryption.existingSecret=mcp-session-seed",
+		}))
+	})
+
+	It("UT-INFRA-FLEET-2519-006 [BR-PLATFORM-014]: parses dependency overrides from YAML", func() {
+		overrides, err := parseFleetGatewayVersionOverrides([]byte("envoyGatewayVersion: v1.10.0\nagentRouterVersion: v1.3.0\n"))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(overrides.EnvoyGatewayVersion).To(Equal("v1.10.0"))
+		Expect(overrides.AgentRouterVersion).To(Equal("v1.3.0"))
+	})
+
+	It("UT-INFRA-FLEET-2519-007 [BR-PLATFORM-014]: explicit overrides take precedence over YAML", func() {
+		fileOverrides := FleetGatewayVersionOverrides{
+			EnvoyGatewayVersion: "v1.10.0",
+			AgentRouterVersion:  "v1.3.0",
+		}
+		cliOverrides := FleetGatewayVersionOverrides{EnvoyGatewayVersion: "v1.11.0"}
+
+		merged := MergeFleetGatewayVersionOverrides(fileOverrides, cliOverrides)
+
+		Expect(merged.EnvoyGatewayVersion).To(Equal("v1.11.0"))
+		Expect(merged.AgentRouterVersion).To(Equal("v1.3.0"))
+	})
+})
+
+func captureKubectlManifest(run func() error) string {
+	dir, err := os.MkdirTemp("", "fleet-kubectl-test-")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = os.RemoveAll(dir) })
+
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\ncat > \"$FLEET_TEST_MANIFEST\"\n"
+	Expect(os.WriteFile(kubectlPath, []byte(script), 0o755)).To(Succeed())
+
+	previousPath := os.Getenv("PATH")
+	previousManifest := os.Getenv("FLEET_TEST_MANIFEST")
+	Expect(os.Setenv("PATH", dir+string(os.PathListSeparator)+previousPath)).To(Succeed())
+	Expect(os.Setenv("FLEET_TEST_MANIFEST", manifestPath)).To(Succeed())
+	DeferCleanup(func() {
+		_ = os.Setenv("PATH", previousPath)
+		_ = os.Setenv("FLEET_TEST_MANIFEST", previousManifest)
+	})
+
+	Expect(run()).To(Succeed())
+	manifest, err := os.ReadFile(manifestPath)
+	Expect(err).NotTo(HaveOccurred())
+	return string(manifest)
+}
+
+var _ = Describe("fleet external image preload policy", func() {
+	It("UT-INFRA-FLEETDEMO-026 [BR-PLATFORM-014]: skips archive preload in local mode", func() {
+		Expect(shouldPreloadFleetExternalImages("")).To(BeFalse())
+	})
+
+	It("UT-INFRA-FLEETDEMO-027 [BR-PLATFORM-014]: preloads external images in CI mode", func() {
+		Expect(shouldPreloadFleetExternalImages("quay.io/kubernaut-ai")).To(BeTrue())
+	})
+})
+
+var _ = Describe("Kuadrant broker TLS wiring", func() {
+	It("UT-INFRA-FLEET-TLS-005 [BR-INTEGRATION-065]: mounts the private gateway CA and passes the broker flag", func() {
+		patch := kuadrantBrokerGatewayCAPatch()
+
+		Expect(patch).To(ContainSubstring(`"path":"/spec/template/spec/volumes/-"`))
+		Expect(patch).To(ContainSubstring(`"configMap":{"name":"inter-service-ca"}`))
+		Expect(patch).To(ContainSubstring(`"mountPath":"/certs/gateway-ca.crt"`))
+		Expect(patch).To(ContainSubstring(`"subPath":"ca.crt"`))
+		Expect(patch).To(ContainSubstring(`--gateway-ca-cert=/certs/gateway-ca.crt`))
+	})
+})
+
+func expectValidYAMLDocuments(manifest string) {
+	decoder := yaml.NewDecoder(strings.NewReader(manifest))
+	for {
+		var document yaml.Node
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		Expect(err).NotTo(HaveOccurred(), "rendered manifest:\n%s", manifest)
+	}
+}

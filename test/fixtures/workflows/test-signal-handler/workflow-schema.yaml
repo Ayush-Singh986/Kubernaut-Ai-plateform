@@ -1,0 +1,47 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: test-signal-handler-v1
+spec:
+  # Test Signal Handler Workflow Schema (BR-WORKFLOW-004)
+  # Used by: AIAnalysis E2E
+  version: "1.0.0"
+  description:
+    what: "Deletes a pod in response to a test signal for validation purposes"
+    whenToUse: "When a test signal is received that requires pod deletion"
+    whenNotToUse: "In production environments"
+    preconditions: "Pod exists and is deletable"
+  
+  actionType: DeletePod
+  
+  labels:
+    severity: [critical, high, warning, info]
+    environment: [test]
+    component: [v1/Pod]
+    priority: "*"
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to delete"

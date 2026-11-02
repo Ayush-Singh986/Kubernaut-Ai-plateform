@@ -1,0 +1,66 @@
+{{- /* Self-Correction Feedback: Validation Error (DD-HAPI-002 v1.2)
+     Source: kubernaut-agent/src/extensions/incident/prompt_builder.py build_validation_error_feedback
+     BRs: BR-HAPI-197 (needs_human_review), BR-KA-191 (Parameter Schema)
+     Appended to conversation when LLM's workflow response fails validation.
+*/ -}}
+{{ if .IsFormatFailure }}
+## ⚠️ OUTPUT FORMAT ERROR - CORRECTION REQUIRED (Attempt {{ .AttemptDisplay }}/{{ .MaxAttempts }})
+
+Your previous response did not include the required structured JSON output:
+
+{{ range .Errors }}- {{ . }}
+{{ end }}
+**Your response MUST include a ```json``` code block** with this structure:
+
+```json
+{
+  "root_cause_analysis": {
+    "summary": "...",
+    "contributing_factors": ["..."]
+  },
+  "confidence": 0.0,
+  "selected_workflow": null,
+  "investigation_outcome": "resolved|inconclusive",
+  "actionable": true
+}
+```
+
+If you identified a matching workflow, include it in `selected_workflow` instead of null.
+If no workflow matches, set `selected_workflow` to null and include `investigation_outcome`.
+If the alert is benign (no remediation warranted), set `actionable` to `false`.
+
+**Re-submit your complete analysis with the ```json``` code block.**
+{{ else }}
+## ⚠️ VALIDATION ERROR - CORRECTION REQUIRED (Attempt {{ .AttemptDisplay }}/{{ .MaxAttempts }})
+
+Your previous workflow response had validation errors:
+
+{{ range .Errors }}- {{ . }}
+{{ end }}
+{{ if .SchemaHint }}
+**Expected Parameter Schema:**
+```
+{{ .SchemaHint }}
+```
+Use the parameter names, types, and constraints shown above when correcting your response.
+{{ end }}
+**Please correct your response:**
+1. Re-check the workflow ID exists in the catalog (use get_workflow with the workflow_id)
+2. Verify all required parameters are provided with correct types and values
+
+**Re-submit your JSON response with the corrected workflow selection.**
+{{ end }}
+
+**Repeat-selection contract (DD-KA-2496 / BR-KA-016):**
+Use the catalog-authoritative workflow ID; the server resolves the required
+catalog name. For a same-ID repeat with a completed valid prior assessment,
+successful or ineffective, provide `repeat_justification` with non-blank
+`evidence_basis`, `prior_outcome_relevance` and `expected_mechanism`, each at most
+2,000 characters. Explain current evidence, the prior outcome's relevance and the
+expected mechanism. Do not fabricate unknown prior state or failure causes.
+First selections and a different workflow ID need no justification. Structural
+validation is not a semantic judge and does not penalize confidence or remove
+candidates. Reassess current selection confidence from current evidence; do not
+borrow RCA/historical confidence. Existing review, approval and safety gates apply.
+You may instead choose a different workflow or call `submit_result_no_workflow`
+when none is suitable; catalog presence does not force selection.

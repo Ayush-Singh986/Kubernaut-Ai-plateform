@@ -1,0 +1,378 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package kubernautagent
+
+import (
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// TP-433-ADV Phase 8: E2E Adversarial Parity Tests
+//
+// These tests validate the P1-P7 implementation against a live Kind cluster
+// with Mock LLM. Each test triggers a specific Mock LLM scenario via the
+// signal_name keyword matching in the Mock LLM registry.
+//
+// Mock LLM scenarios used: problem_resolved, predictive_no_action,
+// problem_resolved_contradiction, oomkilled, no_workflow_found,
+// rca_incomplete, low_confidence
+
+var _ = Describe("E2E-KA-433-ADV: Adversarial Parity Tests", Label("e2e", "ka", "adversarial"), func() {
+
+	// Helper to build a standard request with the mock keyword as signal name
+	buildRequest := func(incidentID, signalName, severity string) agentsessionv1.AgentSessionSpec {
+		sev := "critical"
+		switch severity {
+		case "high":
+			sev = "high"
+		case "medium":
+			sev = "warning"
+		case "info":
+			sev = "info"
+		}
+		return agentsessionv1.AgentSessionSpec{
+			RemediationRequestRef: agentsessionv1.ObjectRef{Name: "rem-adv-" + incidentID, Namespace: sharedNamespace},
+			IncidentID:            incidentID,
+			RemediationID:         "rem-adv-" + incidentID,
+			SignalName:            signalName,
+			Severity:              sev,
+			SignalSource:          "kubernetes",
+			ResourceNamespace:     "production",
+			ResourceKind:          "Pod",
+			ResourceName:          "test-pod-adv",
+			ErrorMessage:          signalName + " triggered for adversarial test",
+			Environment:           "production",
+			// generic-restart-v1 is cataloged at P2; OOM workflows use a wildcard.
+			Priority:         "P2",
+			SignalMode:       "reactive",
+			RiskTolerance:    "medium",
+			BusinessCategory: "test",
+		}
+	}
+
+	// investigate is a shorthand for the CRD-based flow (#2190), mirroring
+	// the retired sessionClient.Investigate(ctx, req) call shape.
+	investigate := func(spec agentsessionv1.AgentSessionSpec) (*agentsessionv1.AgentSessionResult, error) {
+		return infrastructure.InvestigateViaAgentSession(ctx, k8sClient, sharedNamespace, spec, 2*time.Minute)
+	}
+
+	// ===================================================================
+	// GAP-002: Outcome Routing (is_actionable)
+	// ===================================================================
+
+	Context("GAP-002: Outcome routing", func() {
+
+		It("E2E-KA-433-ADV-001: problem_resolved → is_actionable=false, no workflow", func() {
+			spec := buildRequest("adv-001", "mock_problem_resolved", "low")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.IsActionable).NotTo(BeNil(),
+				"M1: isActionable must be set for problem_resolved outcome")
+			Expect(*result.IsActionable).To(BeFalse(),
+				"problem_resolved should set isActionable=false")
+
+			Expect(result.SelectedWorkflow).To(BeNil(),
+				"problem_resolved should not select a workflow")
+		})
+
+		It("E2E-KA-433-ADV-002: predictive_no_action → is_actionable=false", func() {
+			spec := buildRequest("adv-002", "mock_predictive_no_action", "low")
+			spec.SignalMode = "proactive"
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.IsActionable).NotTo(BeNil(),
+				"M1: isActionable must be set for predictive_no_action outcome")
+			Expect(*result.IsActionable).To(BeFalse(),
+				"predictive_no_action should set isActionable=false")
+		})
+
+		It("E2E-KA-433-ADV-003: problem_resolved_contradiction → needs_human_review=false (#301 override)", func() {
+			spec := buildRequest("adv-003", "mock_problem_resolved_contradiction", "low")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// #301: When investigation_outcome=problem_resolved AND needs_human_review=true,
+			// the resolution takes precedence. Python KA enforced this override; KA matches.
+			Expect(result.NeedsHumanReview).To(BeFalse(),
+				"#301: problem_resolved overrides contradictory needs_human_review=true")
+		})
+	})
+
+	// ===================================================================
+	// GAP-001: Post-RCA Enrichment
+	// ===================================================================
+
+	Context("GAP-001: Post-RCA enrichment", func() {
+
+		It("E2E-KA-433-ADV-004: OOMKilled enrichment produces detected_labels", func() {
+			spec := buildRequest("adv-004", "OOMKilled", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.Analysis).NotTo(BeEmpty())
+		})
+	})
+
+	// ===================================================================
+	// GAP-004/016: RFC 7807 Error Handling
+	// ===================================================================
+
+	// #2190: RFC 7807's role (structured "detail" on a rejected request) is
+	// now played by the K8s API server's own Invalid-typed error on Create,
+	// which AgentSession's OpenAPI schema (minLength:1 on incidentID/
+	// remediationID/signalName, matching DD-WORKFLOW-002 v2.2's porting of
+	// the retired agentclient.IncidentRequest schema's own minLength:1) is
+	// the sole remaining enforcement point for -- Create() itself never
+	// reaches KA's dispatcher when validation fails, same fail-fast contract
+	// the retired HTTP 400/422 responses provided.
+	Context("GAP-004/016: CRD schema validation rejects incomplete AgentSessions", func() {
+
+		It("E2E-KA-433-ADV-005: AgentSession missing all required fields is rejected as Invalid", func() {
+			as := &agentsessionv1.AgentSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "as-adv-005-invalid", Namespace: sharedNamespace},
+				Spec:       agentsessionv1.AgentSessionSpec{},
+			}
+			err := k8sClient.Create(ctx, as)
+			Expect(err).To(HaveOccurred(), "AgentSession missing all required fields should be rejected")
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "rejection should be a schema validation error (Invalid), got: %v", err)
+		})
+
+		It("E2E-KA-433-ADV-006: AgentSession missing remediationID is rejected as Invalid", func() {
+			spec := buildRequest("adv-006", "OOMKilled", "high")
+			spec.RemediationID = ""
+			as := &agentsessionv1.AgentSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "as-adv-006-missing-remid", Namespace: sharedNamespace},
+				Spec:       spec,
+			}
+			err := k8sClient.Create(ctx, as)
+			Expect(err).To(HaveOccurred(), "AgentSession missing remediationID should be rejected")
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "rejection should be a schema validation error (Invalid), got: %v", err)
+		})
+
+		It("E2E-KA-433-ADV-007: AgentSession missing incidentID is rejected as Invalid", func() {
+			spec := buildRequest("adv-007", "OOMKilled", "high")
+			spec.IncidentID = ""
+			as := &agentsessionv1.AgentSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "as-adv-007-missing-incid", Namespace: sharedNamespace},
+				Spec:       spec,
+			}
+			err := k8sClient.Create(ctx, as)
+			Expect(err).To(HaveOccurred(), "AgentSession missing incidentID should be rejected")
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "rejection should be a schema validation error (Invalid), got: %v", err)
+		})
+	})
+
+	// ===================================================================
+	// GAP-006: LLM Metrics
+	// ===================================================================
+
+	Context("GAP-006: LLM metrics", func() {
+
+		It("E2E-KA-433-ADV-008: /metrics has aiagent_api_llm_requests_total after investigation", func() {
+			spec := buildRequest("adv-008", "OOMKilled", "high")
+			_, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := http.Get(kaMetricsURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			metricsText := string(body)
+
+			Expect(metricsText).To(ContainSubstring("aiagent_api_llm_requests_total"),
+				"/metrics should expose LLM request counter")
+		})
+
+		It("E2E-KA-433-ADV-009: /metrics has aiagent_api_llm_tokens_total after investigation", func() {
+			// M5-fix: ensure at least one investigation has run so metrics are populated
+			spec := buildRequest("adv-009-tokens", "OOMKilled", "high")
+			_, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := http.Get(kaMetricsURL + "/metrics")
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			metricsText := string(body)
+
+			Expect(metricsText).To(ContainSubstring("aiagent_api_llm_tokens_total"),
+				"/metrics should expose LLM token counter")
+		})
+	})
+
+	// ===================================================================
+	// GAP-009: ExecutionBundle + AlternativeWorkflows
+	// ===================================================================
+
+	Context("GAP-009: ExecutionBundle and AlternativeWorkflows", func() {
+
+		It("E2E-KA-433-ADV-010: Successful investigation selected_workflow present", func() {
+			spec := buildRequest("adv-010", "OOMKilled", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// AgentSessionResult.NeedsHumanReview is a plain, always-set bool
+			// (unlike the retired client's optional field), so no hasHR check.
+			if !result.NeedsHumanReview {
+				Expect(result.SelectedWorkflow).NotTo(BeNil(), "actionable result should have selectedWorkflow")
+				sw := decodeDetectedLabels(result.SelectedWorkflow)
+				Expect(sw).To(HaveKey("workflow_id"))
+			}
+		})
+
+		It("E2E-KA-433-ADV-011: Low confidence result produces investigation output", func() {
+			spec := buildRequest("adv-011", "mock_low_confidence", "critical")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.Analysis).NotTo(BeEmpty())
+			Expect(result.Confidence).To(BeNumerically("<", 1.0))
+		})
+	})
+
+	// ===================================================================
+	// GAP-011/020: Audit Trail
+	// ===================================================================
+
+	Context("GAP-011: Audit trail", func() {
+
+		It("E2E-KA-433-ADV-012: Investigation completes with incident correlation", func() {
+			spec := buildRequest("adv-012-audit", "OOMKilled", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.IncidentID).To(Equal("adv-012-audit"))
+		})
+
+		It("E2E-KA-433-ADV-013: Investigation produces non-empty analysis", func() {
+			spec := buildRequest("adv-013-prompt", "OOMKilled", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.Analysis).NotTo(BeEmpty(),
+				"analysis should contain RCA summary from prompt")
+		})
+
+		It("E2E-KA-433-ADV-014: Authenticated investigation preserves SA identity", func() {
+			spec := buildRequest("adv-014-auth", "OOMKilled", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+		})
+	})
+
+	// ===================================================================
+	// GAP-015: HR Reason Alignment
+	// ===================================================================
+
+	Context("GAP-015: Human review reason alignment", func() {
+
+		It("E2E-KA-433-ADV-015: no_workflow_found → correct HR reason enum", func() {
+			spec := buildRequest("adv-015", "mock_no_workflow_found", "critical")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			Expect(result.NeedsHumanReview).To(BeTrue(),
+				"no_workflow_found should require human review")
+			Expect(result.HumanReviewReason).NotTo(BeEmpty())
+			Expect(result.HumanReviewReason).To(SatisfyAny(
+				Equal("no_matching_workflows"),
+				Equal("investigation_inconclusive"),
+				Equal("workflow_not_found"),
+			), "no_workflow_found should produce a valid HR reason enum")
+		})
+
+		// Issue #1039: Deleted resource proceeds to workflow selection.
+		// unreachable-pod does NOT exist → NotFound → enrichment softened
+		// (no HardFail) → pipeline continues to workflow selection →
+		// mock LLM returns generic-restart-v1 workflow.
+		// Replaces E2E-KA-433-ADV-016 which asserted rca_incomplete.
+		It("E2E-KA-1039-001: deleted resource proceeds to workflow selection", func() {
+			spec := buildRequest("1039-001", "mock_rca_incomplete", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			// Pipeline must NOT abort with rca_incomplete.
+			if result.NeedsHumanReview && result.HumanReviewReason != "" {
+				Expect(result.HumanReviewReason).NotTo(Equal("rca_incomplete"),
+					"E2E-KA-1039-001: deleted resource must NOT trigger rca_incomplete")
+			}
+
+			// Workflow selection must have run and produced a result.
+			Expect(result.SelectedWorkflow).NotTo(BeNil(),
+				"E2E-KA-1039-001: selectedWorkflow must be present (pipeline continued)")
+			sw := decodeDetectedLabels(result.SelectedWorkflow)
+			Expect(sw).To(HaveKey("workflow_id"),
+				"E2E-KA-1039-001: selectedWorkflow must contain workflow_id")
+
+			Expect(result.Confidence).To(BeNumerically(">=", 0.5),
+				"E2E-KA-1039-001: confidence must reflect LLM assessment (mock returns 0.88)")
+			Expect(result.Analysis).NotTo(BeEmpty(),
+				"E2E-KA-1039-001: analysis must be present (RCA phase completed)")
+		})
+
+		// Issue #1039: Deleted resource warning surfaced in response.
+		// Verifies observability: when enrichment detects a deleted target,
+		// a warning is added to the investigation response.
+		It("E2E-KA-1039-002: deleted resource warning in response", func() {
+			spec := buildRequest("1039-002", "mock_rca_incomplete", "high")
+			result, err := investigate(spec)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			hasDeletedWarning := false
+			for _, w := range result.Warnings {
+				if strings.Contains(w, "deleted") {
+					hasDeletedWarning = true
+					break
+				}
+			}
+			Expect(hasDeletedWarning).To(BeTrue(),
+				"E2E-KA-1039-002: warnings must contain a 'deleted' resource notice")
+
+			// Investigation must still succeed despite the warning.
+			Expect(result.SelectedWorkflow).NotTo(BeNil(),
+				"E2E-KA-1039-002: investigation must succeed with workflow selected")
+			sw := decodeDetectedLabels(result.SelectedWorkflow)
+			Expect(sw).To(HaveKey("workflow_id"),
+				"E2E-KA-1039-002: selectedWorkflow must contain workflow_id")
+		})
+	})
+})

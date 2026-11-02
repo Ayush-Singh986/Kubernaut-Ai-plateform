@@ -1,0 +1,412 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package mockllm_test
+
+import (
+	"encoding/json"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	"github.com/jordigilh/kubernaut/test/services/mock-llm/response"
+	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+)
+
+var _ = Describe("Response Builders", func() {
+	It("UT-MOCK-2496-004: live AF fixture scopes an existing RR to the current user turn without inventing a selection (BR-KA-016)", func() {
+		registry := scenarios.DefaultRegistry()
+		for _, id := range []string{"rr-history-2496-one", "rr-history-2496-two"} {
+			ctx := &scenarios.DetectionContext{Caller: scenarios.CallerAF,
+				LastUserContent: "investigate current selection 2496 for " + id}
+			matched := registry.Detect(ctx)
+			Expect(matched).NotTo(BeNil())
+			Expect(matched.Scenario.Name()).To(Equal("af_history_live_2496"))
+			configured, ok := matched.Scenario.(scenarios.ScenarioWithContextConfig)
+			Expect(ok).To(BeTrue())
+			fixture := configured.ConfigForContext(ctx)
+			Expect(fixture.ToolCallName).To(Equal("kubernaut_investigate"))
+			Expect(fixture.ToolCallArgs).To(Equal(map[string]interface{}{"rr_id": id}))
+			Expect(fixture.WorkflowID).To(BeEmpty())
+			ctx.Caller = scenarios.CallerKA
+			Expect(registry.Detect(ctx).Scenario.Name()).NotTo(Equal("af_history_live_2496"))
+		}
+	})
+	DescribeTable("UT-MOCK-2496-001: deterministic provider fixtures exercise repeat acceptance, rejection and current-confidence review (BR-KA-016, BR-KA-197)",
+		func(name string, confidence float64, justified bool) {
+			scenario, found := scenarios.DefaultRegistry().Get(name)
+			Expect(found).To(BeTrue(), "the deployed provider fixture must be registered")
+			configured, ok := scenario.(scenarios.ScenarioWithConfig)
+			Expect(ok).To(BeTrue())
+			fixture := configured.Config()
+			Expect(fixture.WorkflowName).To(Equal("oomkill-increase-memory-v1"))
+			Expect(fixture.ActionType).To(Equal("IncreaseMemoryLimits"))
+			for _, text := range []bool{false, true} {
+				resp := response.BuildToolCallResponse("mock-model", openai.ToolSubmitResultWithWorkflow, fixture)
+				raw := resp.Choices[0].Message.ToolCalls[0].Function.Arguments
+				if text {
+					resp = response.BuildTextResponse("mock-model", fixture)
+					raw = *resp.Choices[0].Message.Content
+				}
+				var payload map[string]interface{}
+				Expect(json.Unmarshal([]byte(raw), &payload)).To(Succeed())
+				selected, ok := payload["selected_workflow"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(selected).To(HaveKeyWithValue("workflow_id", fixture.WorkflowID))
+				Expect(selected).To(HaveKeyWithValue("confidence", confidence))
+				if !justified {
+					Expect(selected).NotTo(HaveKey("repeat_justification"), "missing justification must stay missing on every correction")
+					continue
+				}
+				parts, ok := selected["repeat_justification"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				for _, key := range []string{"evidence_basis", "prior_outcome_relevance", "expected_mechanism"} {
+					Expect(parts[key]).NotTo(BeEmpty())
+				}
+			}
+		},
+		Entry("accepted repeat", "history_repeat_accepted_2496", .84, true),
+		Entry("rejected repeat", "history_repeat_rejected_2496", .84, false),
+		Entry("below-floor repeat", "history_repeat_low_2496", .42, true),
+		Entry("approval-band repeat", "history_repeat_approval_2496", .75, true),
+	)
+
+	It("UT-MOCK-2496-003: a different catalog ID in the same action family carries no inherited repeat explanation (BR-KA-016)", func() {
+		scenario, found := scenarios.DefaultRegistry().Get("history_different_2496")
+		Expect(found).To(BeTrue(), "the deployed different-workflow fixture must be registered")
+		configured, ok := scenario.(scenarios.ScenarioWithConfig)
+		Expect(ok).To(BeTrue())
+		fixture := configured.Config()
+		Expect(fixture.WorkflowName).To(Equal("oomkill-increase-memory-alternative-2496-v1"))
+		Expect(fixture.WorkflowID).NotTo(Equal(uuid.DeterministicUUID("oomkill-increase-memory-v1")))
+		Expect(fixture.ActionType).To(Equal("IncreaseMemoryLimits"), "action family is not the repeat key")
+		resp := response.BuildToolCallResponse("mock-model", openai.ToolSubmitResultWithWorkflow, fixture)
+		var payload map[string]interface{}
+		Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &payload)).To(Succeed())
+		selected, ok := payload["selected_workflow"].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		Expect(selected).To(HaveKeyWithValue("workflow_id", fixture.WorkflowID))
+		Expect(selected).To(HaveKeyWithValue("confidence", .96))
+		Expect(selected).NotTo(HaveKey("repeat_justification"))
+	})
+
+	var cfg scenarios.MockScenarioConfig
+
+	BeforeEach(func() {
+		cfg = scenarios.MockScenarioConfig{
+			ScenarioName:  "oomkilled",
+			SignalName:    "OOMKilled",
+			Severity:      "critical",
+			WorkflowName:  "oomkill-increase-memory-v1",
+			WorkflowID:    uuid.DeterministicUUID("oomkill-increase-memory-v1"),
+			WorkflowTitle: "OOMKill Recovery - Increase Memory Limits",
+			Confidence:    0.95,
+			RootCause:     "Container exceeded memory limits due to traffic spike",
+			ResourceKind:  "Deployment",
+			ResourceNS:    "production",
+			ResourceName:  "api-server",
+			Parameters:    map[string]string{"MEMORY_LIMIT_NEW": "512Mi"},
+		}
+	})
+
+	Describe("UT-MOCK-001: OpenAI tool call response builder", func() {
+		It("UT-MOCK-001-001: should produce valid tool call response with finish_reason=tool_calls", func() {
+			resp := response.BuildToolCallResponse("mock-model", "search_workflow_catalog", cfg)
+			Expect(resp.Object).To(Equal("chat.completion"))
+			Expect(resp.Model).To(Equal("mock-model"))
+			Expect(resp.Choices).To(HaveLen(1))
+			Expect(resp.Choices[0].FinishReason).To(Equal("tool_calls"))
+			Expect(resp.Choices[0].Message.ToolCalls).To(HaveLen(1))
+			Expect(resp.Choices[0].Message.ToolCalls[0].Function.Name).To(Equal("search_workflow_catalog"))
+		})
+
+		It("UT-MOCK-001-002: should include valid JSON in tool call arguments", func() {
+			resp := response.BuildToolCallResponse("mock-model", "search_workflow_catalog", cfg)
+			argsJSON := resp.Choices[0].Message.ToolCalls[0].Function.Arguments
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(argsJSON), &args)).To(Succeed())
+		})
+
+		It("UT-MOCK-001-003: should produce chatcmpl- prefixed ID", func() {
+			resp := response.BuildToolCallResponse("mock-model", "search_workflow_catalog", cfg)
+			Expect(resp.ID).To(HavePrefix("chatcmpl-"))
+		})
+
+		It("UT-MOCK-001-004: should produce tool call with call_ prefixed ID", func() {
+			resp := response.BuildToolCallResponse("mock-model", "search_workflow_catalog", cfg)
+			Expect(resp.Choices[0].Message.ToolCalls[0].ID).To(HavePrefix("call_"))
+		})
+	})
+
+	Describe("UT-MOCK-2442-001: workflow discovery action type", func() {
+		It("uses the scenario action type for list_workflows", func() {
+			cfg.ActionType = "IncreaseMemoryLimits"
+
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolListWorkflows, cfg)
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args["action_type"]).To(Equal("IncreaseMemoryLimits"))
+		})
+
+		It("UT-MOCK-2478-001: emits HelmRollback for the helm-managed scenario [BR-KA-017-001, BR-WORKFLOW-004]", func() {
+			registry := scenarios.DefaultRegistry()
+			scenario, ok := registry.Get("helm_managed")
+			Expect(ok).To(BeTrue(), "helm-managed scenario must be registered")
+
+			configured, ok := scenario.(scenarios.ScenarioWithConfig)
+			Expect(ok).To(BeTrue(), "helm-managed scenario must expose its configuration")
+
+			resp := response.BuildToolCallResponse(
+				"mock-model", openai.ToolListWorkflows, configured.Config())
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args["action_type"]).To(Equal("HelmRollback"),
+				"management-aware discovery must query the seeded HelmRollback action family")
+		})
+	})
+
+	Describe("UT-MOCK-001: OpenAI text response builder", func() {
+		It("UT-MOCK-001-005: should produce text response with finish_reason=stop", func() {
+			resp := response.BuildTextResponse("mock-model", cfg)
+			Expect(resp.Choices).To(HaveLen(1))
+			Expect(resp.Choices[0].FinishReason).To(Equal("stop"))
+			Expect(resp.Choices[0].Message.Content).NotTo(BeNil())
+			Expect(*resp.Choices[0].Message.Content).To(ContainSubstring("root_cause_analysis"))
+			Expect(resp.Choices[0].Message.ToolCalls).To(BeEmpty())
+		})
+	})
+
+	// UT-MOCK-003: reasoning_content simulation (E2E-KA-AUDIT-001, BR-AI-086
+	// AC6, #1578) — MockScenarioConfig.ReasoningText, when set, must surface
+	// as the OpenAI-protocol reasoning_content field on both response
+	// shapes, and must be entirely absent (not an empty string) when unset.
+	Describe("UT-MOCK-003: reasoning_content simulation", func() {
+		It("UT-MOCK-003-001: BuildTextResponse includes reasoning_content when ReasoningText is set", func() {
+			cfg.ReasoningText = "weighed leak vs spike before concluding"
+			resp := response.BuildTextResponse("mock-model", cfg)
+			Expect(resp.Choices[0].Message.ReasoningContent).To(Equal(cfg.ReasoningText))
+		})
+
+		It("UT-MOCK-003-002: BuildToolCallResponse includes reasoning_content when ReasoningText is set", func() {
+			cfg.ReasoningText = "weighed leak vs spike before concluding"
+			resp := response.BuildToolCallResponse("mock-model", "search_workflow_catalog", cfg)
+			Expect(resp.Choices[0].Message.ReasoningContent).To(Equal(cfg.ReasoningText))
+		})
+
+		It("UT-MOCK-003-003: reasoning_content is omitted from the marshaled JSON when ReasoningText is unset", func() {
+			resp := response.BuildTextResponse("mock-model", cfg)
+			b, err := json.Marshal(resp)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(b)).NotTo(ContainSubstring("reasoning_content"),
+				"reasoning_content must be omitted (omitempty), not serialized as an empty string")
+		})
+	})
+
+	Describe("UT-MOCK-002: Ollama response builder", func() {
+		It("UT-MOCK-002-001: should produce Ollama response with done=true", func() {
+			resp := response.BuildOllamaResponse("mock-model", cfg)
+			Expect(resp.Done).To(BeTrue())
+			Expect(resp.Model).To(Equal("mock-model"))
+			Expect(resp.Response).To(ContainSubstring("root_cause_analysis"))
+			Expect(resp.TotalDuration).To(BeNumerically(">", 0))
+		})
+
+		It("UT-MOCK-002-002: should include created_at timestamp", func() {
+			resp := response.BuildOllamaResponse("mock-model", cfg)
+			Expect(resp.CreatedAt).NotTo(BeEmpty())
+		})
+	})
+
+	Describe("UT-MOCK-030: Text response includes KA outcome routing fields", func() {
+		It("UT-MOCK-030-001: actionable scenario includes investigation_outcome and actionable=true", func() {
+			actionableCfg := cfg
+			actionableCfg.InvestigationOutcome = "actionable"
+			actionableCfg.IsActionable = scenarios.BoolPtr(true)
+
+			resp := response.BuildTextResponse("mock-model", actionableCfg)
+			text := *resp.Choices[0].Message.Content
+			Expect(text).To(ContainSubstring(`"investigation_outcome": "actionable"`))
+			Expect(text).To(ContainSubstring(`"actionable": true`))
+			Expect(text).To(ContainSubstring(`"severity": "critical"`))
+			Expect(text).To(ContainSubstring(`"confidence":`))
+		})
+
+		It("UT-MOCK-030-002: problem_resolved scenario includes actionable=false", func() {
+			resolvedCfg := scenarios.MockScenarioConfig{
+				ScenarioName:         "problem_resolved",
+				Severity:             "info",
+				Confidence:           0.85,
+				RootCause:            "Problem self-resolved",
+				InvestigationOutcome: "problem_resolved",
+				IsActionable:         scenarios.BoolPtr(false),
+			}
+
+			resp := response.BuildTextResponse("mock-model", resolvedCfg)
+			text := *resp.Choices[0].Message.Content
+			Expect(text).To(ContainSubstring(`"investigation_outcome": "problem_resolved"`))
+			Expect(text).To(ContainSubstring(`"actionable": false`))
+		})
+
+		It("UT-MOCK-030-003: response builder must NOT emit needs_human_review even when config has it (BR-KA-200)", func() {
+			reviewCfg := scenarios.MockScenarioConfig{
+				ScenarioName:         "no_workflow_found",
+				Severity:             "critical",
+				Confidence:           0.0,
+				RootCause:            "No workflow found",
+				NeedsHumanReview:     scenarios.BoolPtr(true),
+				HumanReviewReason:    "no_matching_workflows",
+				InvestigationOutcome: "inconclusive",
+			}
+
+			resp := response.BuildTextResponse("mock-model", reviewCfg)
+			text := *resp.Choices[0].Message.Content
+			Expect(text).NotTo(ContainSubstring(`"needs_human_review"`),
+				"response builder must NOT emit needs_human_review — HR is parser-derived, not LLM-driven")
+			Expect(text).NotTo(ContainSubstring(`"human_review_reason"`),
+				"response builder must NOT emit human_review_reason — HR reason is parser-derived, not LLM-driven")
+			Expect(text).To(ContainSubstring(`"investigation_outcome": "inconclusive"`),
+				"investigation_outcome must still be emitted for parser derivation")
+		})
+
+		It("UT-MOCK-030-004: text response JSON is parseable", func() {
+			actionableCfg := cfg
+			actionableCfg.InvestigationOutcome = "actionable"
+			actionableCfg.IsActionable = scenarios.BoolPtr(true)
+
+			resp := response.BuildTextResponse("mock-model", actionableCfg)
+			text := *resp.Choices[0].Message.Content
+
+			var parsed map[string]interface{}
+			Expect(json.Unmarshal([]byte(text), &parsed)).To(Succeed(),
+				"response must be valid pure JSON (no markdown wrapping)")
+			Expect(parsed).To(HaveKey("severity"))
+			Expect(parsed).To(HaveKey("investigation_outcome"))
+			Expect(parsed).To(HaveKey("root_cause_analysis"))
+		})
+	})
+
+	Describe("UT-MOCK-657-006: buildToolArguments for kubectl_get_yaml", func() {
+		It("should return kind, name, namespace arguments", func() {
+			kubectlCfg := scenarios.MockScenarioConfig{
+				ResourceKind: "ConfigMap",
+				ResourceNS:   "default",
+				ResourceName: "poisoned-cm",
+			}
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolKubectlGetYAML, kubectlCfg)
+			Expect(resp.Choices).To(HaveLen(1))
+			Expect(resp.Choices[0].Message.ToolCalls).To(HaveLen(1))
+
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args).To(HaveKeyWithValue("kind", "ConfigMap"))
+			Expect(args).To(HaveKeyWithValue("name", "poisoned-cm"))
+			Expect(args).To(HaveKeyWithValue("namespace", "default"))
+		})
+	})
+
+	Describe("UT-MOCK-657-007: buildToolArguments for kubectl_get_by_name", func() {
+		It("should return kind, name, namespace arguments", func() {
+			kubectlCfg := scenarios.MockScenarioConfig{
+				ResourceKind: "Secret",
+				ResourceNS:   "kube-system",
+				ResourceName: "tls-cert",
+			}
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolKubectlGetByName, kubectlCfg)
+			Expect(resp.Choices).To(HaveLen(1))
+
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args).To(HaveKeyWithValue("kind", "Secret"))
+			Expect(args).To(HaveKeyWithValue("name", "tls-cert"))
+			Expect(args).To(HaveKeyWithValue("namespace", "kube-system"))
+		})
+	})
+
+	Describe("UT-MOCK-1311-001: buildToolArguments includes api_group when set", func() {
+		It("should include api_group in the tool call arguments", func() {
+			cfg := scenarios.MockScenarioConfig{
+				ResourceKind: "Subscription",
+				ResourceNS:   "openshift-operators",
+				ResourceName: "jaeger-product",
+				APIGroup:     "operators.coreos.com",
+			}
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolKubectlGetYAML, cfg)
+			Expect(resp.Choices).To(HaveLen(1))
+			Expect(resp.Choices[0].Message.ToolCalls).To(HaveLen(1))
+
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args).To(HaveKeyWithValue("kind", "Subscription"))
+			Expect(args).To(HaveKeyWithValue("name", "jaeger-product"))
+			Expect(args).To(HaveKeyWithValue("namespace", "openshift-operators"))
+			Expect(args).To(HaveKeyWithValue("api_group", "operators.coreos.com"))
+		})
+	})
+
+	Describe("UT-MOCK-1311-002: buildToolArguments omits api_group when empty", func() {
+		It("should not include api_group key in the tool call arguments", func() {
+			cfg := scenarios.MockScenarioConfig{
+				ResourceKind: "ConfigMap",
+				ResourceNS:   "default",
+				ResourceName: "test-cm",
+			}
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolKubectlGetByName, cfg)
+			Expect(resp.Choices).To(HaveLen(1))
+
+			var args map[string]interface{}
+			Expect(json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args)).To(Succeed())
+			Expect(args).NotTo(HaveKey("api_group"))
+		})
+	})
+
+	Describe("UT-MOCK-657-008: BuildToolCallResponse with kubectl tool produces valid response", func() {
+		It("should produce valid OpenAI response with tool_calls finish reason", func() {
+			kubectlCfg := scenarios.MockScenarioConfig{
+				ResourceKind: "ConfigMap",
+				ResourceNS:   "default",
+				ResourceName: "poisoned-cm",
+			}
+			resp := response.BuildToolCallResponse("mock-model", openai.ToolKubectlGetYAML, kubectlCfg)
+			Expect(resp.Object).To(Equal("chat.completion"))
+			Expect(resp.Choices[0].FinishReason).To(Equal("tool_calls"))
+			Expect(resp.Choices[0].Message.ToolCalls[0].Function.Name).To(Equal("kubectl_get_yaml"))
+			Expect(resp.Choices[0].Message.ToolCalls[0].ID).To(HavePrefix("call_"))
+
+			data, err := json.Marshal(resp)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(data).NotTo(BeEmpty(), "response should be serializable to JSON")
+		})
+	})
+
+	Describe("UT-MOCK-001: Error response builder", func() {
+		It("should produce error response matching Python format", func() {
+			resp := response.BuildErrorResponse("Mock permanent LLM error for testing")
+			data, err := json.Marshal(resp)
+			Expect(err).NotTo(HaveOccurred())
+
+			var raw map[string]interface{}
+			Expect(json.Unmarshal(data, &raw)).To(Succeed())
+			errObj := raw["error"].(map[string]interface{})
+			Expect(errObj["message"]).To(Equal("Mock permanent LLM error for testing"))
+			Expect(errObj["type"]).To(Equal("server_error"))
+			Expect(errObj["code"]).To(Equal("internal_error"))
+		})
+	})
+})
+
+// Helper to check that a response can round-trip through JSON matching Python shape
+var _ openai.ChatCompletionResponse

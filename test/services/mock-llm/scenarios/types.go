@@ -1,0 +1,230 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package scenarios
+
+import (
+	"time"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+)
+
+// MockAlternativeWorkflow mirrors real Claude behavior where the LLM returns
+// ranked alternatives alongside the primary workflow selection.
+// Golden transcript ref: kubernaut-demo-scenarios#296
+type MockAlternativeWorkflow struct {
+	WorkflowName string
+	WorkflowID   string
+	Confidence   float64
+	Rationale    string
+	Parameters   map[string]string
+}
+
+// MultiToolCallEntry describes a single tool call within a multi-tool-call batch.
+type MultiToolCallEntry struct {
+	Name      string                 `yaml:"name"`
+	Arguments map[string]interface{} `yaml:"arguments,omitempty"`
+
+	// NextToolCall chains an additional tool call after this entry's own
+	// FunctionResponse/tool result arrives, making a linked list of
+	// arbitrary depth. This lifts the historical 2-tool-call cap (issue
+	// #1853): scenarios like investigate -> discover_workflows ->
+	// select_workflow -> watch can now be scripted as a single chain
+	// instead of requiring N independent keyword-triggered turns.
+	NextToolCall *MultiToolCallEntry
+
+	// FallbackArguments replaces Arguments in its entirety when a
+	// "$from_tool:<tool>:<field>" placeholder in Arguments cannot be
+	// resolved. See config.ToolCallOverride.FallbackArguments (issue #1853)
+	// for the full rationale.
+	FallbackArguments map[string]interface{}
+}
+
+// MockScenarioConfig holds the static configuration for a mock scenario.
+type MockScenarioConfig struct {
+	ScenarioName  string
+	SignalName    string
+	Severity      string
+	WorkflowName  string
+	ActionType    string
+	WorkflowID    string
+	WorkflowTitle string
+	Confidence    float64
+	// RepeatJustification is provider-authored reasoning, never trusted history
+	// metadata. KA's real validator decides whether a repeat is admissible.
+	RepeatJustification *sharedtypes.RepeatJustification
+	// RCAConfidence is independent of the current workflow proposal confidence.
+	RCAConfidence *float64
+	// CausalMechanismStatus is the generic history-aware RCA classification.
+	CausalMechanismStatus string
+	// DeclineWorkflow keeps the workflow in real discovery but submits no
+	// suitable workflow after examining it. It never filters the catalog.
+	DeclineWorkflow bool
+	Rationale       string // primary workflow rationale (golden transcript fidelity)
+	RootCause       string
+	ResourceKind    string
+	ResourceNS      string
+	ResourceName    string
+	// ClusterID is the registered MCP Gateway cluster name for AF create-RR
+	// scenarios. It is forwarded as cluster_id so hub and spoke targets are
+	// both explicitly attributed.
+	ClusterID        string
+	APIVersion       string
+	APIGroup         string // optional; when set, included in kubectl tool call args for disambiguation (#1311)
+	IncludeAffected  bool
+	OverrideResource bool
+	Parameters       map[string]string
+	RawParameters    map[string]interface{}
+	ExecutionEngine  string
+	Contributing     []string
+	NeedsHumanReview *bool
+	Alternatives     []MockAlternativeWorkflow // ranked alternatives (golden transcript fidelity)
+
+	// KA outcome routing fields — included as top-level JSON in text responses
+	// so KA's parser can extract them for is_actionable / human_review routing.
+	InvestigationOutcome string // "problem_resolved", "predictive_no_action", "actionable", "inconclusive"
+	IsActionable         *bool
+	HumanReviewReason    string
+
+	// ExactAnalysisText, when non-empty, is returned verbatim as the LLM
+	// response text instead of synthesizing from the other config fields.
+	// Used by golden transcript replay to produce full-fidelity responses.
+	ExactAnalysisText string
+
+	// ForceText overrides the global MOCK_LLM_FORCE_TEXT flag per-scenario.
+	// nil = use global default; ptr(false) = return tool calls; ptr(true) = return text.
+	ForceText *bool
+
+	// UseWorkflowDiscovery lets a scenario script RCA-specific tool calls
+	// while still using the normal three-step workflow discovery planner in
+	// the workflow-selection phase.
+	UseWorkflowDiscovery bool
+
+	// ToolCallName, when set, causes the handler to bypass the DAG engine
+	// and return a tool call with this name on the first request.
+	ToolCallName string
+	// ToolCallArgs provides the arguments for the custom tool call.
+	ToolCallArgs map[string]interface{}
+	// FallbackArguments replaces ToolCallArgs in its entirety when a
+	// "$from_tool:<tool>:<field>" placeholder in ToolCallArgs cannot be
+	// resolved (issue #1853). See config.ToolCallOverride.FallbackArguments.
+	FallbackArguments map[string]interface{}
+
+	// MultiToolCalls, when non-empty, causes the handler to return all
+	// listed tool calls in a single assistant message on the first request.
+	// Takes precedence over ToolCallName. Enables #970 parallel execution.
+	MultiToolCalls []MultiToolCallEntry
+
+	// RepeatToolCall, when true, causes the handler to emit ToolCallName /
+	// MultiToolCalls even when prior tool results exist in the conversation.
+	// Without this flag the handler only emits them on the first request
+	// (before any tool/function results appear). Required for multi-turn
+	// keyword scenarios where each turn must trigger a distinct tool call.
+	RepeatToolCall bool
+
+	// NextToolCall, when set, is emitted on the second turn (after the
+	// initial ToolCallName's FunctionResponse arrives). This enables chained
+	// tool call scenarios like: investigate → discover_workflows without
+	// requiring a new user message between them.
+	NextToolCall *MultiToolCallEntry
+
+	// SecondTurnDelay, when > 0, causes the handler to sleep for the given
+	// duration on second-turn (tool-result-present) requests. The delay is
+	// context-aware: it aborts early if the HTTP client disconnects.
+	// Used by E2E tests (e.g. STREAM-03) that need to disconnect while the
+	// executor is blocked waiting for the LLM response.
+	SecondTurnDelay time.Duration
+
+	// ThoughtText, when non-empty, causes the response to include a Thought
+	// part (with thought=true) before the tool call or text response. This
+	// simulates Gemini's extended thinking mode for E2E reasoning tests.
+	ThoughtText string
+
+	// ReasoningText, when non-empty, is included as the OpenAI-protocol
+	// "reasoning_content" field (DeepSeek/vLLM-style extended-thinking
+	// convention) on the response message. This simulates a
+	// reasoning-capable OpenAI-compatible model for KA's openaicompat
+	// reasoning-capture E2E tests (BR-AI-086 AC6, issue #1578).
+	ReasoningText string
+
+	// Usage, when non-nil, replaces the response builders' deterministic
+	// default token counts for every response in this scenario, so E2E
+	// tests can assert exact token sums against distinctive scripted
+	// values (issue #2387). Nil keeps the builder defaults.
+	Usage *MockUsage
+}
+
+// MockUsage scripts per-scenario token counts. Plain ints (no wire types)
+// so the scenarios package stays independent of protocol schemas.
+type MockUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+}
+
+// BoolPtr is a helper for creating *bool literals in scenario configs.
+func BoolPtr(v bool) *bool { return &v }
+
+// configScenario is a Scenario backed by a static MockScenarioConfig and a
+// canonical ScenarioSelector.
+type configScenario struct {
+	config   MockScenarioConfig
+	selector ScenarioSelector
+}
+
+func (s *configScenario) Name() string { return s.config.ScenarioName }
+func (s *configScenario) Match(ctx *DetectionContext) (bool, float64) {
+	return s.selector.Match(ctx)
+}
+func (s *configScenario) Metadata() ScenarioMetadata {
+	return ScenarioMetadata{
+		Name:           s.config.ScenarioName,
+		Description:    s.config.RootCause,
+		SignalPatterns: append([]string(nil), s.selector.SignalPatterns...),
+		Keywords:       append([]string(nil), s.selector.Keywords...),
+		Caller:         s.selector.Scope.Caller,
+		Phase:          s.selector.Scope.Phase,
+	}
+}
+func (s *configScenario) DAG() *conversation.DAG { return nil }
+
+// Config returns the underlying MockScenarioConfig for response building.
+func (s *configScenario) Config() MockScenarioConfig { return s.config }
+
+// ScenarioWithConfig is implemented by scenarios that expose their config.
+type ScenarioWithConfig interface {
+	Scenario
+	Config() MockScenarioConfig
+}
+
+// ScenarioWithContextConfig is implemented by dynamic scenarios that need the
+// DetectionContext during config construction. Handlers prefer this over
+// ScenarioWithConfig to avoid shared mutable state races when concurrent
+// requests match the same scenario instance. See #1458: afCreateRRDynScenario's
+// lastCtx field was overwritten by concurrent Detect() callers, causing
+// resource name mismatches in the kubernaut_remediate tool call.
+type ScenarioWithContextConfig interface {
+	Scenario
+	ConfigForContext(ctx *DetectionContext) MockScenarioConfig
+}
+
+// ScenarioWithSubmitNotify is implemented by stateful scenarios that need to
+// know when the handler actually responded with submit_result_with_workflow.
+// The handler calls MarkSubmitSent() after writing the response so the scenario
+// can advance its state machine for multi-turn self-correction flows.
+type ScenarioWithSubmitNotify interface {
+	MarkSubmitSent()
+}

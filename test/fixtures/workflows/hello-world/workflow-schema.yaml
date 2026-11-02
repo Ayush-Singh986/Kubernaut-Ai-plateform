@@ -1,0 +1,49 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: test-hello-world
+spec:
+  # Hello World Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: WorkflowExecution E2E
+  version: "1.0.0"
+  description:
+    what: "Simple hello-world workflow for testing the execution pipeline"
+    whenToUse: "For E2E validation of workflow registration and execution"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "Tekton Pipelines installed in the cluster"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [info]
+    environment: [test]
+    component: [apps/v1/Deployment]
+    priority: P3
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE
+      type: string
+      required: true
+      description: "Target resource identifier"
+      default: "test/deployment/hello"
+    - name: MESSAGE
+      type: string
+      required: false
+      description: "Message to print during execution"
+      default: "Hello from Kubernaut WorkflowExecution!"

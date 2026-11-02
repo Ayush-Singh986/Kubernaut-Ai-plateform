@@ -1,0 +1,44 @@
+# Test Intentional Failure Tekton Workflow Schema (BR-WORKFLOW-004)
+# Authority: ADR-043
+# E2E Testing: Validates failure handling in WorkflowExecution controller
+# Workflow name: test-intentional-failure (from CRD metadata.name per #329)
+version: "1.0.0"
+description:
+  what: "Intentionally failing workflow for E2E testing of failure handling"
+  whenToUse: "For E2E validation of failure detection and error propagation"
+  whenNotToUse: "Not intended for production use"
+  preconditions: "Tekton Pipelines installed in the cluster"
+
+actionType: RestartPod
+
+labels:
+  signalName: test
+  severity: [low]
+  environment: [test]
+  component: apps/v1/Deployment
+  priority: P3
+
+customLabels:
+  test-category: e2e
+  validation-type: failure-path
+
+execution:
+  engine: tekton
+
+parameters:
+  - name: TARGET_RESOURCE
+    type: string
+    required: true
+    description: "Target resource (test purposes only)"
+    default: "test/deployment/failing"
+  - name: FAILURE_MODE
+    type: string
+    required: false
+    description: "How to fail: 'exit' (non-zero exit), 'timeout', 'oom' (simulated)"
+    default: "exit"
+    enum: [exit, timeout, oom]
+  - name: FAILURE_MESSAGE
+    type: string
+    required: false
+    description: "Error message to include in failure output"
+    default: "Intentional test failure"

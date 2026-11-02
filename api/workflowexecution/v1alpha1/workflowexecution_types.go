@@ -1,0 +1,599 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VERSION: v1alpha1-v1.0-executor
+// Last Updated: December 19, 2025
+// Status: ✅ WE "Pure Executor" Complete + BR-WE-013 (SOC2 Compliance)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// CHANGELOG:
+//
+// ## V1.0 (IN PROGRESS - Started December 14, 2025)
+//
+// ### ✅ BR-WE-013: Audit-Tracked Execution Block Clearing (December 19, 2025)
+//
+// **Added**: BlockClearanceDetails type and WorkflowExecutionStatus.BlockClearance field
+// **Priority**: P0 (CRITICAL) - SOC2 Type II Compliance Requirement
+// **Rationale**: Current v1.0 workaround (deleting WFE CRDs) violates SOC2 audit trail requirements
+// **Compliance**: SOC2 CC7.3 (Immutability), CC7.4 (Completeness), CC8.1 (Attribution)
+//
+// **Fields Added**:
+// - BlockClearanceDetails.ClearedAt (timestamp)
+// - BlockClearanceDetails.ClearedBy (operator identity)
+// - BlockClearanceDetails.ClearReason (reason for clearing)
+// - BlockClearanceDetails.ClearMethod (Annotation|APIEndpoint|StatusField)
+// - WorkflowExecutionStatus.BlockClearance (*BlockClearanceDetails)
+//
+// ### ✅ Phase 1: API Foundation (Day 1) - COMPLETE
+//
+// **Removed from api/workflowexecution/v1alpha1 (API Package)**:
+// - SkipDetails type definition (moved to WE controller as temporary stubs)
+// - ConflictingWorkflowRef type definition (moved to WE controller as temporary stubs)
+// - RecentRemediationRef type definition (moved to WE controller as temporary stubs)
+// - Phase value "Skipped" from enum (WFE now: Pending, Running, Completed, Failed)
+// - Skip reason constants: ResourceBusy, RecentlyRemediated, ExhaustedRetries, PreviousExecutionFailed
+//
+// **Status**: Day 1 compatibility stubs created in WE controller (internal/controller/workflowexecution/v1_compat_stubs.go)
+// These stubs are TEMPORARY and marked for removal in Phase 2 (Days 6-7).
+//
+// ### 🔄 Phase 2: RO Routing Logic (Days 2-5) - IN PROGRESS
+//
+// **Status**: RO Team working in parallel (Dec 17-20)
+// **Planned Changes**:
+// - RO will implement routing decision logic BEFORE creating WFE
+// - 5 routing checks: resource lock, cooldown, exponential backoff, exhausted retries, previous execution failure
+// - Field index on WorkflowExecution.spec.targetResource for efficient queries
+// - Population of RemediationRequest.Status.skipMessage and blockingWorkflowExecution
+//
+// **Current State**: RO fixing integration tests (27/52 failing) + implementing routing logic
+//
+// ### ✅ Phase 3: WE Simplification (Days 6-7) - COMPLETE
+//
+// **Status**: WorkflowExecution controller is already in "pure executor" state
+// **Verified**: December 17, 2025
+//
+// **Functions That DO NOT Exist** (Routing Removed):
+// - ❌ CheckCooldown() - Not found in codebase
+// - ❌ CheckResourceLock() - Not found in codebase
+// - ❌ MarkSkipped() - Not found in codebase
+// - ❌ FindMostRecentTerminalWFE() - Not found in codebase
+// - ❌ v1_compat_stubs.go - File does not exist
+//
+// **Functions That DO Exist** (Pure Execution):
+// - ✅ reconcilePending() - Create PipelineRun (no routing checks)
+// - ✅ reconcileRunning() - Sync PipelineRun status
+// - ✅ ReconcileTerminal() - Lock cleanup after cooldown
+// - ✅ HandleAlreadyExists() - Execution-time collision handling
+//
+// **Result**: WE controller is a "pure executor" - RO makes ALL routing decisions
+//
+// ### 🎯 Design Decision: DD-RO-002 - Centralized Routing Responsibility (TARGET)
+//
+// **Target Architecture** (NOT YET IMPLEMENTED):
+// - WorkflowExecution becomes a pure executor (no routing logic)
+// - RemediationOrchestrator makes ALL routing decisions before creating WFE
+// - If a workflow should be skipped, WFE is never created
+// - Single source of truth for skip reasons (RR.Status)
+//
+// **Current Architecture** (AS OF DAYS 6-7 COMPLETION):
+// - WorkflowExecution is a "pure executor" (NO routing logic)
+// - RemediationOrchestrator makes ALL routing decisions before creating WFE
+// - WFE has only 4 phases: Pending, Running, Completed, Failed (Skipped removed)
+// - Skip reasons tracked ONLY in RR.Status (single source of truth)
+//
+// ### 📋 Related Changes (Planned):
+// - RemediationRequest.Status gains skipMessage, blockingWorkflowExecution (fields added, not yet populated)
+// - RO controller gains routing logic (planned for Days 2-5, not implemented)
+//
+// ### 📚 References:
+// - Implementation Plan: docs/services/.../05-remediationorchestrator/implementation/V1.0_CENTRALIZED_ROUTING_IMPLEMENTATION_PLAN.md
+// - Design Decision: docs/architecture/decisions/DD-RO-002-centralized-routing-responsibility.md (planned)
+// - Confidence Assessment: 98% (WE team validated PLAN, not implementation)
+//
+// ### ⏰ Timeline:
+// - Day 1 (Dec 14-15): ✅ API Foundation Complete
+// - Days 2-5: 🔄 RO Routing Logic (IN PROGRESS - RO Team Dec 17-20)
+// - Days 6-7: ✅ WE Simplification (COMPLETE - Already in "pure executor" state)
+// - Days 8-20: ⏳ Testing, Staging, Launch (PENDING)
+// - Target: January 11, 2026 (on track with parallel development)
+//
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ========================================
+// WorkflowExecution CRD Types
+// Version: 4.0 - Aligned with ADR-044, DD-CONTRACT-001 v1.4, ADR-043
+// See: docs/services/crd-controllers/03-workflowexecution/crd-schema.md
+// ========================================
+
+// WorkflowExecutionSpec defines the desired state of WorkflowExecution
+// Simplified per ADR-044 - Tekton handles step orchestration
+//
+// ADR-001: Spec Immutability
+// WorkflowExecution represents an immutable event (workflow execution attempt).
+// Once created by RemediationOrchestrator, spec cannot be modified to ensure:
+// - Audit trail integrity (executed spec matches approved spec)
+// - No parameter tampering after KA validation
+// - No target resource changes after routing decisions
+//
+// To change execution parameters, delete and recreate the WorkflowExecution.
+//
+// Field-by-field per Issue #2284: on K8s v1.31.x, whole-object "self ==
+// oldSelf" spuriously evaluates false when workflowRef.declaredParameterNames
+// (nullable:true) holds nil on both sides. Unlike AIAnalysis's
+// SelectedWorkflow rule, this one is unconditional (no selectedAt-style
+// guard), so the bug hit here on the very first post-create Update() call
+// (finalizer registration), preventing the WorkflowExecution from ever
+// progressing past creation. engineConfig is excluded from the comparison
+// entirely: x-kubernetes-preserve-unknown-fields makes it CEL-inaccessible
+// ("undefined field 'engineConfig'" at compile time) -- a documented,
+// narrow trade-off, mirrored from the same exclusion in
+// AIAnalysis.SelectedWorkflow's rule above.
+// +kubebuilder:validation:XValidation:rule="self.remediationRequestRef == oldSelf.remediationRequestRef && self.workflowRef.workflowId == oldSelf.workflowRef.workflowId && self.workflowRef.workflowName == oldSelf.workflowRef.workflowName && self.workflowRef.actionType == oldSelf.workflowRef.actionType && self.workflowRef.version == oldSelf.workflowRef.version && self.workflowRef.executionBundle == oldSelf.workflowRef.executionBundle && (has(self.workflowRef.executionBundleDigest) == has(oldSelf.workflowRef.executionBundleDigest)) && (!has(self.workflowRef.executionBundleDigest) || self.workflowRef.executionBundleDigest == oldSelf.workflowRef.executionBundleDigest) && (has(self.workflowRef.executionEngine) == has(oldSelf.workflowRef.executionEngine)) && (!has(self.workflowRef.executionEngine) || self.workflowRef.executionEngine == oldSelf.workflowRef.executionEngine) && (has(self.workflowRef.serviceAccountName) == has(oldSelf.workflowRef.serviceAccountName)) && (!has(self.workflowRef.serviceAccountName) || self.workflowRef.serviceAccountName == oldSelf.workflowRef.serviceAccountName) && (has(self.workflowRef.dependencies) == has(oldSelf.workflowRef.dependencies)) && (!has(self.workflowRef.dependencies) || self.workflowRef.dependencies == oldSelf.workflowRef.dependencies) && (has(self.workflowRef.resources) == has(oldSelf.workflowRef.resources)) && (!has(self.workflowRef.resources) || self.workflowRef.resources == oldSelf.workflowRef.resources) && (has(self.workflowRef.declaredParameterNames) == has(oldSelf.workflowRef.declaredParameterNames)) && (!has(self.workflowRef.declaredParameterNames) || self.workflowRef.declaredParameterNames == oldSelf.workflowRef.declaredParameterNames) && self.targetResource == oldSelf.targetResource && (has(self.clusterID) == has(oldSelf.clusterID)) && (!has(self.clusterID) || self.clusterID == oldSelf.clusterID) && (has(self.parameters) == has(oldSelf.parameters)) && (!has(self.parameters) || self.parameters == oldSelf.parameters) && (has(self.confidence) == has(oldSelf.confidence)) && (!has(self.confidence) || self.confidence == oldSelf.confidence) && (has(self.rationale) == has(oldSelf.rationale)) && (!has(self.rationale) || self.rationale == oldSelf.rationale) && (has(self.timesOutAt) == has(oldSelf.timesOutAt)) && (!has(self.timesOutAt) || self.timesOutAt == oldSelf.timesOutAt)",message="spec is immutable after creation (ADR-001)"
+type WorkflowExecutionSpec struct {
+	// RemediationRequestRef references the parent RemediationRequest CRD
+	RemediationRequestRef corev1.ObjectReference `json:"remediationRequestRef"`
+
+	// WorkflowRef contains the workflow catalog reference
+	// Resolved from AIAnalysis.Status.SelectedWorkflow by RemediationOrchestrator
+	WorkflowRef WorkflowRef `json:"workflowRef"`
+
+	// TargetResource identifies the K8s resource being remediated
+	// Used for resource locking (DD-WE-001) - prevents parallel workflows on same target
+	// Format: "namespace/kind/name" for namespaced resources
+	//         "kind/name" for cluster-scoped resources
+	// Example: "payment/deployment/payment-api", "node/worker-node-1"
+	TargetResource string `json:"targetResource"`
+
+	// ClusterID identifies the target cluster for remote execution.
+	// When empty, execution runs on the local (hub) cluster.
+	// When set, execution resources (Jobs, PipelineRuns) are created on the
+	// remote cluster via the MCP Gateway (BR-FLEET-054).
+	// Resolved by the RO creator (DD-FLEET-008, BR-FLEET-004): the selected
+	// workflow's catalog-declared WorkflowRef.ExecutionClusterID takes
+	// precedence when set (e.g. a GitOps-hub cluster, or an aggregator
+	// cluster reaching a resource-constrained edge device); otherwise falls
+	// back to RemediationRequest.Spec.ClusterID, the signal's origin
+	// cluster (pre-DD-FLEET-008 default behavior).
+	// +optional
+	ClusterID string `json:"clusterID,omitempty"`
+
+	// Parameters from LLM selection (per DD-WORKFLOW-003)
+	// Keys are UPPER_SNAKE_CASE for Tekton PipelineRun params
+	// +optional
+	Parameters map[string]string `json:"parameters,omitempty"`
+
+	// Confidence score from LLM (for audit trail)
+	// +optional
+	Confidence float64 `json:"confidence,omitempty"`
+
+	// Rationale from LLM (for audit trail)
+	// +optional
+	Rationale string `json:"rationale,omitempty"`
+
+	// TimesOutAt is the absolute deadline for workflow execution,
+	// propagated verbatim from RemediationRequest.Status.TimeoutConfig.Executing
+	// by the RemediationOrchestrator creator at WorkflowExecution creation
+	// time (DD-TIMEOUT-002). An absolute timestamp (rather than a relative
+	// duration) avoids clock-skew ambiguity between RO and the
+	// WorkflowExecution executor. If nil, the executor falls back to its
+	// configured default execution duration.
+	// +optional
+	TimesOutAt *metav1.Time `json:"timesOutAt,omitempty"`
+}
+
+// WorkflowRef contains the catalog-resolved workflow reference.
+//
+// ========================================
+// CRD-EMBEDDED EXECUTION SNAPSHOT (Issue #1661 Change 11c/12, DD-WORKFLOW-018)
+// ========================================
+// WorkflowRef is now (Change 12) nothing but an inline embed of
+// sharedtypes.WorkflowSnapshot -- the same type embedded in
+// AIAnalysis.Status.SelectedWorkflow. All fields (WorkflowID, WorkflowName,
+// ActionType, Version, ExecutionBundle, ExecutionBundleDigest,
+// ExecutionEngine, EngineConfig, ServiceAccountName, Dependencies,
+// Resources, DeclaredParameterNames) are copied verbatim from
+// AIAnalysis.Status.SelectedWorkflow (Change 11b) by RemediationOrchestrator
+// when building this WorkflowExecution (Change 11d), letting
+// WorkflowExecution stop re-fetching this data from DataStorage
+// (Change 11e). Sharing one Go/CRD-schema type between the two CRDs (rather
+// than two independently hand-copied field lists) makes it structurally
+// impossible for the two to drift again -- see git history: ActionType was
+// originally left off this list once, and WorkflowName was never wired at
+// all until Change 12 closed that gap.
+//
+// Correction (Issue #2284): the claim that WorkflowExecutionSpec's ADR-001
+// "self == oldSelf" rule covers WorkflowRef "as a whole" with no per-field
+// rule needed was true structurally but incomplete operationally -- a
+// whole-object CEL comparison is exactly what caused Issue #2284's infinite
+// reconcile loop (the K8s v1.31.x CEL nullable-field false-negative bug), so
+// ADR-001's rule was rewritten to the same has()-guarded field-by-field form
+// as AIAnalysis.SelectedWorkflow's rule above. WorkflowRef's own type
+// definition here is unchanged; only the enclosing spec's XValidation rule
+// changed.
+type WorkflowRef struct {
+	sharedtypes.WorkflowSnapshot `json:",inline"`
+}
+
+// WorkflowExecution phase constants
+const (
+	// PhasePending is the initial phase when WorkflowExecution is first created
+	PhasePending = "Pending"
+	// PhaseRunning indicates the PipelineRun is actively executing
+	PhaseRunning = "Running"
+	// PhaseCompleted indicates successful completion
+	PhaseCompleted = "Completed"
+	// PhaseFailed indicates a permanent failure
+	PhaseFailed = "Failed"
+)
+
+// Issue #501: Condition and event constants for TokenRequest TTL validation.
+const (
+	// ConditionTokenTTLInsufficient is set when the K8s API server grants a
+	// shorter token TTL than the WFE execution timeout.
+	ConditionTokenTTLInsufficient = "TokenTTLInsufficient" //nolint:gosec // G101 false positive: Kubernetes condition name, not a credential
+
+	// ReasonTokenTTLShortened indicates the granted TTL was less than requested.
+	ReasonTokenTTLShortened = "TokenTTLShortened"
+
+	// ReasonTokenTTLSufficient indicates the granted TTL meets the timeout.
+	ReasonTokenTTLSufficient = "TokenTTLSufficient" //nolint:gosec // G101 false positive: Kubernetes event reason, not a credential
+
+	// EventTokenTTLShortened is the K8s event reason emitted when the API
+	// server shortens the token TTL below the execution timeout.
+	EventTokenTTLShortened = "TokenTTLShortened"
+)
+
+// WorkflowExecutionStatus defines the observed state
+// Simplified per ADR-044 - just tracks PipelineRun status
+// Enhanced per DD-CONTRACT-001 v1.3 - rich failure details for failure classification
+// Enhanced per DD-CONTRACT-001 v1.4 - resource locking and Skipped phase
+type WorkflowExecutionStatus struct {
+	// ObservedGeneration is the most recent generation observed by the controller.
+	// Used to prevent duplicate reconciliations and ensure idempotency.
+	// Per DD-CONTROLLER-001: Standard pattern for all Kubernetes controllers.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Phase tracks current execution stage
+	// V1.0: Skipped phase removed - RO makes routing decisions before WFE creation
+	// +kubebuilder:validation:Enum=Pending;Running;Completed;Failed
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// StartTime when execution started
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
+
+	// CompletionTime when execution completed (success or failure)
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
+	// Duration of the execution
+	// +optional
+	Duration *metav1.Duration `json:"duration,omitempty"`
+
+	// ExecutionRef references the created execution resource (PipelineRun or Job)
+	// +optional
+	ExecutionRef *corev1.LocalObjectReference `json:"executionRef,omitempty"`
+
+	// ExecutionStatus mirrors key execution resource status fields
+	// +optional
+	ExecutionStatus *ExecutionStatusSummary `json:"executionStatus,omitempty"`
+
+	// FailureReason explains why execution failed (if applicable)
+	//
+	// Deprecated: Use FailureDetails for structured failure information.
+	// +optional
+	FailureReason string `json:"failureReason,omitempty"`
+
+	// ========================================
+	// ENHANCED FAILURE INFORMATION (v3.0)
+	// DD-CONTRACT-001 v1.3: Rich failure data for failure classification
+	// Consumers: RO (for failure reporting), Notification (for user alerts)
+	// ========================================
+
+	// FailureDetails contains structured failure information
+	// Populated when Phase=Failed
+	// +optional
+	FailureDetails *FailureDetails `json:"failureDetails,omitempty"`
+
+	// ========================================
+	// V1.0: RESOURCE LOCKING MOVED TO RO
+	// DD-RO-002: RO makes routing decisions, SkipDetails removed from WFE
+	// Skip information now in RemediationRequest.Status
+	// ========================================
+
+	// ========================================
+	// AUDIT-TRACKED EXECUTION BLOCK CLEARING (v4.2)
+	// BR-WE-013: SOC2 Type II Compliance Requirement (v1.0)
+	// Tracks operator clearing of PreviousExecutionFailed blocks
+	// ========================================
+
+	// BlockClearance tracks the clearing of PreviousExecutionFailed blocks
+	// When set, allows new executions despite previous execution failure
+	// Preserves audit trail of WHO cleared the block and WHY
+	// +optional
+	BlockClearance *BlockClearanceDetails `json:"blockClearance,omitempty"`
+
+	// EphemeralCredentialIDs stores AWX credential IDs created by the ansible
+	// executor for cleanup after execution (BR-WE-015). Written via the status
+	// subresource to avoid violating spec immutability (ADR-001).
+	// +optional
+	EphemeralCredentialIDs []int `json:"ephemeralCredentialIDs,omitempty"`
+
+	// WorkflowName is the human-readable workflow name. Superseded (Issue
+	// #1661 Change 12): the authoritative value now lives on
+	// Spec.WorkflowRef.WorkflowName (immutable, set at creation time from
+	// AIAnalysis.Status.SelectedWorkflow.WorkflowName) -- mirroring the
+	// ActionType precedent from Change 11f. This Status field is never
+	// populated by the controller and is kept only for audit-payload schema
+	// back-compat; read Spec.WorkflowRef.WorkflowName instead. WorkflowID
+	// remains the functional/join key for SOC2 CC8.1 reconstruction
+	// regardless of whether either name field is populated
+	// (IT-AW-1111-001).
+	// +optional
+	WorkflowName string `json:"workflowName,omitempty"`
+
+	// DeduplicatedBy stores the name of the original WorkflowExecution that owns
+	// the conflicting execution resource. Set atomically inside AtomicStatusUpdate
+	// when FailureDetails.Reason == Deduplicated (Issue #190, M5 constraint).
+	// Immutable after initial assignment.
+	// +optional
+	DeduplicatedBy string `json:"deduplicatedBy,omitempty"`
+
+	// Conditions provide detailed status information
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// ExecutionEngineTekton is the WorkflowRef.ExecutionEngine value for Tekton
+// Pipelines-backed workflows. See the ExecutionEngine field doc above for
+// the full value set ("tekton", "job", "ansible").
+const ExecutionEngineTekton = "tekton"
+
+// ========================================
+// V1.0: SKIP DETAILS REMOVED
+// DD-RO-002: All skip information moved to RemediationRequest.Status
+// Struct types removed: SkipDetails, ConflictingWorkflowRef, RecentRemediationRef
+// ========================================
+
+// ========================================
+// FAILURE DETAILS (v3.0)
+// DD-CONTRACT-001 v1.3: Structured failure classification
+// ========================================
+
+// FailureDetails contains structured failure classification information
+type FailureDetails struct {
+	// FailedTaskIndex is 0-indexed position of failed task in pipeline
+	FailedTaskIndex int `json:"failedTaskIndex"`
+
+	// FailedTaskName is the name of the failed Tekton Task
+	FailedTaskName string `json:"failedTaskName"`
+
+	// FailedStepName is the name of the failed step within the task (if available)
+	// Tekton tasks can have multiple steps; this identifies the specific step
+	// +optional
+	FailedStepName string `json:"failedStepName,omitempty"`
+
+	// Reason is a Kubernetes-style reason code
+	// Used for deterministic failure classification by RO
+	// +kubebuilder:validation:Enum=OOMKilled;DeadlineExceeded;Forbidden;ResourceExhausted;ConfigurationError;ImagePullBackOff;TaskFailed;UnsupportedEngine;Unknown;Deduplicated
+	Reason string `json:"reason"`
+
+	// Message is human-readable error message (for logging/UI/notifications)
+	Message string `json:"message"`
+
+	// ExitCode from container (if applicable)
+	// Useful for script-based tasks that return specific exit codes
+	// +optional
+	ExitCode *int32 `json:"exitCode,omitempty"`
+
+	// FailedAt is the timestamp when the failure occurred
+	FailedAt metav1.Time `json:"failedAt"`
+
+	// ExecutionTimeBeforeFailure is how long the workflow ran before failing
+	// +optional
+	ExecutionTimeBeforeFailure *metav1.Duration `json:"executionTimeBeforeFailure,omitempty"`
+
+	// ========================================
+	// NATURAL LANGUAGE SUMMARY
+	// For failure reporting and user notifications
+	// ========================================
+
+	// NaturalLanguageSummary is a human/LLM-readable failure description
+	// Generated by WE controller from structured data above
+	// Used by:
+	//   - RO: Included in failure notifications
+	//   - Notification: Included in user-facing failure alerts
+	NaturalLanguageSummary string `json:"naturalLanguageSummary"`
+
+	// ========================================
+	// EXECUTION VS PRE-EXECUTION FAILURE (v4.1)
+	// DD-WE-004: Critical for retry/backoff decisions
+	// ========================================
+
+	// WasExecutionFailure indicates whether the failure occurred during workflow execution
+	// true = workflow RAN and failed (non-idempotent actions may have occurred)
+	// false = workflow failed BEFORE execution (validation, image pull, quota, etc.)
+	// CRITICAL: Execution failures (true) block ALL future retries for this target
+	//           Pre-execution failures (false) get exponential backoff
+	// +optional
+	WasExecutionFailure bool `json:"wasExecutionFailure,omitempty"`
+}
+
+// ========================================
+// BLOCK CLEARANCE DETAILS (v4.2)
+// BR-WE-013: Audit-Tracked Execution Block Clearing
+// SOC2 Type II Compliance Requirement (v1.0)
+// ========================================
+
+// BlockClearanceDetails tracks the clearing of PreviousExecutionFailed blocks
+// Required for SOC2 CC7.3 (Immutability), CC7.4 (Completeness), CC8.1 (Attribution)
+// Preserves audit trail when operators clear execution blocks after investigation
+type BlockClearanceDetails struct {
+	// ClearedAt is the timestamp when the block was cleared
+	// +optional
+	ClearedAt metav1.Time `json:"clearedAt"`
+
+	// ClearedBy is the Kubernetes user who cleared the block
+	// Extracted from request context (if available) or annotation value
+	// Format: username@domain or service-account:namespace:name
+	// Example: "admin@kubernaut.ai" or "service-account:kubernaut-system:operator"
+	ClearedBy string `json:"clearedBy"`
+
+	// ClearReason is the operator-provided reason for clearing
+	// Required for audit trail accountability
+	// Example: "manual investigation complete, cluster state verified"
+	ClearReason string `json:"clearReason"`
+
+	// ClearMethod indicates how the block was cleared
+	// Annotation: Via kubernaut.ai/clear-execution-block annotation
+	// APIEndpoint: Via dedicated clearing API endpoint (future)
+	// StatusField: Via direct status field update (future)
+	// +kubebuilder:validation:Enum=Annotation;APIEndpoint;StatusField
+	ClearMethod string `json:"clearMethod"`
+}
+
+// ExecutionStatusSummary captures key execution resource status fields
+// Lightweight summary for both Tekton PipelineRun and K8s Job backends
+type ExecutionStatusSummary struct {
+	// Status of the execution resource (Unknown, True, False)
+	Status corev1.ConditionStatus `json:"status"`
+
+	// Reason from the execution resource (e.g., "Succeeded", "Failed", "Running")
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// Message from the execution resource
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// CompletedTasks count
+	// +optional
+	CompletedTasks int `json:"completedTasks,omitempty"`
+
+	// TotalTasks count (from pipeline spec)
+	// +optional
+	TotalTasks int `json:"totalTasks,omitempty"`
+
+	// RetryCount is the number of pod-failure attempts tolerated by
+	// PodFailurePolicy (BR-WE-019 AC10 / DD-WE-008) before the Job reached a
+	// terminal state. Captured unconditionally from job.Status.Failed
+	// (Job engine only); 0 when no pod failures occurred or for the Tekton
+	// engine (PipelineRun has no equivalent retry-tolerance mechanism).
+	// +optional
+	RetryCount int32 `json:"retryCount,omitempty"`
+}
+
+// ========================================
+// PHASE CONSTANTS
+// ========================================
+
+// Phase constants already defined above (lines 199-208) - duplicate removed
+
+// ========================================
+// V1.0: SKIP REASON CONSTANTS REMOVED
+// DD-RO-002: All skip reasons moved to RemediationRequest.Status.EnsureRoutingStatus().SkipReason
+// Constants removed: SkipReasonResourceBusy, SkipReasonRecentlyRemediated,
+//                    SkipReasonExhaustedRetries, SkipReasonPreviousExecutionFailed
+// ========================================
+
+// ========================================
+// FAILURE REASON CONSTANTS
+// ========================================
+
+const (
+	// FailureReasonOOMKilled indicates container was killed due to memory limits
+	FailureReasonOOMKilled = "OOMKilled"
+
+	// FailureReasonDeadlineExceeded indicates timeout was reached
+	FailureReasonDeadlineExceeded = "DeadlineExceeded"
+
+	// FailureReasonForbidden indicates RBAC/permission failure
+	FailureReasonForbidden = "Forbidden"
+
+	// FailureReasonResourceExhausted indicates cluster resource limits (quota, etc.)
+	FailureReasonResourceExhausted = "ResourceExhausted"
+
+	// FailureReasonConfigurationError indicates invalid parameters or config
+	FailureReasonConfigurationError = "ConfigurationError"
+
+	// FailureReasonImagePullBackOff indicates container image could not be pulled
+	FailureReasonImagePullBackOff = "ImagePullBackOff"
+
+	// FailureReasonTaskFailed indicates a Tekton task failed during execution
+	// This is an execution failure (wasExecutionFailure=true)
+	FailureReasonTaskFailed = "TaskFailed"
+
+	// FailureReasonUnsupportedEngine indicates the execution engine is not registered
+	FailureReasonUnsupportedEngine = "UnsupportedEngine"
+
+	// FailureReasonUnknown for unclassified failures
+	FailureReasonUnknown = "Unknown"
+
+	// FailureReasonDeduplicated indicates an execution-time resource collision
+	// where another WorkflowExecution already owns the target execution resource.
+	// Issue #190: Enables result inheritance instead of blind re-run.
+	FailureReasonDeduplicated = "Deduplicated"
+)
+
+// ========================================
+// CRD DEFINITIONS
+// ========================================
+
+//+kubebuilder:object:root=true
+//+kubebuilder:subresource:status
+//+kubebuilder:selectablefield:JSONPath=.spec.remediationRequestRef.name
+//+kubebuilder:resource:shortName=wfe
+//+kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+//+kubebuilder:printcolumn:name="Workflow",type=string,JSONPath=`.spec.workflowRef.workflowName`
+//+kubebuilder:printcolumn:name="WorkflowID",type=string,JSONPath=`.spec.workflowRef.workflowId`,priority=1
+//+kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.targetResource`
+//+kubebuilder:printcolumn:name="Duration",type=string,JSONPath=`.status.duration`
+//+kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+
+// WorkflowExecution is the Schema for the workflowexecutions API
+type WorkflowExecution struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   WorkflowExecutionSpec   `json:"spec,omitempty"`
+	Status WorkflowExecutionStatus `json:"status,omitempty"`
+}
+
+//+kubebuilder:object:root=true
+
+// WorkflowExecutionList contains a list of WorkflowExecution
+type WorkflowExecutionList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []WorkflowExecution `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&WorkflowExecution{}, &WorkflowExecutionList{})
+}

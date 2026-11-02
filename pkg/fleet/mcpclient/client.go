@@ -1,0 +1,587 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package mcpclient provides a shared MCP resource client for accessing
+// Kubernetes resources on remote clusters via the MCP Gateway.
+// All services that need remote cluster access import this package.
+//
+// Routing pattern: only used when ClusterID is non-empty (remote cluster).
+// Local cluster operations continue using existing direct K8s API paths.
+package mcpclient
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// Compile-time interface compliance.
+var _ ResourceClient = (*Client)(nil)
+var _ client.Reader = (*Client)(nil)
+
+// SessionProvider returns the current active MCP session. Implementations must
+// be safe for concurrent use. Used by Client for lazy session resolution so
+// that per-cluster clients automatically follow ResilientClient reconnections.
+type SessionProvider func() *mcp.ClientSession
+
+// Client provides K8s-compatible read access to resources on a remote cluster
+// via the MCP Gateway. The target cluster is fixed at construction time via
+// WithClusterID and injected into each MCP tool call as a name prefix.
+// When WithToolPrefix is set, tool names use the gateway-specific prefix;
+// otherwise the EAIGW "{clusterID}__{tool}" convention is applied.
+type Client struct {
+	session          *mcp.ClientSession
+	sessionProvider  SessionProvider
+	reconnect        func(context.Context) error
+	clusterID        string
+	toolPrefix       string
+	scheme           *runtime.Scheme
+	mu               sync.Mutex
+	closed           bool
+	gatewayCAWatcher interface{ Stop() }
+}
+
+// New creates a Client connected to the given MCP Gateway endpoint.
+// The connection is established immediately; returns error if unreachable.
+// Use WithClusterID to bind the client to a specific remote cluster.
+func New(ctx context.Context, endpoint string, opts ...Option) (*Client, error) {
+	cfg := &clientConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if cfg.transportErr != nil {
+		if cfg.gatewayCAWatcher != nil {
+			cfg.gatewayCAWatcher.Stop()
+		}
+		return nil, cfg.transportErr
+	}
+	if cfg.discoverProbeTimeout > 0 {
+		wrapTransportWithDiscoverProbe(cfg)
+	}
+	if err := startGatewayCAWatcher(ctx, cfg.gatewayCAWatcher); err != nil {
+		return nil, err
+	}
+
+	mcpClient := mcp.NewClient(
+		&mcp.Implementation{Name: "kubernaut-fleet-client", Version: "v0.1.0"},
+		nil,
+	)
+
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:   endpoint,
+		HTTPClient: cfg.httpClient,
+	}
+
+	session, err := mcpClient.Connect(ctx, transport, nil)
+	if err != nil {
+		if cfg.gatewayCAWatcher != nil {
+			cfg.gatewayCAWatcher.Stop()
+		}
+		return nil, fmt.Errorf("connect to MCP Gateway at %s: %w", endpoint, err)
+	}
+
+	return &Client{
+		session:          session,
+		clusterID:        cfg.clusterID,
+		toolPrefix:       cfg.toolPrefix,
+		scheme:           cfg.resolvedScheme(),
+		gatewayCAWatcher: cfg.gatewayCAWatcher,
+	}, nil
+}
+
+// wrapTransportWithDiscoverProbe wraps cfg.httpClient's transport with
+// discoverProbeRoundTripper as the outermost layer, applied after all
+// options have already been folded into cfg -- so it composes correctly
+// regardless of option ordering (e.g. on top of WithHTTPClient's OAuth2
+// transport). Creates a *http.Client if none was configured.
+func wrapTransportWithDiscoverProbe(cfg *clientConfig) {
+	wrapped := &discoverProbeRoundTripper{
+		next:    baseRoundTripper(cfg),
+		timeout: cfg.discoverProbeTimeout,
+		logger:  cfg.resolvedDiscoverProbeLogger(),
+	}
+	if cfg.httpClient == nil {
+		cfg.httpClient = &http.Client{Transport: wrapped}
+	} else {
+		cfg.httpClient.Transport = wrapped
+	}
+}
+
+// baseRoundTripper returns the transport already configured on cfg.httpClient
+// (e.g. an OAuth2 transport set by WithHTTPClient), or http.DefaultTransport
+// when none was configured.
+func baseRoundTripper(cfg *clientConfig) http.RoundTripper {
+	if cfg.httpClient != nil && cfg.httpClient.Transport != nil {
+		return cfg.httpClient.Transport
+	}
+	return http.DefaultTransport
+}
+
+// NewFromSession creates a Client from an existing MCP session, skipping the
+// connection handshake. This is used by the FMC service to create per-cluster
+// readers from the shared ResilientClient's session, avoiding duplicate
+// connections to the MCP Gateway.
+//
+// Options (optional): WithToolPrefix sets the gateway-specific tool prefix.
+//
+// Panics if session is nil, since a nil session invariably leads to nil-pointer
+// panics on the first tool call -- failing fast makes the root cause obvious.
+func NewFromSession(session *mcp.ClientSession, clusterID string, opts ...Option) *Client {
+	if session == nil {
+		panic("mcpclient.NewFromSession: session must not be nil")
+	}
+	cfg := &clientConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return &Client{session: session, clusterID: clusterID, toolPrefix: cfg.toolPrefix, scheme: cfg.resolvedScheme()}
+}
+
+// NewFromSessionProvider creates a Client that lazily resolves the MCP session
+// on each call via the provided SessionProvider. This ensures per-cluster
+// clients automatically follow ResilientClient reconnections instead of holding
+// a stale session reference.
+//
+// Pass WithReconnect(rc.Reconnect) (where rc is the owning ResilientClient) so
+// that a dead session (e.g. after a protocol-level failure during a startup
+// race) is actively repaired instead of silently returning stale/no-op reads
+// forever -- SessionProvider alone only re-reads whatever session is
+// currently stored, it never repairs a broken one.
+func NewFromSessionProvider(provider SessionProvider, clusterID string, opts ...Option) *Client {
+	if provider == nil {
+		panic("mcpclient.NewFromSessionProvider: provider must not be nil")
+	}
+	cfg := &clientConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return &Client{
+		sessionProvider: provider, reconnect: cfg.reconnect, clusterID: clusterID,
+		toolPrefix: cfg.toolPrefix, scheme: cfg.resolvedScheme(),
+	}
+}
+
+// Get implements client.Reader. It retrieves a single Kubernetes resource from
+// the bound remote cluster via MCP Gateway and populates obj in place.
+//
+// GVK is inferred from the client's scheme (see ensureGVK) when the caller
+// didn't set one explicitly; the apiVersion is derived from the resolved GVK
+// and sent as a mandatory parameter to the K8s MCP Server.
+//
+// Supported object types:
+//   - *unstructured.Unstructured: full object populated
+//   - *metav1.PartialObjectMetadata: metadata fields populated (ownerReferences, labels, etc.)
+//   - Typed objects (e.g. *corev1.Pod): populated via JSON round-trip
+func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	gvk, err := ensureGVK(obj, c.scheme)
+	if err != nil {
+		return err
+	}
+
+	fetched, err := c.getResource(ctx, gvk.Kind, gvk.GroupVersion().String(), key.Namespace, key.Name)
+	if err != nil {
+		return err
+	}
+
+	return PopulateObject(fetched, obj)
+}
+
+// List implements client.Reader. It retrieves Kubernetes resources of a given
+// kind from the bound remote cluster via MCP Gateway.
+//
+// GVK is inferred from the client's scheme (see ensureGVK) when the caller
+// didn't set one explicitly. The Kind typically has a "List" suffix (e.g.
+// "PodList"); the suffix is stripped to derive the item kind for the MCP tool
+// call. The apiVersion is derived from the resolved GVK.
+//
+// Supported list types:
+//   - *unstructured.UnstructuredList: items populated directly
+//   - Typed ObjectLists (e.g. *corev1.PodList): populated via JSON round-trip
+//
+// Supported ListOptions: InNamespace, MatchingLabels. Other options are ignored.
+func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, o := range opts {
+		o.ApplyToList(&listOpts)
+	}
+
+	gvk, err := ensureGVK(list, c.scheme)
+	if err != nil {
+		return err
+	}
+	itemKind := strings.TrimSuffix(gvk.Kind, "List")
+	apiVersion := gvk.GroupVersion().String()
+
+	var labels map[string]string
+	if listOpts.LabelSelector != nil {
+		labels = parseSelectorToMap(listOpts.LabelSelector.String())
+	}
+
+	items, err := c.listResources(ctx, itemKind, apiVersion, listOpts.Namespace, labels)
+	if err != nil {
+		return err
+	}
+
+	if ul, ok := list.(*unstructured.UnstructuredList); ok {
+		ul.Items = items
+		return nil
+	}
+
+	return populateListObject(items, list)
+}
+
+// currentSession returns the active MCP session. When a SessionProvider is
+// set (lazy resolution), the provider is called on each invocation to get the
+// current session. Otherwise the fixed session reference is returned.
+func (c *Client) currentSession() *mcp.ClientSession {
+	if c.sessionProvider != nil {
+		return c.sessionProvider()
+	}
+	return c.session
+}
+
+// Close terminates the MCP session. Safe to call multiple times.
+// When using a SessionProvider, Close is a no-op since the session lifecycle
+// is managed by the provider owner (typically ResilientClient).
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	if c.gatewayCAWatcher != nil {
+		c.gatewayCAWatcher.Stop()
+		c.gatewayCAWatcher = nil
+	}
+	if c.sessionProvider != nil {
+		return nil
+	}
+	return c.session.Close()
+}
+
+// ClusterID returns the cluster this client is bound to.
+func (c *Client) ClusterID() string {
+	return c.clusterID
+}
+
+// Session returns the underlying MCP client session for direct tool calls.
+// Used by BridgeTool to call discovered tools without creating new sessions.
+func (c *Client) Session() *mcp.ClientSession {
+	return c.currentSession()
+}
+
+// resolveToolName returns the gateway-prefixed tool name. When toolPrefix is
+// set (e.g. from ClusterInfo.ToolPrefix), it uses ClusterToolWithPrefix;
+// when only clusterID is set, falls back to the EAIGW convention via
+// ClusterTool. When neither is set (direct connection to kube-mcp-server
+// without a gateway), returns the bare tool name.
+func (c *Client) resolveToolName(tool string) string {
+	if c.toolPrefix != "" {
+		return ClusterToolWithPrefix(c.toolPrefix, tool)
+	}
+	if c.clusterID == "" {
+		return tool
+	}
+	return ClusterTool(c.clusterID, tool)
+}
+
+// callTool invokes the named MCP tool against the current session, retrying
+// once via the reconnect callback (if set) when the call fails with a
+// retryable session error (connection closed, session missing, etc.).
+//
+// This mirrors ResilientClient.Get/List's retry-on-reconnect behavior. It is
+// required for session-provider Clients (NewFromSessionProvider) because
+// SessionProvider() only re-reads whatever session ResilientClient currently
+// holds -- it has no way to notice or repair a session that died from a
+// protocol-level error (e.g. a malformed response during a startup race with
+// the MCP Gateway), which would otherwise leave the Client permanently unable
+// to sync, even after the Gateway becomes healthy again.
+func (c *Client) callTool(ctx context.Context, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
+	return callReadToolWithReconnect(ctx, toolName, args, c.currentSession, c.reconnect)
+}
+
+// callReadToolWithReconnect invokes an idempotent read and repairs a dead
+// provider session once before retrying. Both the read client and mutation
+// reconciliation path use this helper so their recovery behavior remains
+// identical without duplicating the retry sequence.
+func callReadToolWithReconnect(
+	ctx context.Context,
+	toolName string,
+	args map[string]any,
+	sessionProvider func() *mcp.ClientSession,
+	reconnect func(context.Context) error,
+) (*mcp.CallToolResult, error) {
+	session := sessionProvider()
+	if session == nil {
+		return nil, fmt.Errorf("call %s: no active MCP session", toolName)
+	}
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: args})
+	if err == nil {
+		return result, nil
+	}
+	if reconnect == nil || !isRetryableSessionError(err) {
+		return nil, fmt.Errorf("call %s: %w", toolName, err)
+	}
+	if reconnErr := reconnect(ctx); reconnErr != nil {
+		return nil, fmt.Errorf("call %s: reconnect failed: %w (original: %w)", toolName, reconnErr, err)
+	}
+	session = sessionProvider()
+	if session == nil {
+		return nil, fmt.Errorf("call %s: no active MCP session after reconnect", toolName)
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: toolName, Arguments: args})
+	if err != nil {
+		return nil, fmt.Errorf("call %s: %w", toolName, err)
+	}
+	return result, nil
+}
+
+// getResource calls the MCP get_resource tool and returns the parsed unstructured object.
+// apiVersion is a mandatory parameter required by the K8s MCP Server.
+func (c *Client) getResource(ctx context.Context, kind, apiVersion, namespace, name string) (*unstructured.Unstructured, error) {
+	toolName := c.resolveToolName(ToolGet)
+	args := map[string]any{
+		"kind":       kind,
+		"apiVersion": apiVersion,
+		"name":       name,
+	}
+	if namespace != "" {
+		args["namespace"] = namespace
+	}
+
+	result, err := c.callTool(ctx, toolName, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.IsError {
+		errText := ExtractText(result)
+		// Issue #2349: a NotFound must arrive typed so callers relying on
+		// apierrors.IsNotFound/client.IgnoreNotFound (e.g. JobExecutor.Cleanup's
+		// ownership-check Get, pkg/workflowexecution/executor/job.go) actually
+		// match it instead of hard-failing forever on a resource that
+		// legitimately never existed.
+		gv, gvErr := schema.ParseGroupVersion(apiVersion)
+		if gvErr == nil {
+			if nf := asRemoteNotFound(errText, gv.WithKind(kind), name); nf != nil {
+				return nil, nf
+			}
+		}
+		return nil, fmt.Errorf("call %s returned error: %s", toolName, errText)
+	}
+
+	if m := extractStructuredGet(result); m != nil {
+		return &unstructured.Unstructured{Object: m}, nil
+	}
+
+	text := ExtractText(result)
+	obj, err := ParseUnstructuredResponse(text)
+	if err != nil {
+		return nil, fmt.Errorf("parse Get response for %s/%s: %w", kind, name, err)
+	}
+	return obj, nil
+}
+
+// listResources calls the MCP list_resources tool and returns parsed unstructured items.
+// apiVersion is a mandatory parameter required by the K8s MCP Server.
+func (c *Client) listResources(ctx context.Context, kind, apiVersion, namespace string, labels map[string]string) ([]unstructured.Unstructured, error) {
+	toolName := c.resolveToolName(ToolList)
+	args := map[string]any{
+		"kind":       kind,
+		"apiVersion": apiVersion,
+	}
+	if namespace != "" {
+		args["namespace"] = namespace
+	}
+	if len(labels) > 0 {
+		args["labelSelector"] = formatLabelSelector(labels)
+	}
+
+	result, err := c.callTool(ctx, toolName, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.IsError {
+		return nil, fmt.Errorf("call %s returned error: %s", toolName, ExtractText(result))
+	}
+
+	// A successful call (IsError=false) with no StructuredContent means
+	// kube-mcp-server found zero matching resources for this kind/selector --
+	// not a parse failure. Issue #54 fleet E2E RCA (CI run 30464667745):
+	// treating this as a hard error caused FMC's syncer to log "structuredContent
+	// required but not present in response" on every sync cycle for every
+	// resource kind with zero kubernaut.ai/managed=true matches
+	// (StatefulSet/DaemonSet/Service), for the pod's entire lifetime.
+	// normalizeTableItems(nil, ...) already returns an empty (non-nil) slice.
+	sc := extractStructuredList(result)
+	return normalizeTableItems(sc, kind, apiVersion), nil
+}
+
+// PopulateObject copies data from a fetched unstructured object into the target
+// client.Object. Handles *unstructured.Unstructured directly, all other types
+// (including *metav1.PartialObjectMetadata and typed objects like *corev1.Pod)
+// via JSON round-trip. Exported (renamed from populateObject, issue #2306) so
+// KA's overlayClientReader can reuse this already-proven population path.
+func PopulateObject(fetched *unstructured.Unstructured, target client.Object) error {
+	if t, ok := target.(*unstructured.Unstructured); ok {
+		t.Object = fetched.Object
+		return nil
+	}
+
+	data, err := json.Marshal(fetched.Object)
+	if err != nil {
+		return fmt.Errorf("marshal fetched object: %w", err)
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		return fmt.Errorf("unmarshal into %T: %w", target, err)
+	}
+	return nil
+}
+
+// populateListObject converts unstructured items into a typed ObjectList via JSON
+// round-trip. This enables typed list queries (e.g. *corev1.PodList) over MCP.
+func populateListObject(items []unstructured.Unstructured, list client.ObjectList) error {
+	rawItems := make([]map[string]any, len(items))
+	for i, item := range items {
+		rawItems[i] = item.Object
+	}
+	wrapper := map[string]any{
+		"items": rawItems,
+	}
+	data, err := json.Marshal(wrapper)
+	if err != nil {
+		return fmt.Errorf("marshal items for typed list: %w", err)
+	}
+	if err := json.Unmarshal(data, list); err != nil {
+		return fmt.Errorf("unmarshal into %T: %w", list, err)
+	}
+	return nil
+}
+
+// parseSelectorToMap converts a simple "key=value,key2=value2" selector string
+// into a map. Only handles equality-based selectors (which is what MCP Gateway
+// supports via labelSelector).
+func parseSelectorToMap(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, part := range strings.Split(s, ",") {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 {
+			result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func formatLabelSelector(labels map[string]string) string {
+	parts := make([]string, 0, len(labels))
+	for k, v := range labels {
+		parts = append(parts, k+"="+v)
+	}
+	return strings.Join(parts, ",")
+}
+
+// extractStructuredList extracts items from StructuredContent for list responses.
+// Handles two shapes:
+//   - map[string]any{"items": [...]}: kube-mcp-server with --list-output=yaml
+//   - []any of maps: legacy/mock format
+//
+// Returns nil when StructuredContent is absent, empty, or unrecognized.
+func extractStructuredList(result *mcp.CallToolResult) []map[string]any {
+	if result == nil || result.StructuredContent == nil {
+		return nil
+	}
+
+	var rawItems []any
+
+	switch sc := result.StructuredContent.(type) {
+	case map[string]any:
+		items, ok := sc["items"].([]any)
+		if !ok {
+			return nil
+		}
+		rawItems = items
+	case []any:
+		rawItems = sc
+	default:
+		return nil
+	}
+
+	var out []map[string]any
+	for _, item := range rawItems {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// extractStructuredGet extracts a single object from StructuredContent for get responses.
+// Returns the map when StructuredContent is map[string]any with a "kind" key
+// (full K8s object). Returns nil otherwise.
+func extractStructuredGet(result *mcp.CallToolResult) map[string]any {
+	if result == nil || result.StructuredContent == nil {
+		return nil
+	}
+	m, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if _, hasKind := m["kind"]; !hasKind {
+		return nil
+	}
+	return m
+}
+
+// ExtractText extracts and concatenates all text content from an MCP tool result.
+// Returns text parts joined with newlines, or a JSON-serialized fallback if no text parts are found.
+func ExtractText(result *mcp.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+
+	var texts []string
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			texts = append(texts, tc.Text)
+		}
+	}
+	if len(texts) > 0 {
+		return strings.Join(texts, "\n")
+	}
+
+	data, err := json.Marshal(result.Content)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}

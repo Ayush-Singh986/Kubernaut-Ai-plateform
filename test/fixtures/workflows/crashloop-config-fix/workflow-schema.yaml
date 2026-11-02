@@ -1,0 +1,54 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: crashloop-config-fix-v1
+spec:
+  # CrashLoop Config Fix Workflow Schema (BR-WORKFLOW-004)
+  # Used by: AIAnalysis E2E, HolmesGPT-API E2E
+  version: "1.0.0"
+  description:
+    what: "Restarts deployment to recover from CrashLoopBackOff caused by configuration issues"
+    whenToUse: "When pods are in CrashLoopBackOff due to misconfiguration"
+    whenNotToUse: "When crash is caused by a persistent code bug"
+    preconditions: "Pod is managed by a Deployment"
+
+  actionType: RestartDeployment
+
+  labels:
+    severity: [high]
+    environment: [production, staging, test]
+    component: [apps/v1/Deployment]
+    priority: P1
+
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace"
+    - name: DEPLOYMENT_NAME
+      type: string
+      required: true
+      description: "Name of the deployment to restart"
+    - name: GRACE_PERIOD_SECONDS
+      type: integer
+      required: false
+      description: "Graceful shutdown period in seconds"
+      default: 30
+      minimum: 0
+      maximum: 300

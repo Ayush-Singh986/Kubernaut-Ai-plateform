@@ -1,0 +1,886 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"time"
+
+	"cloud.google.com/go/auth/credentials"
+	"github.com/go-logr/logr"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/apimachinery/pkg/api/meta"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
+	ctrl "sigs.k8s.io/controller-runtime"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	"google.golang.org/genai"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ds"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/resilience"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tlswiring"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	readinessaudit "github.com/jordigilh/kubernaut/pkg/audit"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
+	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+type caWatcherEntry struct {
+	name    string
+	watcher *hotreload.FileWatcher
+}
+
+// backendDeps holds shared backend clients used by both the MCP and A2A handlers.
+// Created once by buildBackendDeps and consumed by buildMCPHandler / buildA2AHandler.
+type backendDeps struct {
+	DSClient              ds.Client
+	KAClient              *ka.Client
+	MCPClient             ka.MCPClient
+	DedicatedClient       ka.MCPClient
+	Pool                  *ka.KASessionPool
+	Triager               *severity.Triager
+	PromClient            prom.Client
+	DSResilientTransport  *resilience.CircuitBreakerTransport
+	CAWatchers            []caWatcherEntry
+	k8sDynClient          dynamic.Interface
+	k8sTypedClient        crclient.WithWatch
+	K8sCB                 *resilience.K8sCircuitBreaker
+	InvestigationRegistry *tools.MonitorRegistry
+	Mapper                meta.RESTMapper
+	// FleetReaderFactory routes kubectl_get/kubectl_list tool calls with a
+	// non-empty cluster_id to remote fleet clusters via the MCP Gateway
+	// (BR-FLEET-054). Nil when fleet federation is disabled.
+	FleetReaderFactory tools.ResourceReaderFactory
+	// FleetClusterRegistry backs the list_clusters tool (BR-FLEET-054). Nil
+	// when fleet federation is disabled. Owns a background K8s dynamic-
+	// informer goroutine once started -- stopped on shutdown by
+	// stopBackendDeps (#2313).
+	FleetClusterRegistry registry.ClusterRegistry
+	// fleetResilientClient is the underlying MCP Gateway connection; closed
+	// on shutdown by run() when non-nil.
+	fleetResilientClient *mcpclient.ResilientClient
+	// fleetReadinessGate is the #1553 pod-wide readiness gate for Fleet
+	// dependencies (ADR-068, BR-FLEET-054); nil when fleet is disabled.
+	// Stopped on shutdown by stopBackendDeps.
+	fleetReadinessGate *readiness.Gate
+	// dataStorageReadinessGate is the #1985 pod-wide readiness gate for
+	// DataStorage reachability (BR-AUDIT-005 v2.0). Unlike
+	// fleetReadinessGate, this is always wired (every service writes
+	// audit -- there is no "disabled" state). Stopped on shutdown by
+	// stopBackendDeps.
+	dataStorageReadinessGate *readiness.Gate
+	// ScopeChecker validates target resources against Kubernaut's
+	// management scope (ADR-053) before kubernaut_remediate/
+	// kubernaut_investigate_alert/kubernaut_investigate create an RR
+	// (#2025, main-tracking clone of #2022). Wired via fleet.NewScopeChecker
+	// (ADR-068), same factory RO/Gateway use, so a fleet-enabled deployment
+	// gets federated (local+remote) checks for free. Nil when the K8s typed
+	// client is unavailable (graceful degradation, matches every other
+	// backendDeps field's nil-safe convention).
+	ScopeChecker scope.ScopeChecker
+}
+
+// FleetResilientClient returns the MCP Gateway connection backing
+// FleetReaderFactory, or nil when fleet federation is disabled or its
+// endpoint was unreachable at startup. Callers must check for nil before
+// closing.
+func (d *backendDeps) FleetResilientClient() *mcpclient.ResilientClient {
+	return d.fleetResilientClient
+}
+
+// FleetReady reports whether Fleet dependencies (MCP Gateway, cluster
+// registry) are reachable, for composition into the /readyz ReadyChecker
+// chain (#1553, ADR-068). Always true when Fleet is disabled (nil gate) —
+// matches the existing "no dependency, no gate" convention used across all
+// 7 fail-closed readiness rollout services.
+func (d *backendDeps) FleetReady() bool {
+	if d.fleetReadinessGate == nil {
+		return true
+	}
+	return d.fleetReadinessGate.Ready()
+}
+
+// DataStorageReady reports whether DataStorage is currently reachable, for
+// composition into the /readyz ReadyChecker chain (#1985, BR-AUDIT-005
+// v2.0). Unlike FleetReady, dataStorageReadinessGate is always non-nil in
+// production (buildBackendDeps always wires it); the nil check only
+// protects lightweight tests that construct a bare backendDeps.
+func (d *backendDeps) DataStorageReady() bool {
+	if d.dataStorageReadinessGate == nil {
+		return true
+	}
+	return d.dataStorageReadinessGate.Ready()
+}
+
+// K8sClient returns the pod service-account scoped dynamic K8s client,
+// wrapped with a circuit breaker. Returns nil if K8s API was unreachable
+// at startup; callers must check for nil (tools return a clear error).
+func (d *backendDeps) K8sClient() dynamic.Interface {
+	return d.k8sDynClient
+}
+
+// TypedClient returns the controller-runtime typed client for all kubernaut CRDs
+// (RR, RAR, EA, AIAnalysis, IS). Returns nil if K8s API was unreachable;
+// callers must check for nil (#1428).
+func (d *backendDeps) TypedClient() crclient.WithWatch {
+	return d.k8sTypedClient
+}
+
+func buildBackendDeps(ctx context.Context, cfg *config.Config, metricsReg *metrics.Registry, auditor audit.Emitter, logger logr.Logger) (*backendDeps, error) {
+	deps := &backendDeps{}
+
+	// #1985 / BR-AUDIT-005: fail closed on DataStorage unreachability via
+	// /readyz (pod-wide), unconditionally -- every service writes audit,
+	// unlike the Fleet-conditional gate below.
+	if err := wireDataStorageReadinessGate(ctx, cfg, deps, logger); err != nil {
+		return nil, fmt.Errorf("datastorage readiness gate wiring: %w", err)
+	}
+
+	if err := buildDSClientDeps(ctx, cfg, deps, metricsReg, auditor, logger); err != nil {
+		return nil, err
+	}
+	if err := buildKAClientDeps(ctx, cfg, deps, metricsReg, auditor, logger); err != nil {
+		return nil, err
+	}
+
+	// F7+F8: Eager K8s dynamic client init with circuit breaker (WIRE-03).
+	// Fail-fast: log clearly on failure instead of returning silent nil.
+	buildK8sClientDeps(cfg, deps, metricsReg, logger)
+
+	if err := buildSeverityTriageDeps(ctx, cfg, deps, auditor, logger); err != nil {
+		return nil, err
+	}
+
+	if err := buildFleetReaderDeps(ctx, cfg, deps, logger); err != nil {
+		return nil, fmt.Errorf("fleet reader wiring: %w", err)
+	}
+
+	if err := buildScopeCheckerDeps(cfg, deps, logger); err != nil {
+		return nil, fmt.Errorf("scope checker wiring: %w", err)
+	}
+
+	return deps, nil
+}
+
+// buildScopeCheckerDeps wires the ADR-053/#2025 scope checker used by
+// kubernaut_remediate/kubernaut_investigate_alert/kubernaut_investigate to
+// reject out-of-scope resources before RR creation. Runs after
+// buildFleetReaderDeps so cfg.Fleet is fully resolved; fleet.NewScopeChecker
+// itself returns the local-only checker unchanged when Fleet is disabled
+// (ADR-068), so this wiring is safe regardless of Fleet config.
+// Leaves ScopeChecker nil when the K8s typed client failed to initialize. The
+// RR tool layer treats that state as unavailable scope infrastructure and
+// fails closed, so no RR can be created without a scope proof.
+func buildScopeCheckerDeps(cfg *config.Config, deps *backendDeps, logger logr.Logger) error {
+	if deps.k8sTypedClient == nil {
+		logger.Error(nil, "K8s typed client unavailable, RR scope validation will reject creation (#2025)")
+		return nil
+	}
+	scopeMgr := scope.NewManager(deps.k8sTypedClient)
+	scopeChecker, err := fleet.NewScopeChecker(scopeMgr, cfg.Fleet, logger.WithName("scope"))
+	if err != nil {
+		return fmt.Errorf("create fleet scope checker: %w", err)
+	}
+	deps.ScopeChecker = scopeChecker
+	if cfg.Fleet.Enabled && cfg.Fleet.EffectiveEndpoint() != "" {
+		logger.Info("ADR-068: federated scope checker enabled for AF tool layer (#2025)",
+			"backend", cfg.Fleet.Backend, "endpoint", cfg.Fleet.EffectiveEndpoint())
+	}
+	return nil
+}
+
+// buildDSClientDeps wires the DataStorage ogen client behind a CA-reloadable,
+// resilient (retry + circuit breaker) transport. A DS client construction
+// failure degrades to a nil DSClient (DS tools return errors at runtime)
+// rather than failing AF startup.
+func buildDSClientDeps(ctx context.Context, cfg *config.Config, deps *backendDeps, metricsReg *metrics.Registry, auditor audit.Emitter, logger logr.Logger) error {
+	dsTransport, dsWatcher, err := tlswiring.CAReloadableTransport(cfg.Agent.DSTLSCaFile, logger.WithName("ds-ca"))
+	if err != nil {
+		return fmt.Errorf("DS TLS transport: %w", err)
+	}
+	if dsWatcher != nil {
+		if err := dsWatcher.Start(ctx); err != nil {
+			return fmt.Errorf("DS CA watcher start: %w", err)
+		}
+		deps.CAWatchers = append(deps.CAWatchers, caWatcherEntry{name: "ds-ca", watcher: dsWatcher})
+	}
+
+	deps.DSResilientTransport = buildResilientTransport(dsTransport, &cfg.Resilience.DS, "ds", metricsReg, auditor) //nolint:contextcheck // circuit-breaker audit callback fires on state transitions, not tied to the request that triggered them
+
+	var dsAuthTransport http.RoundTripper = deps.DSResilientTransport
+	if cfg.Agent.DSBearerTokenFile != "" {
+		dsAuthTransport = &bearerTokenTransport{
+			base:      deps.DSResilientTransport,
+			tokenFile: cfg.Agent.DSBearerTokenFile,
+		}
+	}
+
+	dsCfg := ds.OgenClientConfig{
+		BaseURL:   cfg.Agent.DSBaseURL,
+		Timeout:   cfg.Resilience.DS.RequestTimeout,
+		Transport: dsAuthTransport,
+	}
+	if c, err := ds.NewOgenClient(dsCfg); err == nil {
+		deps.DSClient = c
+	} else {
+		logger.Info("DS client unavailable, DS tools will return errors", "error", err)
+	}
+	return nil
+}
+
+// buildKAClientDeps wires both the pooled/dedicated MCP clients (for
+// investigation streaming, #1306/#1386) and the plain REST client used for
+// non-MCP KA calls.
+func buildKAClientDeps(ctx context.Context, cfg *config.Config, deps *backendDeps, metricsReg *metrics.Registry, auditor audit.Emitter, logger logr.Logger) error {
+	kaTransport, kaWatcher, err := tlswiring.CAReloadableTransport(cfg.Agent.KATLSCaFile, logger.WithName("ka-ca"))
+	if err != nil {
+		return fmt.Errorf("KA TLS transport: %w", err)
+	}
+	if kaWatcher != nil {
+		if err := kaWatcher.Start(ctx); err != nil {
+			return fmt.Errorf("KA CA watcher start: %w", err)
+		}
+		deps.CAWatchers = append(deps.CAWatchers, caWatcherEntry{name: "ka-ca", watcher: kaWatcher})
+	}
+
+	kaMCPResilient := buildResilientTransport(kaTransport, &cfg.Resilience.KA, "ka-mcp", metricsReg, auditor) //nolint:contextcheck // circuit-breaker audit callback fires on state transitions, not tied to the request that triggered them
+	var kaMCPAuth http.RoundTripper = kaMCPResilient
+	if cfg.Agent.KABearerTokenFile != "" {
+		kaMCPAuth = &bearerTokenTransport{
+			base:      kaMCPResilient,
+			tokenFile: cfg.Agent.KABearerTokenFile,
+		}
+	}
+	kaMCPHTTPClient := &http.Client{
+		Transport: kaMCPAuth,
+		Timeout:   cfg.Resilience.KA.RequestTimeout,
+	}
+	// #1386: Separate HTTP client for long-lived MCP sessions (SSE streams).
+	// Go's http.Client.Timeout is a deadline on the entire response including
+	// body reads. For persistent SSE connections, the 30s timeout kills the
+	// stream after idle periods, causing "session not found" on next tool call.
+	// The MCP SDK manages session lifecycle via context cancellation and
+	// session.Close(); no global timeout is needed.
+	kaMCPStreamClient := &http.Client{
+		Transport: kaMCPAuth,
+	}
+	mcpClient := ka.NewSDKMCPClient(
+		cfg.Agent.KAMCPEndpoint,
+		kaMCPHTTPClient,
+		kaMCPStreamClient,
+		logger,
+	)
+	mcpClient.WithDownstreamDuration(metricsReg.DownstreamDuration)
+
+	// G2: Persistent MCP sessions (#1306). The pool creates real MCP
+	// connections via StreamableClientTransport. Sessions are keyed by
+	// (rr_id, username) for user isolation (G9). PooledMCPClient wraps
+	// the pool to implement MCPClient, auto-releasing on terminal actions.
+	kaMCPEndpoint := cfg.Agent.KAMCPEndpoint
+	deps.Pool = ka.NewKASessionPool(ka.PoolConfig{
+		Factory: func(ctx context.Context) (ka.PoolSession, error) {
+			transport := &mcp.StreamableClientTransport{
+				Endpoint:   kaMCPEndpoint,
+				HTTPClient: kaMCPStreamClient,
+			}
+			return mcpClient.ConnectSession(ctx, transport)
+		},
+		MaxEntries: 100,
+		IdleTTL:    10 * time.Minute,
+		Logger:     logger.WithName("ka-session-pool"),
+	})
+	deps.MCPClient = ka.NewPooledMCPClient(deps.Pool, logger, tools.EmitKAEventToA2A)
+	deps.DedicatedClient = mcpClient
+	deps.InvestigationRegistry = tools.NewMonitorRegistry()
+
+	kaRESTAuth := kaTransport
+	if cfg.Agent.KABearerTokenFile != "" {
+		kaRESTAuth = &bearerTokenTransport{
+			base:      kaTransport,
+			tokenFile: cfg.Agent.KABearerTokenFile,
+		}
+	}
+
+	deps.KAClient = ka.NewClient(ka.Config{
+		BaseURL:            cfg.Agent.KABaseURL,
+		BaseTransport:      kaRESTAuth,
+		Timeout:            cfg.Resilience.KA.RequestTimeout,
+		CBMaxRequests:      cfg.Resilience.KA.CBMaxRequests,
+		CBInterval:         cfg.Resilience.KA.CBInterval,
+		CBTimeout:          cfg.Resilience.KA.CBTimeout,
+		CBFailureThreshold: cfg.Resilience.KA.CBFailureThreshold,
+		RetryMax:           cfg.Resilience.KA.RetryMax,
+		RetryInitBackoff:   cfg.Resilience.KA.RetryInitBackoff,
+		RetryMaxBackoff:    cfg.Resilience.KA.RetryMaxBackoff,
+		RetryableStatuses:  cfg.Resilience.KA.RetryableStatuses,
+		CBAuditFunc:        resilience.CircuitBreakerAuditFunc(auditor), //nolint:contextcheck // circuit-breaker audit callback fires on state transitions, not tied to the request that triggered them
+	}, &ka.ClientMetrics{
+		StateGauge:   metricsReg.CircuitBreakerState,
+		DurationHist: metricsReg.DownstreamDuration,
+	})
+	return nil
+}
+
+// buildK8sClientDeps eagerly initializes the K8s dynamic client (circuit
+// breaker wrapped), RESTMapper, and typed client. Each sub-step degrades
+// independently and logs clearly on failure rather than failing AF startup —
+// K8s-dependent tools return runtime errors instead when unavailable.
+func buildK8sClientDeps(cfg *config.Config, deps *backendDeps, metricsReg *metrics.Registry, logger logr.Logger) {
+	restCfg, err := ctrl.GetConfig()
+	if err != nil {
+		logger.Error(err, "K8s dynamic client unavailable — K8s tools will return errors at runtime")
+		return
+	}
+	inner, err := dynamic.NewForConfig(restCfg)
+	if err != nil {
+		logger.Error(err, "K8s dynamic client creation failed — K8s tools will return errors at runtime")
+		return
+	}
+
+	k8sCfg := cfg.Resilience.K8s
+	deps.K8sCB = resilience.NewK8sCircuitBreaker(resilience.K8sCBConfig{
+		Name:             "k8s",
+		MaxRequests:      k8sCfg.CBMaxRequests,
+		Interval:         k8sCfg.CBInterval,
+		Timeout:          k8sCfg.CBTimeout,
+		FailureThreshold: k8sCfg.CBFailureThreshold,
+		StateGauge:       metricsReg.CircuitBreakerState,
+		DependencyName:   "k8s",
+	})
+	deps.k8sDynClient = resilience.NewResilientDynamicClient(inner, deps.K8sCB)
+	logger.Info("K8s dynamic client initialized with circuit breaker")
+
+	buildK8sDiscoveryMapper(restCfg, deps, logger)
+	buildK8sTypedClient(restCfg, deps, logger)
+}
+
+// buildK8sDiscoveryMapper wires the RESTMapper used for CRD kind resolution.
+// Unavailable discovery falls back to AF's static kind table.
+func buildK8sDiscoveryMapper(restCfg *rest.Config, deps *backendDeps, logger logr.Logger) {
+	disc, discErr := discovery.NewDiscoveryClientForConfig(restCfg)
+	if discErr != nil {
+		logger.Error(discErr, "K8s discovery client unavailable — CRD kind resolution will use static table only")
+		return
+	}
+	deps.Mapper = restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disc))
+	logger.Info("K8s RESTMapper initialized for CRD kind resolution")
+}
+
+// buildK8sTypedClient wires the controller-runtime typed client for all
+// kubernaut CRDs (RR, RAR, EA, AIAnalysis, IS, AgentSession, #1428, #2172).
+// Unavailable falls back to dynamic-only CRD operations.
+func buildK8sTypedClient(restCfg *rest.Config, deps *backendDeps, logger logr.Logger) {
+	typedScheme := k8sruntime.NewScheme()
+	_ = eav1alpha1.AddToScheme(typedScheme)
+	_ = remediationv1.AddToScheme(typedScheme)
+	_ = aianalysisv1.AddToScheme(typedScheme)
+	_ = isv1alpha1.AddToScheme(typedScheme)
+	// DD-AA-KA-001 Amendment Gap 1 / #2172: AwaitAgentSessionInteractive
+	// watches AgentSession directly via this same typed client.
+	_ = agentsessionv1.AddToScheme(typedScheme)
+	typedClient, tcErr := crclient.NewWithWatch(restCfg, crclient.Options{Scheme: typedScheme})
+	if tcErr != nil {
+		logger.Error(tcErr, "K8s typed client creation failed — CRD typed operations will fall back to dynamic")
+		return
+	}
+	deps.k8sTypedClient = typedClient
+	logger.Info("K8s typed client initialized for all kubernaut CRD operations (#1428)")
+}
+
+// buildSeverityTriageDeps wires the optional Prometheus-backed severity-triage
+// subsystem. Severity is sourced from explicit alert/rule labels; no LLM
+// severity triager is constructed or invoked (DD-AF-016).
+func buildSeverityTriageDeps(ctx context.Context, cfg *config.Config, deps *backendDeps, auditor audit.Emitter, logger logr.Logger) error {
+	if !cfg.SeverityTriage.Enabled {
+		return nil
+	}
+
+	promClient, err := buildTriagePrometheusClient(ctx, cfg, deps, logger)
+	if err != nil {
+		return err
+	}
+	deps.PromClient = promClient
+
+	severityCfg := buildTriageSeverityConfig(cfg)
+
+	var triagerOpts []severity.TriagerOption
+	triagerOpts = append(triagerOpts, severity.WithAuditor(auditor))
+	if deps.k8sDynClient != nil {
+		triagerOpts = append(triagerOpts, severity.WithPodResolver(
+			severity.NewK8sPodResolver(deps.k8sDynClient, logger.WithName("pod-resolver")),
+		))
+	}
+
+	deps.Triager = severity.NewTriager(promClient, nil, severityCfg, logger.WithName("severity-triage"), triagerOpts...)
+	logger.Info("severity triage enabled", "prometheusURL", cfg.SeverityTriage.PrometheusURL,
+		"podResolverEnabled", deps.k8sDynClient != nil)
+	return nil
+}
+
+// buildTriagePrometheusClient wires the CA-reloadable, optionally
+// bearer-authenticated Prometheus HTTP client used by severity triage.
+func buildTriagePrometheusClient(ctx context.Context, cfg *config.Config, deps *backendDeps, logger logr.Logger) (prom.Client, error) {
+	promTransport, promWatcher, promErr := tlswiring.CAReloadableTransport(cfg.SeverityTriage.PrometheusTLSCaFile, logger.WithName("prom-ca"))
+	if promErr != nil {
+		return nil, fmt.Errorf("prometheus TLS transport: %w", promErr)
+	}
+	if promWatcher != nil {
+		if err := promWatcher.Start(ctx); err != nil {
+			return nil, fmt.Errorf("prometheus CA watcher start: %w", err)
+		}
+		deps.CAWatchers = append(deps.CAWatchers, caWatcherEntry{name: "prom-ca", watcher: promWatcher})
+	}
+
+	if cfg.Resilience.Prometheus.ConnectTimeout > 0 {
+		if t, ok := promTransport.(*http.Transport); ok {
+			t = t.Clone()
+			t.DialContext = (&net.Dialer{Timeout: cfg.Resilience.Prometheus.ConnectTimeout}).DialContext
+			promTransport = t
+		}
+	}
+	promHTTPClient := &http.Client{
+		Transport: promTransport,
+		Timeout:   cfg.Resilience.Prometheus.RequestTimeout,
+	}
+	if cfg.SeverityTriage.PrometheusBearerTokenFile != "" {
+		promHTTPClient.Transport = &bearerTokenTransport{
+			base:      promTransport,
+			tokenFile: cfg.SeverityTriage.PrometheusBearerTokenFile,
+		}
+	}
+
+	return prom.NewHTTPClient(cfg.SeverityTriage.PrometheusURL, promHTTPClient), nil
+}
+
+// buildTriageSeverityConfig resolves severity.Config from cfg.SeverityTriage,
+// applying documented defaults for any zero-valued field.
+func buildTriageSeverityConfig(cfg *config.Config) severity.Config {
+	severityCfg := severity.Config{
+		Enabled:           true,
+		MaxQueriesPerCall: cfg.SeverityTriage.MaxQueriesPerCall,
+		MaxRulesEvaluated: cfg.SeverityTriage.MaxRulesEvaluated,
+		CacheTTLSeconds:   cfg.SeverityTriage.CacheTTLSeconds,
+		LLMConfidence:     cfg.SeverityTriage.LLMConfidence,
+	}
+	if severityCfg.MaxQueriesPerCall == 0 {
+		severityCfg.MaxQueriesPerCall = 10
+	}
+	if severityCfg.MaxRulesEvaluated == 0 {
+		severityCfg.MaxRulesEvaluated = 100
+	}
+	if severityCfg.CacheTTLSeconds == 0 {
+		severityCfg.CacheTTLSeconds = 30
+	}
+	if severityCfg.LLMConfidence == 0 {
+		severityCfg.LLMConfidence = 0.7
+	}
+	return severityCfg
+}
+
+// fleetReadinessProbeInterval controls how often the #1553 Fleet readiness
+// gate re-probes its dependencies once started (mirrors GW/RO/EM/SP/WE).
+const fleetReadinessProbeInterval = 15 * time.Second
+
+// buildFleetReaderDeps wires BR-FLEET-054 multi-cluster kubectl routing when
+// fleet federation is enabled: connects to the MCP Gateway, discovers
+// managed clusters via ClusterRegistry, and adapts the resulting
+// fleet.ReaderFactory (client.Reader) into a tools.ResourceReaderFactory
+// (dynamic-style ResourceReader) for kubectl_get/kubectl_list/list_clusters.
+// A connectivity failure degrades gracefully to single-cluster mode for the
+// tool-routing surface (mirrors GW's registerAdapters contract,
+// cmd/gateway/main.go:246-284) rather than blocking AF startup — Fleet MCP
+// Gateway connections are lazy/async. #1553/ADR-068: it also wires a
+// readiness.Gate (deps.fleetReadinessGate, consumed via deps.FleetReady())
+// so that unreachability is surfaced as pod-wide /readyz=NotReady instead
+// of only this log line, closing the fail-open gap for AF.
+func buildFleetReaderDeps(ctx context.Context, cfg *config.Config, deps *backendDeps, logger logr.Logger) error {
+	if !cfg.Fleet.Enabled || cfg.Fleet.MCPGatewayEndpoint == "" {
+		return nil
+	}
+	if deps.k8sDynClient == nil {
+		logger.Info("K8s dynamic client unavailable, fleet cluster routing disabled")
+		return nil
+	}
+
+	fleetLog := logger.WithName("fleet-mcp")
+
+	// ClusterRegistry is K8s-watch-based (via deps.k8sDynClient),
+	// independent of the MCP session, so it is built and started before
+	// dialing the MCP Gateway below (#2315 triage): Connect's own
+	// backoff/retry can block for a while against an unreachable Gateway,
+	// and starting the informer-backed registry afterward would otherwise
+	// race against (or get starved by) whatever's left of ctx's deadline,
+	// if any.
+	clusterRegistry, err := registry.NewClusterRegistry(
+		cfg.Fleet.EffectiveMCPGatewayType(),
+		deps.k8sDynClient,
+		// #1686/BR-RBAC-020: thread Fleet.Namespace through so the watch (and
+		// the RBAC granted to match it) can be scoped to a single namespace
+		// instead of always defaulting to cluster-wide.
+		registry.RegistryConfig{Namespace: cfg.Fleet.Namespace},
+		registry.NewMetrics(),
+		fleetLog,
+	)
+	if err != nil {
+		return fmt.Errorf("create fleet cluster registry (gatewayType=%s): %w", cfg.Fleet.MCPGatewayType, err)
+	}
+	if err := clusterRegistry.Start(ctx); err != nil {
+		return fmt.Errorf("start fleet cluster registry: %w", err)
+	}
+	deps.FleetClusterRegistry = clusterRegistry
+
+	connectCfg := mcpclient.ConnectConfig{
+		Endpoint:            cfg.Fleet.MCPGatewayEndpoint,
+		MCPGatewayTLSCAFile: cfg.Fleet.MCPGatewayTLSCAFile,
+		OAuth2:              cfg.Fleet.OAuth2,
+		Resilience:          cfg.Fleet.Resilience,
+	}
+	if cfg.Fleet.OAuth2.Enabled {
+		connectCfg.CredentialsBasePath = "/etc/apifrontend/fleet-oauth2"
+		if cfg.Fleet.OAuth2.CredentialsSecretRef != "" {
+			connectCfg.CredentialsBasePath = "/etc/apifrontend/" + cfg.Fleet.OAuth2.CredentialsSecretRef
+		}
+	}
+
+	// #1553/#2315: keep (don't discard) the client even when the initial
+	// connect attempt fails — the fleet readiness gate attaches an
+	// MCPClientProber that keeps retrying in the background, and the
+	// reader factory below (built from its SessionProvider) self-heals
+	// automatically once it reconnects, instead of remote cluster routing
+	// staying disabled until a pod restart.
+	mcpFleetClient, connectErr := mcpclient.Connect(ctx, connectCfg, fleetLog) //nolint:contextcheck // Connect's internal reload/backoff loops are intentionally independent of any single request context
+	if connectErr != nil {
+		logger.Error(connectErr, "Fleet MCP Gateway connection failed at startup; readiness will report NotReady "+
+			"and keep retrying in the background; remote cluster routing will become available "+
+			"automatically once the connection is established (self-healing, issue #2315)",
+			"endpoint", cfg.Fleet.MCPGatewayEndpoint)
+	} else {
+		logger.Info("Fleet MCP Gateway connected, multi-cluster kubectl routing enabled",
+			"endpoint", cfg.Fleet.MCPGatewayEndpoint, "gatewayType", cfg.Fleet.MCPGatewayType)
+	}
+	deps.fleetResilientClient = mcpFleetClient
+
+	readerFactory := mcpclient.NewMCPReaderFactoryWithProvider(
+		deps.k8sTypedClient, mcpFleetClient.SessionProvider(), mcpFleetClient.Reconnect, registry.NewToolPrefixAdapter(clusterRegistry))
+	deps.FleetReaderFactory = adaptFleetReaderFactory(readerFactory)
+	deps.fleetReadinessGate = wireFleetReadinessGate(ctx, mcpFleetClient, clusterRegistry, logger)
+	return nil
+}
+
+// wireFleetReadinessGate builds and starts the #1553 Fleet dependency
+// readiness gate (ADR-068, BR-FLEET-054): once Fleet is enabled, AF's
+// pod-wide readyz must fail closed when the MCP Gateway or cluster
+// registry becomes unreachable, instead of the previous fail-open
+// behavior of only logging an error. Scope validation is wired separately
+// by buildScopeCheckerDeps; this gate carries an MCPClientProber and, when
+// available, a ClusterRegistryProber. fleetClient is always non-nil when
+// called (buildFleetReaderDeps only calls this after Fleet.Enabled +
+// endpoint checks); clusterRegistry is nil only when the caller passes nil
+// explicitly (e.g. a test constructing the gate in isolation) — in
+// production, buildFleetReaderDeps always builds and starts it before the
+// MCP connect attempt (#2315), independent of whether that attempt
+// succeeds. The caller (buildFleetReaderDeps) stores the returned Gate on
+// deps.fleetReadinessGate; stopBackendDeps must Stop() it on shutdown.
+func wireFleetReadinessGate(ctx context.Context, fleetClient *mcpclient.ResilientClient, clusterRegistry registry.ClusterRegistry, logger logr.Logger) *readiness.Gate {
+	probers := []readiness.Prober{&readiness.MCPClientProber{Client: fleetClient}}
+	if clusterRegistry != nil {
+		probers = append(probers, &readiness.ClusterRegistryProber{Registry: clusterRegistry})
+	}
+
+	gate := readiness.NewGate(fleetReadinessProbeInterval, logger.WithName("fleet-readiness"), probers...)
+	gate.Start(ctx)
+	logger.Info("Fleet readiness gate started", "prober_count", len(probers), "ready", gate.Ready())
+	return gate
+}
+
+// wireDataStorageReadinessGate builds and starts the DataStorage
+// dependency readiness gate (#1985, BR-AUDIT-005 v2.0): AF's pod-wide
+// /readyz must fail closed when DataStorage is unreachable, closing the
+// audit-loss window where a pod accepts traffic (and generates audit
+// events) before DataStorage is confirmed reachable. Unlike
+// wireFleetReadinessGate, this is unconditional -- always wired, never
+// nil -- since every service writes audit. The returned Gate is stored on
+// deps.dataStorageReadinessGate (consumed via deps.DataStorageReady());
+// stopBackendDeps must Stop() it on shutdown.
+//
+// Unlike the other 9 audit-writing services (which delegate straight to
+// readinessaudit.NewReadinessGate and its $TLS_CA_FILE-driven default
+// client), AF's DataStorage-facing TLS trust is driven by
+// cfg.Agent.DSTLSCaFile -- a distinct CA from whatever $TLS_CA_FILE
+// happens to be, mirroring buildDSClientDeps'/buildAuditDSTransport's own
+// tlswiring.CAReloadableTransport usage for AF's other DataStorage
+// clients. 2026-08-17 CI RCA (PR #2168): using the $TLS_CA_FILE-based
+// default here produced a real "certificate signed by unknown authority"
+// failure in E2E, leaving the pod permanently NotReady.
+func wireDataStorageReadinessGate(ctx context.Context, cfg *config.Config, deps *backendDeps, logger logr.Logger) error {
+	readinessLogger := logger.WithName("readiness-ds-ca")
+	dsTransport, dsWatcher, err := tlswiring.CAReloadableTransport(cfg.Agent.DSTLSCaFile, readinessLogger)
+	if err != nil {
+		return fmt.Errorf("DataStorage readiness CA transport: %w", err)
+	}
+	if dsWatcher != nil {
+		if err := dsWatcher.Start(ctx); err != nil {
+			return fmt.Errorf("DataStorage readiness CA watcher start: %w", err)
+		}
+		deps.CAWatchers = append(deps.CAWatchers, caWatcherEntry{name: "readiness-ds-ca", watcher: dsWatcher})
+	}
+
+	client := &http.Client{Timeout: readinessaudit.DefaultProbeTimeout, Transport: dsTransport}
+	deps.dataStorageReadinessGate = readinessaudit.NewReadinessGateWithClient(ctx, cfg.Agent.DSHealthURL, client, logger)
+	return nil
+}
+
+// adaptFleetReaderFactory adapts a fleet.ReaderFactory (client.Reader) into a
+// tools.ResourceReaderFactory (dynamic-style ResourceReader) so kubectl_get/
+// kubectl_list can consume BR-FLEET-054 remote cluster reads. Only ever
+// invoked with a non-empty clusterID: AF's kubectl tools call the local
+// dynamic client directly for local reads (see tools.NewKubectlGetTool).
+func adaptFleetReaderFactory(rf fleet.ReaderFactory) tools.ResourceReaderFactory {
+	return func(ctx context.Context, clusterID string) (tools.ResourceReader, error) {
+		r, err := rf.ReaderFor(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return &tools.ClientResourceReader{Reader: r}, nil
+	}
+}
+
+// newLLMTriagerFromConfig creates a provider-aware LLMTriager based on the resolved
+// LLM configuration. Routes by provider + model family:
+//   - vertex_ai + claude-* model → AnthropicTriager (Anthropic SDK + Vertex)
+//   - vertex_ai + gemini-* model → GenAITriager (Google GenAI SDK)
+//   - vertex_ai + anything else → error (fail fast rather than silently
+//     defaulting to Gemini and failing later with a confusing SDK-level
+//     error; found in the #1778/#1792 GA readiness audit)
+//   - gemini → GenAITriager (Gemini API)
+//   - anthropic → AnthropicTriager (direct Anthropic API)
+//   - openai / openai_compatible → OpenAICompatibleTriager (shared openaicompat
+//     client — OpenAI, Azure OpenAI, vLLM, Ollama, LlamaStack, self-hosted; #1618)
+func newLLMTriagerFromConfig(ctx context.Context, llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	switch llmCfg.Provider {
+	case types.LLMProviderVertexAI:
+		if types.IsAnthropicModel(llmCfg.Model) {
+			return newAnthropicTriagerForVertex(ctx, llmCfg, logger)
+		}
+		if types.IsGeminiModel(llmCfg.Model) {
+			return newGenAITriagerForVertex(ctx, llmCfg, logger)
+		}
+		return nil, fmt.Errorf("vertex_ai: unrecognized model family for model %q (expected a claude-* or gemini-* model)", llmCfg.Model)
+	case types.LLMProviderGemini:
+		return newGenAITriagerForGemini(ctx, llmCfg, logger)
+	case types.LLMProviderAnthropic:
+		return newAnthropicTriagerDirect(ctx, llmCfg, logger)
+	case types.LLMProviderOpenAI, types.LLMProviderOpenAICompatible:
+		return newOpenAICompatibleTriager(llmCfg, logger) //nolint:contextcheck // LLM transport chain lazily builds an OAuth2 client-credentials token source shared across future requests
+	default:
+		return nil, fmt.Errorf("unsupported triage LLM provider: %q", llmCfg.Provider)
+	}
+}
+
+func newGenAITriagerForVertex(ctx context.Context, llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	// #1861 (main-line port of #1731/#1870): resolve explicit credentials
+	// from llmCfg.APIKey (the mounted credentials.json content, resolved
+	// generically by pkg/apifrontend/config's resolveLLMKey) rather than
+	// injecting GOOGLE_APPLICATION_CREDENTIALS -- mirroring
+	// launcher.newVertexGeminiModel's identical pattern for AF's own
+	// agent.llm connection. Lets severityTriage authenticate independently
+	// of AF's own connection even when both resolve to vertex_ai, which
+	// the now-removed DD-PLATFORM-007 fail() guard used to block.
+	cred, err := credentials.DetectDefault(&credentials.DetectOptions{
+		CredentialsJSON: bytes.TrimSpace([]byte(llmCfg.APIKey)),
+		Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("vertex_ai GenAI triager: resolving credentials: %w", err)
+	}
+	clientCfg := &genai.ClientConfig{
+		Project:     llmCfg.VertexProject,
+		Location:    llmCfg.VertexLocation,
+		Backend:     genai.BackendVertexAI,
+		Credentials: cred,
+	}
+	if llmCfg.Endpoint != "" {
+		clientCfg.HTTPOptions = genai.HTTPOptions{BaseURL: llmCfg.Endpoint}
+	}
+	client, err := genai.NewClient(ctx, clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("vertex_ai GenAI client: %w", err)
+	}
+	return severity.NewGenAITriager(severity.GenAITriagerConfig{
+		Client: client,
+		Model:  llmCfg.Model,
+		Logger: logger,
+	}), nil
+}
+
+func newGenAITriagerForGemini(ctx context.Context, llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	clientCfg := &genai.ClientConfig{
+		APIKey:  llmCfg.APIKey,
+		Backend: genai.BackendGeminiAPI,
+	}
+	if llmCfg.Endpoint != "" {
+		clientCfg.HTTPOptions = genai.HTTPOptions{BaseURL: llmCfg.Endpoint}
+	}
+	client, err := genai.NewClient(ctx, clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("gemini GenAI client: %w", err)
+	}
+	return severity.NewGenAITriager(severity.GenAITriagerConfig{
+		Client: client,
+		Model:  llmCfg.Model,
+		Logger: logger,
+	}), nil
+}
+
+func newAnthropicTriagerForVertex(ctx context.Context, llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	// #1861 (main-line port of #1731/#1870): severity.NewAnthropicVertexClient
+	// now accepts explicit credentials bytes via vertex.WithCredentials --
+	// contrary to this call site's prior assumption, anthropic-sdk-go's
+	// Vertex option isn't ambient-ADC-only. Pass llmCfg.APIKey through
+	// directly instead of injecting GOOGLE_APPLICATION_CREDENTIALS, letting
+	// severityTriage authenticate independently of AF's own agent.llm
+	// connection even when both resolve to vertex_ai.
+	client, err := severity.NewAnthropicVertexClient(ctx, llmCfg.VertexProject, llmCfg.VertexLocation, llmCfg.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("vertex_ai Anthropic client: %w", err)
+	}
+	return severity.NewAnthropicTriager(severity.AnthropicTriagerConfig{
+		Client: client,
+		Model:  llmCfg.Model,
+		Logger: logger,
+	}), nil
+}
+
+func newAnthropicTriagerDirect(_ context.Context, llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	client, err := severity.NewAnthropicDirectClient(llmCfg.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic direct client: %w", err)
+	}
+	return severity.NewAnthropicTriager(severity.AnthropicTriagerConfig{
+		Client: client,
+		Model:  llmCfg.Model,
+		Logger: logger,
+	}), nil
+}
+
+// newOpenAICompatibleTriager builds an LLMTriager backed by the shared
+// openaicompat client (#1618), reusing the same TLS/OAuth2/custom-header/
+// circuit-breaker transport chain as AF's main-agent OpenAI-compatible
+// model (launcher.BuildLLMHTTPClient) so severity triage gets identical
+// resilience/auth behavior to the agent it triages for.
+func newOpenAICompatibleTriager(llmCfg types.LLMConfig, logger logr.Logger) (severity.LLMTriager, error) {
+	httpClient, err := launcher.BuildLLMHTTPClient(llmCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP client: %w", err)
+	}
+
+	var opts []openaicompat.Option
+	if httpClient != nil {
+		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
+	}
+	if llmCfg.AzureAPIVersion != "" {
+		opts = append(opts, openaicompat.WithAzureAPIVersion(llmCfg.AzureAPIVersion))
+	}
+
+	client := openaicompat.New(llmCfg.Model, llmCfg.Endpoint, llmCfg.APIKey, opts...)
+	return severity.NewOpenAICompatibleTriager(severity.OpenAICompatibleTriagerConfig{
+		Client: client,
+		Model:  llmCfg.Model,
+		Logger: logger,
+	}), nil
+}
+
+// triageLLMSource returns a human-readable label indicating whether the triage
+// LLM config was explicitly set or inherited from the agent.
+func triageLLMSource(cfg *config.Config) string {
+	if cfg.SeverityTriage.LLM != nil {
+		return "severityTriage.llm (explicit)"
+	}
+	return "agent.llm (inherited)"
+}
+
+// buildResilientTransport wraps a base transport with retry + circuit breaker.
+// ConnectTimeout is applied via net.Dialer on the underlying http.Transport.
+// Returns the CB transport for health checking.
+func buildResilientTransport(base http.RoundTripper, depCfg *config.DependencyConfig, name string, reg *metrics.Registry, auditor audit.Emitter) *resilience.CircuitBreakerTransport {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if depCfg.ConnectTimeout > 0 {
+		if t, ok := base.(*http.Transport); ok {
+			t = t.Clone()
+			t.DialContext = (&net.Dialer{Timeout: depCfg.ConnectTimeout}).DialContext
+			base = t
+		}
+	}
+	retryRT := resilience.NewRetryTransport(base, &resilience.RetryConfig{
+		MaxAttempts:       depCfg.RetryMax + 1,
+		InitialBackoff:    depCfg.RetryInitBackoff,
+		MaxBackoff:        depCfg.RetryMaxBackoff,
+		RetryableStatuses: depCfg.RetryableStatuses,
+		DependencyName:    name,
+	})
+	cbMaxReqs := depCfg.CBMaxRequests
+	if cbMaxReqs == 0 {
+		cbMaxReqs = 1
+	}
+	cbInterval := depCfg.CBInterval
+	if cbInterval == 0 {
+		cbInterval = 30 * time.Second
+	}
+	cbTimeout := depCfg.CBTimeout
+	if cbTimeout == 0 {
+		cbTimeout = 10 * time.Second
+	}
+	cbFailureThreshold := depCfg.CBFailureThreshold
+	if cbFailureThreshold == 0 {
+		cbFailureThreshold = 5
+	}
+	cbt := resilience.NewCircuitBreakerTransport(retryRT, &resilience.CircuitBreakerConfig{
+		Name:             name,
+		DependencyName:   name,
+		MaxRequests:      cbMaxReqs,
+		Interval:         cbInterval,
+		Timeout:          cbTimeout,
+		FailureThreshold: cbFailureThreshold,
+		StateGauge:       reg.CircuitBreakerState,
+		DurationHist:     reg.DownstreamDuration,
+		AuditFunc:        resilience.CircuitBreakerAuditFunc(auditor),
+	})
+	return cbt
+}
+
+// bridgeMetricsFrom wires the global metrics registry counters into
+// the bridge metrics struct — single instances shared across the process.
+func bridgeMetricsFrom(reg *metrics.Registry) *handler.MCPBridgeMetrics {
+	return &handler.MCPBridgeMetrics{
+		ToolCallsTotal:   reg.ToolCallsTotal,
+		ToolCallDuration: reg.ToolCallDuration,
+	}
+}

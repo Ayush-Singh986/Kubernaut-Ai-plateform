@@ -1,0 +1,48 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: rollback-deployment-disabled-test-v1
+spec:
+  # Rollback Deployment Disabled Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: DataStorage E2E — 04_workflow_discovery_test.go (DD-HAPI-017)
+  # This workflow is created and then DISABLED via PATCH to test discovery exclusion
+  version: "1.0.0"
+  description:
+    what: "Rolls back a deployment (disabled variant for testing discovery exclusion)"
+    whenToUse: "For E2E testing of disabled workflow exclusion from discovery"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "Deployment has previous revisions available"
+  
+  actionType: RollbackDeployment
+  
+  labels:
+    severity: [high]
+    environment: [production, staging, test]
+    component: [apps/v1/Deployment]
+    priority: P1
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace containing the deployment"
+    - name: DEPLOYMENT_NAME
+      type: string
+      required: true
+      description: "Name of the deployment to roll back"

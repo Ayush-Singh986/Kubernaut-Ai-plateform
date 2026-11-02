@@ -1,0 +1,928 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tools_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/a2aproject/a2a-go/a2a"
+	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	sharedK8s "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+)
+
+const investigationSummarySchema = "investigation_summary"
+
+var _ = Describe("HandleInvestigationMCPWithRegistry — wiring audit (WIRE-C01/C02/C03)", func() {
+
+	Describe("WIRE-C01: investigate auto-RR path uses triager for severity", func() {
+		It("UT-AF-WIRE-C01: RR created by investigate uses triaged severity, not default medium", func() {
+			origTimeout := tools.AwaitSessionTimeout
+			tools.AwaitSessionTimeout = 10 * time.Millisecond
+			defer func() { tools.AwaitSessionTimeout = origTimeout }()
+
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, args ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					Expect(args.RRID).NotTo(BeEmpty())
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-wire-c01",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{
+					{
+						State: "firing",
+						Labels: map[string]string{
+							"alertname": "KubePodCrashLooping",
+							"severity":  "critical",
+							"namespace": "prod",
+							"kind":      "Deployment",
+							"name":      "web-app",
+							"cluster":   hubClusterID,
+						},
+					},
+				},
+			}
+
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+
+			ctx, cancel := context.WithTimeout(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "alice",
+					Groups:   []string{"sre"},
+				}),
+				10*time.Second,
+			)
+			defer cancel()
+
+			tc := newTypedClientForInvestigate()
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:    mockMCP,
+					Client:       tc,
+					Namespace:    "kubernaut-system",
+					Triager:      triager,
+					ScopeChecker: testAlwaysManagedScopeChecker(),
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app",
+					ClusterID:  hubClusterID,
+				},
+				true, "",
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RRID).NotTo(BeEmpty())
+
+			created := verifyTypedRR(tc, "kubernaut-system", result.RRID)
+			Expect(created.Spec.Severity).To(Equal("critical"), "investigate path should use triaged severity from Prometheus alert, not default 'medium'")
+		})
+
+		// BR-FLEET-054 / BR-INTEGRATION-065: FedRAMP AU-3/AC-4/SC-7/SI-4 and
+		// OWASP ASVS V4 require server-side cluster attribution at the AF entry point.
+		It("IT-AF-2394-006: investigate passes cluster_id into Prometheus triage before creating the RR", func() {
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, args ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					Expect(args.RRID).NotTo(BeEmpty())
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-wire-c01-fleet",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{
+					{State: "firing", Labels: map[string]string{
+						"alertname": "OtherClusterAlert", "severity": "critical", "namespace": "prod",
+						"kind": "Deployment", "name": "fleet-web", "cluster": "other-cluster",
+					}},
+					{State: "firing", Labels: map[string]string{
+						"alertname": "TargetClusterAlert", "severity": "warning", "namespace": "prod",
+						"kind": "Deployment", "name": "fleet-web", "cluster": "remote-cluster",
+					}},
+				},
+			}
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+
+			ctx, cancel := context.WithTimeout(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "alice",
+					Groups:   []string{"sre"},
+				}),
+				10*time.Second,
+			)
+			defer cancel()
+
+			tc := newTypedClientForInvestigate()
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:     mockMCP,
+					Client:        tc,
+					Namespace:     "kubernaut-system",
+					Triager:       triager,
+					ScopeChecker:  testAlwaysManagedScopeChecker(),
+					ClusterLister: stubClusterLister{ids: []string{hubClusterID, "remote-cluster"}},
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "fleet-web",
+					ClusterID:  "remote-cluster",
+				},
+				true, "alice",
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			created := verifyTypedRR(tc, "kubernaut-system", result.RRID)
+			Expect(created.Spec.SignalName).To(Equal("TargetClusterAlert"))
+			Expect(created.Spec.Severity).To(Equal("warning"))
+		})
+	})
+
+	Describe("WIRE-C02: investigate preserves grounded Kubernetes event signals", func() {
+		It("UT-AF-2390-001: fleet-mode investigation does not derive signals from hub-local events (BR-FLEET-054)", func() {
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, args ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					Expect(args.RRID).NotTo(BeEmpty())
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-wire-c02",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+
+			ctx, cancel := context.WithTimeout(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "alice",
+					Groups:   []string{"sre"},
+				}),
+				10*time.Second,
+			)
+			defer cancel()
+
+			tc := newTypedClientForInvestigate()
+			dc := newDynEventClient(newUnstructuredEventWithType(
+				"prod", "ev-gitops-2390", "GitOpsDrift2390", "synthetic drift",
+				"Deployment", "web-app-2390", "Warning",
+			))
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:     mockMCP,
+					Client:        tc,
+					DynClient:     dc,
+					Namespace:     "kubernaut-system",
+					Triager:       unnamedAlertTestTriager("prod", "Deployment", "web-app-2390"),
+					ScopeChecker:  testAlwaysManagedScopeChecker(),
+					ClusterLister: stubClusterLister{ids: []string{hubClusterID, "remote-cluster"}},
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app-2390",
+					ClusterID:  hubClusterID,
+				},
+				true, "alice",
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			created := verifyTypedRR(tc, "kubernaut-system", result.RRID)
+			Expect(created.Spec.SignalName).To(Equal("unknown"),
+				"cluster-attributed investigations must not read hub-local events directly")
+		})
+
+		It("UT-AF-2390-002: fleet investigation does not use hub-local Kubernetes Events as its signal (BR-FLEET-054)", func() {
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, args ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					Expect(args.RRID).NotTo(BeEmpty())
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-wire-c02-fleet",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+
+			ctx, cancel := context.WithTimeout(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "alice",
+					Groups:   []string{"sre"},
+				}),
+				10*time.Second,
+			)
+			defer cancel()
+
+			tc := newTypedClientForInvestigate()
+			dc := newDynEventClient(newUnstructuredEventWithType(
+				"prod", "ev-gitops-2390-fleet", "GitOpsDrift2390", "synthetic drift",
+				"Deployment", "web-app-2390-fleet", "Warning",
+			))
+			triager := severity.NewTriager(&mockPromClientForWiring{
+				alerts: []prom.Alert{{
+					State: "firing",
+					Labels: map[string]string{
+						"severity": "warning", "namespace": "prod", "kind": "Deployment",
+						"name": "web-app-2390-fleet", "cluster": "remote-cluster",
+					},
+				}},
+			}, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:     mockMCP,
+					Client:        tc,
+					DynClient:     dc,
+					Namespace:     "kubernaut-system",
+					Triager:       triager,
+					ScopeChecker:  testAlwaysManagedScopeChecker(),
+					ClusterLister: stubClusterLister{ids: []string{hubClusterID, "remote-cluster"}},
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app-2390-fleet",
+					ClusterID:  "remote-cluster",
+				},
+				true, "alice",
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			created := verifyTypedRR(tc, "kubernaut-system", result.RRID)
+			Expect(created.Spec.SignalName).To(Equal("unknown"),
+				"fleet-created RR must not attribute a hub-local Kubernetes Event to a remote cluster")
+		})
+	})
+
+	Describe("WIRE-C03: triager audit event emission", func() {
+		It("UT-AF-WIRE-C03: triager constructed with WithAuditor emits severity event", func() {
+			spy := &auditSpy{}
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{
+					{
+						State:  "firing",
+						Labels: map[string]string{"alertname": "HighCPU", "severity": "warning", "namespace": "prod", "kind": "Deployment", "name": "api", "cluster": hubClusterID},
+					},
+				},
+			}
+
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard(),
+				severity.WithAuditor(spy))
+
+			_, err := triager.Triage(context.Background(), severity.TriageInput{
+				Namespace: "prod",
+				Kind:      "Deployment",
+				Name:      "api",
+				ClusterID: hubClusterID,
+				Labels:    map[string]string{"namespace": "prod", "kind": "Deployment", "name": "api"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(spy.events).NotTo(BeEmpty(), "triager with WithAuditor must emit audit events")
+		})
+	})
+})
+
+var _ = Describe("kubectl_get — RESTMapper wiring (WIRE-C04)", func() {
+	Describe("WIRE-C04: CRD kind resolution requires mapper", func() {
+		It("UT-AF-WIRE-C04: custom CRD kind resolves when RESTMapper is provided", func() {
+			mapper := apimeta.NewDefaultRESTMapper([]schema.GroupVersion{
+				{Group: "route.openshift.io", Version: "v1"},
+			})
+			mapper.Add(schema.GroupVersionKind{
+				Group: "route.openshift.io", Version: "v1", Kind: "Route",
+			}, apimeta.RESTScopeNamespace)
+
+			gvk, err := sharedK8s.ResolveGVKForKind(mapper, "Route")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gvk.Kind).To(Equal("Route"))
+			Expect(gvk.Group).To(Equal("route.openshift.io"))
+		})
+
+		It("UT-AF-WIRE-C04-neg: custom CRD kind fails without mapper (nil)", func() {
+			_, err := sharedK8s.ResolveGVKForKind(nil, "Route")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot resolve GVK"))
+		})
+	})
+})
+
+var _ = Describe("DS tool nil guard (WIRE-C05)", func() {
+	Describe("WIRE-C05: DS handlers return error when client is nil", func() {
+		It("UT-AF-WIRE-C05-list-workflows: HandleListWorkflowsKA errors when KA MCP client is nil", func() {
+			// #1677 Phase 2g (DD-WORKFLOW-019): kubernaut_list_workflows is now
+			// KA-backed (HandleListWorkflowsKA, ka_tools.go), not DS-backed --
+			// the nil-guard check moved off ds.Client/ErrDSUnavailable onto
+			// ka.MCPClient with its own error message.
+			_, err := tools.HandleListWorkflowsKA(context.Background(), nil, tools.ListWorkflowsArgs{})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("MCP client not configured"))
+		})
+
+		It("UT-AF-WIRE-C05-history: HandleGetRemediationHistory returns ErrDSUnavailable", func() {
+			_, err := tools.HandleGetRemediationHistory(context.Background(), nil, tools.GetRemediationHistoryArgs{})
+			Expect(err).To(MatchError(tools.ErrDSUnavailable))
+		})
+
+		It("UT-AF-WIRE-C05-effectiveness: HandleGetEffectiveness returns ErrDSUnavailable", func() {
+			_, err := tools.HandleGetEffectiveness(context.Background(), nil, tools.GetEffectivenessArgs{})
+			Expect(err).To(MatchError(tools.ErrDSUnavailable))
+		})
+
+		It("UT-AF-WIRE-C05-audit-trail: HandleGetAuditTrail returns ErrDSUnavailable", func() {
+			_, err := tools.HandleGetAuditTrail(context.Background(), nil, tools.GetAuditTrailArgs{})
+			Expect(err).To(MatchError(tools.ErrDSUnavailable))
+		})
+	})
+})
+
+var _ = Describe("HandleInvestigationMCPWithRegistry — session_active structured result (WIRE-SESSION)", func() {
+
+	Describe("WIRE-SESSION: session_active error from StartInvestigation returns structured result", func() {
+		It("UT-AF-WIRE-SESSION-001: returns InvestigateMCPResult with status=session_active and err=nil", func() {
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					return nil, fmt.Errorf("kubernaut_investigate start_autonomous: session_active: You already have an active session for this investigation; use action=reconnect to rejoin (map[driver:admin session_id:sess-123])")
+				},
+			}
+
+			ctx := auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+				Username: "admin",
+				Groups:   []string{"sre"},
+			})
+
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient: mockMCP,
+					Namespace: "kubernaut-system",
+				}, tools.InvestigateMCPArgs{RRID: "rr-session-001"},
+				true, "admin",
+			)
+			Expect(err).NotTo(HaveOccurred(), "session_active should not propagate as Go error")
+			Expect(result.Status).To(Equal("session_active"))
+			Expect(result.RRID).To(Equal("rr-session-001"))
+		})
+
+		It("UT-AF-WIRE-SESSION-002: structured result Error field contains driver name", func() {
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					return nil, fmt.Errorf("kubernaut_investigate start_autonomous: session_active: Investigation is being driven by another user (map[driver:bob@example.com])")
+				},
+			}
+
+			ctx := auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+				Username: "alice",
+				Groups:   []string{"sre"},
+			})
+
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient: mockMCP,
+					Namespace: "kubernaut-system",
+				}, tools.InvestigateMCPArgs{RRID: "rr-session-002"},
+				true, "alice",
+			)
+			Expect(err).NotTo(HaveOccurred(), "session_active should not propagate as Go error")
+			Expect(result.Error).NotTo(BeEmpty(), "Error field must provide actionable guidance")
+			Expect(result.Error).To(ContainSubstring("bob@example.com"), "Error field must include the driver name")
+		})
+
+		It("UT-AF-WIRE-SESSION-003: session_active emits status-only guidance without a synthetic RCA (#1922)", func() {
+			origTimeout := tools.AwaitSessionTimeout
+			tools.AwaitSessionTimeout = 10 * time.Millisecond
+			defer func() { tools.AwaitSessionTimeout = origTimeout }()
+
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{
+					{
+						State: "firing",
+						Labels: map[string]string{
+							"alertname": "KubePodCrashLooping",
+							"severity":  "critical",
+							"namespace": "prod",
+							"kind":      "Deployment",
+							"name":      "web-app-1922",
+							"cluster":   hubClusterID,
+						},
+					},
+				},
+			}
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					return nil, fmt.Errorf("kubernaut_investigate start_autonomous: session_active: You already have an active session for this investigation; use action=reconnect to rejoin (map[driver:admin session_id:sess-1922])")
+				},
+			}
+
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "bob",
+					Groups:   []string{"sre"},
+				}),
+				queue, "task-1922-session", "ctx-1922-session", nil,
+			)
+
+			tc := newTypedClientForInvestigate()
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:    mockMCP,
+					Client:       tc,
+					Namespace:    "kubernaut-system",
+					Triager:      triager,
+					ScopeChecker: testAlwaysManagedScopeChecker()}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app-1922",
+					ClusterID:  hubClusterID,
+				},
+				true, "bob",
+			)
+			Expect(err).NotTo(HaveOccurred(), "session_active should not propagate as Go error")
+			Expect(result.Status).To(Equal("session_active"))
+			Expect(result.RCA).To(BeNil(), "session_active must not fabricate an RCA for the rejected caller")
+			Expect(statusTextsFrom(queue)).To(ContainElement(ContainSubstring("already in progress")),
+				"BR-INTERACTIVE-004: rejected callers must receive visible status guidance")
+			Expect(statusTextsFrom(queue)).To(ContainElement(ContainSubstring("critical")),
+				"grounded severity may be included in status guidance, but not as an RCA confidence")
+		})
+
+		It("IT-AF-1922-004: an active-driver status preflight returns status-only guidance before readiness waits", func() {
+			origTimeout := tools.AwaitSessionTimeout
+			tools.AwaitSessionTimeout = 10 * time.Second
+			defer func() { tools.AwaitSessionTimeout = origTimeout }()
+
+			startCalls := 0
+			mockMCP := &ka.MockMCPClient{
+				InvokeActionFn: func(_ context.Context, args ka.InvokeActionArgs) (*ka.InvokeActionResult, error) {
+					Expect(args.RRID).NotTo(BeEmpty())
+					Expect(args.Action).To(Equal("status"))
+					return &ka.InvokeActionResult{
+						Status:   "status",
+						Response: `{"rr_id":"rr-1922-fast","mode":"interactive"}`,
+					}, nil
+				},
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					startCalls++
+					Fail("active-driver preflight must reject before StartInvestigation and readiness waits")
+					return nil, nil
+				},
+			}
+
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{{
+					State: "firing",
+					Labels: map[string]string{
+						"alertname": "KubePodCrashLooping",
+						"severity":  "critical",
+						"namespace": "prod",
+						"kind":      "Deployment",
+						"name":      "web-app-1922-fast",
+						"cluster":   hubClusterID,
+					},
+				}},
+			}
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "bob",
+					Groups:   []string{"sre"},
+				}),
+				queue, "task-1922-fast", "ctx-1922-fast", nil,
+			)
+
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:    mockMCP,
+					Client:       newTypedClientForInvestigate(),
+					Namespace:    "kubernaut-system",
+					Triager:      triager,
+					ScopeChecker: testAlwaysManagedScopeChecker(),
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app-1922-fast",
+					ClusterID:  hubClusterID,
+				},
+				true, "bob",
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal("session_active"))
+			Expect(startCalls).To(Equal(0), "known active ownership must be rejected before action=start")
+
+			Expect(result.RCA).To(BeNil(), "preflight rejection must not fabricate an RCA")
+			Expect(statusTextsFrom(queue)).To(ContainElement(ContainSubstring("already in progress")),
+				"the preflight rejection must emit visible status guidance")
+		})
+
+		It("UT-AF-1922-005: autonomous status continues through the normal takeover/start path", func() {
+			startCalls := 0
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+			mockMCP := &ka.MockMCPClient{
+				InvokeActionFn: func(_ context.Context, args ka.InvokeActionArgs) (*ka.InvokeActionResult, error) {
+					Expect(args.Action).To(Equal("status"))
+					return &ka.InvokeActionResult{
+						Status:   "status",
+						Response: `{"rr_id":"rr-1922-autonomous","mode":"autonomous"}`,
+					}, nil
+				},
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					startCalls++
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-1922-autonomous",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+
+			ctx := auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+				Username: "bob",
+				Groups:   []string{"sre"},
+			})
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{MCPClient: mockMCP},
+				tools.InvestigateMCPArgs{RRID: "rr-1922-autonomous"},
+				false, "bob",
+			)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).To(Equal("started"))
+			Expect(startCalls).To(Equal(1), "autonomous investigations must retain the existing takeover/start path")
+		})
+
+		It("UT-AF-WIRE-SESSION-004: no-RCA outcome emits severity-only status without a synthetic artifact", func() {
+			origTimeout := tools.AwaitSessionTimeout
+			tools.AwaitSessionTimeout = 10 * time.Millisecond
+			defer func() { tools.AwaitSessionTimeout = origTimeout }()
+
+			eventCh := make(chan ka.InvestigationEvent)
+			close(eventCh)
+			mockMCP := &ka.MockMCPClient{
+				StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+					return &ka.StartInvestigationResult{
+						SessionID: "sess-1922-no-rca",
+						Status:    "started",
+						Events:    eventCh,
+						Closer:    func() {},
+					}, nil
+				},
+			}
+			mockProm := &mockPromClientForWiring{
+				alerts: []prom.Alert{{
+					State: "firing",
+					Labels: map[string]string{
+						"alertname": "KubePodCrashLooping",
+						"severity":  "critical",
+						"namespace": "prod",
+						"kind":      "Deployment",
+						"name":      "web-app-1922-no-rca",
+						"cluster":   hubClusterID,
+					},
+				}},
+			}
+			triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+			queue := &bridgeQueue{}
+			ctx := launcher.WithEventBridge(
+				auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+					Username: "alice",
+					Groups:   []string{"sre"},
+				}),
+				queue, "task-1922-no-rca", "ctx-1922-no-rca", nil,
+			)
+
+			result, err := tools.HandleInvestigationMCPWithRegistry(
+				ctx, &tools.InvestigateConfig{
+					MCPClient:    mockMCP,
+					Client:       newTypedClientForInvestigate(),
+					Namespace:    "kubernaut-system",
+					Triager:      triager,
+					ScopeChecker: testAlwaysManagedScopeChecker(),
+				}, tools.InvestigateMCPArgs{
+					APIVersion: "apps/v1",
+					Namespace:  "prod",
+					Kind:       "Deployment",
+					Name:       "web-app-1922-no-rca",
+					ClusterID:  hubClusterID,
+				},
+				true, "alice",
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RCA).To(BeNil(), "no-RCA outcome must not fabricate an RCA")
+			Expect(result.Summary).To(BeEmpty(), "no-RCA outcome must remain ungrounded in the tool result")
+			Expect(statusTextsFrom(queue)).To(ContainElement(ContainSubstring("No root-cause findings are available yet")),
+				"no-RCA outcome must emit visible status guidance")
+			for _, evt := range queue.Events() {
+				if statusEvt, ok := evt.(*a2a.TaskStatusUpdateEvent); ok {
+					Expect(statusEvt.Metadata).NotTo(HaveKey("schema"),
+						"status-only outcome must not emit an early_rca decision schema")
+				}
+				if artifactEvt, ok := evt.(*a2a.TaskArtifactUpdateEvent); ok {
+					Expect(artifactEvt.Artifact.Metadata["schema"]).NotTo(Equal(investigationSummarySchema),
+						"status-only outcome must not emit an investigation_summary artifact")
+				}
+			}
+		})
+	})
+})
+
+// =============================================================================
+// Issue #2247: investigation_summary must be emitted for genuinely-completed
+// investigations while no-RCA outcomes remain status-only.
+//
+// Root cause: runBlockingInvestigation only emitted the investigation_summary
+// (schema=investigation_summary) when the KA bridge produced NO rca at all
+// (rca == nil). When KA's investigation genuinely completes with a real RCA
+// (EventTypeComplete carrying a non-empty Severity), captureCompleteEventRCA
+// emits an early_rca decision event but runBlockingInvestigation's artifact
+// block was skipped entirely (its condition requires rca == nil), so the
+// SI-10-required investigation_summary artifact was never produced for the
+// success path -- confirmed via live E2E repro (helios08, #2247 RCA comment).
+// =============================================================================
+
+var _ = Describe("HandleInvestigationMCPWithRegistry — investigation_summary on genuine completion (#2247)", func() {
+
+	It("UT-AF-WIRE-2247-001: SI-10 investigation_summary artifact is emitted when KA completes with a real RCA", func() {
+		origTimeout := tools.AwaitSessionTimeout
+		tools.AwaitSessionTimeout = 10 * time.Millisecond
+		defer func() { tools.AwaitSessionTimeout = origTimeout }()
+
+		rcaPayload := map[string]interface{}{
+			"severity":         "critical",
+			"confidence":       0.92,
+			"causal_chain":     []string{"Memory leak", "OOMKill"},
+			"target":           "Deployment/worker in production",
+			"rca_summary":      "OOMKill caused by memory leak",
+			"total_llm_turns":  17,
+			"total_tool_calls": 19,
+		}
+		rcaJSON, err := json.Marshal(rcaPayload)
+		Expect(err).NotTo(HaveOccurred())
+
+		eventCh := make(chan ka.InvestigationEvent, 1)
+		eventCh <- ka.InvestigationEvent{Type: ka.EventTypeComplete, Data: rcaJSON}
+		close(eventCh)
+
+		mockMCP := &ka.MockMCPClient{
+			StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+				return &ka.StartInvestigationResult{
+					SessionID: "sess-2247-001",
+					Status:    "started",
+					Events:    eventCh,
+					Closer:    func() {},
+				}, nil
+			},
+		}
+
+		// Severity triage (rrSeverity="warning") deliberately differs from
+		// KA's own RCA severity ("critical") below, so the assertion that
+		// the emitted artifact carries "critical" proves the fix uses KA's
+		// real RCA -- not the rrSeverity-only status outcome -- when
+		// both are available (mirrors the live #2247 repro's RR.spec.severity
+		// of "warning" while KA's investigation concluded a distinct finding).
+		mockProm := &mockPromClientForWiring{
+			alerts: []prom.Alert{
+				{
+					State: "firing",
+					Labels: map[string]string{
+						"alertname": "HighCPU",
+						"severity":  "warning",
+						"namespace": "prod",
+						"kind":      "Deployment",
+						"name":      "worker-2247",
+						"cluster":   hubClusterID,
+					},
+				},
+			},
+		}
+		triager := severity.NewTriager(mockProm, &noopLLMForWiring{}, severity.DefaultConfig(), logr.Discard())
+
+		queue := &bridgeQueue{}
+		ctx := launcher.WithEventBridge(
+			auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+				Username: "alice",
+				Groups:   []string{"sre"},
+			}),
+			queue, "task-2247-001", "ctx-2247-001", nil,
+		)
+
+		tc := newTypedClientForInvestigate()
+		result, err := tools.HandleInvestigationMCPWithRegistry(
+			ctx, &tools.InvestigateConfig{
+				MCPClient:    mockMCP,
+				Client:       tc,
+				Namespace:    "kubernaut-system",
+				Triager:      triager,
+				ScopeChecker: testAlwaysManagedScopeChecker()}, tools.InvestigateMCPArgs{
+				APIVersion: "apps/v1",
+				Namespace:  "prod",
+				Kind:       "Deployment",
+				Name:       "worker-2247",
+				ClusterID:  hubClusterID,
+			},
+			true, "alice",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RRID).NotTo(BeEmpty())
+
+		var artifactEvt *a2a.TaskArtifactUpdateEvent
+		for _, evt := range queue.Events() {
+			if art, ok := evt.(*a2a.TaskArtifactUpdateEvent); ok {
+				if schema, _ := art.Artifact.Metadata["schema"].(string); schema == investigationSummarySchema {
+					artifactEvt = art
+					break
+				}
+			}
+		}
+		Expect(artifactEvt).NotTo(BeNil(),
+			"SI-10: a genuinely-completed investigation (real RCA from KA) must still emit an investigation_summary artifact, not just early_rca (#2247)")
+
+		dp, ok := artifactEvt.Artifact.Parts[0].(a2a.DataPart)
+		Expect(ok).To(BeTrue(), "artifact must carry a DataPart")
+		Expect(dp.Data).To(HaveKey("summary"), "SI-10: investigation_summary must include summary field")
+		rcaData, ok := dp.Data["rca"].(map[string]any)
+		Expect(ok).To(BeTrue(), "artifact data must include an rca object")
+		Expect(rcaData["severity"]).To(Equal("critical"), "investigation_summary must carry KA's real RCA severity, not a synthesized one")
+		causalChain, ok := rcaData["causal_chain"].([]string)
+		Expect(ok).To(BeTrue())
+		Expect(causalChain).To(ConsistOf("Memory leak", "OOMKill"),
+			"investigation_summary must carry KA's real causal_chain")
+	})
+})
+
+var _ = Describe("mcpClient nil guard (WIRE-W04)", func() {
+	Describe("WIRE-W04: HandleInvestigationMCPWithRegistry rejects nil mcpClient", func() {
+		It("UT-AF-WIRE-W04: returns error when mcpClient is nil", func() {
+			_, err := tools.HandleInvestigationMCPWithRegistry(
+				context.Background(), &tools.InvestigateConfig{
+					Namespace: "ns",
+				}, tools.InvestigateMCPArgs{RRID: "rr-test"},
+				false, "",
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("KA MCP client unavailable"))
+		})
+	})
+})
+
+type mockPromClientForWiring struct {
+	alerts []prom.Alert
+}
+
+func (m *mockPromClientForWiring) GetAlerts(_ context.Context) ([]prom.Alert, error) {
+	return m.alerts, nil
+}
+
+func (m *mockPromClientForWiring) GetRules(_ context.Context) ([]prom.RuleGroup, error) {
+	return nil, nil
+}
+
+func (m *mockPromClientForWiring) InstantQuery(_ context.Context, _ string) (*prom.QueryResult, error) {
+	return &prom.QueryResult{}, nil
+}
+
+type noopLLMForWiring struct{}
+
+func (n *noopLLMForWiring) TriageWithRules(_ context.Context, _ []prom.Rule, _ severity.TriageInput) (severity.TriageResult, error) {
+	return severity.TriageResult{Severity: "warning", Source: severity.SourceLLMTriage}, nil
+}
+
+type auditSpy struct {
+	events []*audit.Event
+}
+
+func (a *auditSpy) Emit(_ context.Context, e *audit.Event) {
+	a.events = append(a.events, e)
+}
+
+// =============================================================================
+// Issue #1407: Progressive RCA Emission — IT proving wiring through production path
+// =============================================================================
+
+var _ = Describe("Progressive RCA Emission Wiring — #1407", func() {
+
+	It("IT-AF-1407-001: SI-4 early RCA decision event flows through EventBridge on investigation complete", func() {
+		rcaJSON := []byte(`{"severity":"critical","confidence":0.92,"causal_chain":["Memory leak","OOMKill"],"target":"Deployment/worker in production","rca_summary":"OOMKill caused by memory leak","total_llm_turns":17,"total_tool_calls":19}`)
+		eventCh := make(chan ka.InvestigationEvent, 5)
+		eventCh <- ka.InvestigationEvent{
+			Type: ka.EventTypeComplete,
+			Data: rcaJSON,
+		}
+		close(eventCh)
+
+		mockMCP := &ka.MockMCPClient{
+			StartInvestigationFn: func(_ context.Context, _ ka.StartInvestigationArgs) (*ka.StartInvestigationResult, error) {
+				return &ka.StartInvestigationResult{
+					SessionID: "sess-1407-it",
+					Status:    "started",
+					Events:    eventCh,
+					Closer:    func() {},
+				}, nil
+			},
+		}
+
+		queue := &bridgeQueue{}
+		ctx := launcher.WithEventBridge(
+			auth.WithUserIdentity(context.Background(), &auth.UserIdentity{
+				Username: "alice",
+				Groups:   []string{"sre"},
+			}),
+			queue, "task-1407-it", "ctx-1407-it", nil,
+		)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		result, err := tools.HandleInvestigationMCPWithRegistry(
+			ctx, &tools.InvestigateConfig{
+				MCPClient: mockMCP,
+			}, tools.InvestigateMCPArgs{RRID: "rr-1407-test"},
+			true, "alice",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RCA).NotTo(BeNil(), "RCA must be populated from investigation complete event")
+		Expect(result.RCA.Severity).To(Equal("critical"))
+
+		allEvents := queue.Events()
+		var decisionFound bool
+		for _, evt := range allEvents {
+			statusEvt, ok := evt.(*a2a.TaskStatusUpdateEvent)
+			if !ok {
+				continue
+			}
+			if statusEvt.Metadata == nil {
+				continue
+			}
+			metaType, _ := statusEvt.Metadata["type"].(string)
+			if metaType == launcher.MetaTypeDecision {
+				decisionFound = true
+				Expect(statusEvt.Metadata["schema"]).To(Equal("early_rca"),
+					"SI-4: schema must classify early RCA for audit differentiation")
+				Expect(statusEvt.Metadata["schema_version"]).To(Equal("1.0"))
+				tp, ok := statusEvt.Status.Message.Parts[0].(a2a.TextPart)
+				Expect(ok).To(BeTrue())
+				Expect(tp.Text).To(ContainSubstring("critical"),
+					"AU-3: severity must appear in structured text for audit trail")
+				break
+			}
+		}
+		Expect(decisionFound).To(BeTrue(),
+			"IT-AF-1407-001: early RCA decision status-update must flow through production EventBridge wiring")
+	})
+})

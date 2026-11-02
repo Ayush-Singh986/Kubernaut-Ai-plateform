@@ -1,0 +1,236 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package kubernautagent
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// E2E Observability Tests — BR-KA-OBSERVABILITY-001
+//
+// Validates that all PR10 Prometheus metrics (9 after pruning) are exposed
+// through the /metrics endpoint on the dedicated metrics port (kaMetricsURL)
+// after a real investigation flow in the Kind cluster.
+
+var _ = Describe("E2E-KA-OBS: Observability / Prometheus Metrics (BR-KA-OBSERVABILITY-001)", Label("e2e", "ka", "observability"), func() {
+
+	fetchMetrics := func() string {
+		resp, err := http.Get(kaMetricsURL + "/metrics")
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "metrics endpoint should be reachable")
+		defer func() { _ = resp.Body.Close() }()
+		ExpectWithOffset(1, resp.StatusCode).To(Equal(http.StatusOK))
+		body, err := io.ReadAll(resp.Body)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred())
+		return string(body)
+	}
+
+	triggerInvestigation := func(id string, signalName string) *agentsessionv1.AgentSessionResult {
+		spec := agentsessionv1.AgentSessionSpec{
+			RemediationRequestRef: agentsessionv1.ObjectRef{Name: "rem-obs-" + id, Namespace: sharedNamespace},
+			IncidentID:            id,
+			RemediationID:         "rem-obs-" + id,
+			SignalName:            signalName,
+			Severity:              "high",
+			SignalSource:          "kubernetes",
+			ResourceNamespace:     "production",
+			ResourceKind:          "Pod",
+			ResourceName:          "obs-test-pod",
+		}
+		// #2190: AgentSession CRD flow replaces sessionClient.Investigate().
+		result, err := infrastructure.InvestigateViaAgentSession(ctx, k8sClient, sharedNamespace, spec, 2*time.Minute)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "investigation should complete without error")
+		return result
+	}
+
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	// E2E-KA-OBS-001: All 9 metric families are exposed
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+	Context("E2E-KA-OBS-001: Metric families are exposed after investigation", func() {
+		It("all 9 metrics appear in /metrics after a completed investigation", func() {
+			By("Triggering an investigation to warm up metric paths")
+			result := triggerInvestigation("obs-001", "OOMKilled")
+			Expect(result).NotTo(BeNil())
+
+			// #2190: authz_denied_total was emitted by the retired HTTP
+			// handler's cross-user session-ownership check (no direct HTTP
+			// caller identity to compare against an AgentSession owner in
+			// the CRD model -- same reason E2E-KA-AUTHZ-001-style
+			// cross-user-authz tests have no CRD equivalent, see
+			// session_authz_test.go's removal). No longer asserted here.
+			//
+			// #2190: HTTPRequestDurationSeconds/HTTPRequestsInFlight are
+			// also dropped from this list -- triggerInvestigation() now
+			// creates the AgentSession directly against the K8s API
+			// (playing AA's role), generating zero HTTP traffic to KA's
+			// business surface. The metric + middleware are still valid
+			// production code (still wired for the MCP interactive HTTP
+			// route, see cmd/kubernautagent/routes.go), just never
+			// exercised by this autonomous/CRD-only trigger path -- unlike
+			// authz_denied_total, this isn't a retired feature, so the
+			// metric name itself stays; only the "must be sample-producing
+			// for this flow" expectation is removed (see E2E-KA-OBS-003's
+			// deletion below for the same reasoning).
+			By("Checking metric families are exposed")
+			allMetrics := []string{
+				metrics.MetricNameSessionsStartedTotal,
+				metrics.MetricNameSessionsCompletedTotal,
+				metrics.MetricNameSessionsActive,
+				metrics.MetricNameSessionDurationSeconds,
+				metrics.MetricNameAuditEventsEmittedTotal,
+			}
+			// http_rate_limited_total only appears as HELP when no 429 has occurred.
+			helpOnlyMetrics := []string{
+				metrics.MetricNameHTTPRateLimitedTotal,
+			}
+
+			Eventually(func() []string {
+				body := fetchMetrics()
+				var missing []string
+				for _, name := range allMetrics {
+					if !strings.Contains(body, name) {
+						missing = append(missing, name)
+					}
+				}
+				return missing
+			}, "30s", "2s").Should(BeEmpty(),
+				"all sample-producing metric families should be present")
+
+			body := fetchMetrics()
+			for _, name := range helpOnlyMetrics {
+				Expect(body).To(ContainSubstring("# HELP "+name),
+					fmt.Sprintf("%s should be registered (HELP line)", name))
+			}
+		})
+	})
+
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	// E2E-KA-OBS-002: Session lifecycle metrics have correct labels
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+	Context("E2E-KA-OBS-002: Session lifecycle labels", func() {
+		It("sessions_started_total has signal_name label from the incident", func() {
+			By("Triggering investigation with known signal_name")
+			triggerInvestigation("obs-002a", "OOMKilled")
+
+			By("Verifying signal_name label in /metrics output")
+			Eventually(func() bool {
+				body := fetchMetrics()
+				return strings.Contains(body, `signal_name="OOMKilled"`) &&
+					strings.Contains(body, metrics.MetricNameSessionsStartedTotal)
+			}, "15s", "2s").Should(BeTrue(),
+				"sessions_started_total should contain signal_name=\"OOMKilled\"")
+		})
+
+		It("sessions_completed_total has outcome label", func() {
+			By("Triggering investigation to completion")
+			triggerInvestigation("obs-002b", "OOMKilled")
+
+			By("Verifying outcome label in /metrics output")
+			Eventually(func() bool {
+				body := fetchMetrics()
+				return strings.Contains(body, metrics.MetricNameSessionsCompletedTotal+`{outcome=`)
+			}, "15s", "2s").Should(BeTrue(),
+				"sessions_completed_total should have outcome label")
+		})
+
+		It("session_duration_seconds has histogram buckets", func() {
+			By("Triggering investigation to generate duration observation")
+			triggerInvestigation("obs-002c", "OOMKilled")
+
+			By("Verifying histogram _bucket suffix in /metrics output")
+			Eventually(func() bool {
+				body := fetchMetrics()
+				return strings.Contains(body, metrics.MetricNameSessionDurationSeconds+"_bucket")
+			}, "15s", "2s").Should(BeTrue(),
+				"session_duration_seconds should expose histogram buckets")
+		})
+	})
+
+	// E2E-KA-OBS-003 ("HTTP request duration has method/endpoint/status
+	// labels") is deleted (issue #2190, DD-AA-KA-001): it asserted on HTTP
+	// traffic generated by triggerInvestigation() hitting KA's business
+	// API over HTTP with method=POST. That call site is now a direct
+	// AgentSession CRD Create against the K8s API -- no HTTP request to
+	// KA's business surface occurs at all for this trigger path, so the
+	// assertion is permanently unsatisfiable, not flaky. Same disposition
+	// as two other now-obsolete HTTP-only assertions removed in this same
+	// migration: the SSE / cross-user session-ownership specs deleted from
+	// the retired session_v15 E2E suite, and the authz_denied_total metric
+	// dropped from this file's own metric list above.
+
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	// E2E-KA-OBS-004: Audit events emitted metric increments
+	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+	Context("E2E-KA-OBS-004: Audit pipeline metrics", func() {
+		It("audit_events_emitted_total increments after investigation", func() {
+			By("Capturing baseline audit metric value sum")
+			baselineSum := sumMetricValues(fetchMetrics(), metrics.MetricNameAuditEventsEmittedTotal)
+
+			By("Triggering investigation to generate audit events")
+			triggerInvestigation("obs-004", "OOMKilled")
+
+			By("Verifying audit events emitted total increased")
+			Eventually(func() float64 {
+				return sumMetricValues(fetchMetrics(), metrics.MetricNameAuditEventsEmittedTotal)
+			}, "30s", "2s").Should(BeNumerically(">", baselineSum),
+				"audit_events_emitted_total sum should increase after investigation")
+		})
+	})
+})
+
+// sumMetricValues parses the Prometheus exposition text and sums all sample
+// values for the given metric name across all label combinations.
+// For example, given lines like:
+//
+//	aiagent_audit_events_emitted_total{event_type="aiagent.llm.request"} 5
+//	aiagent_audit_events_emitted_total{event_type="aiagent.llm.response"} 3
+//
+// it returns 8.0.
+func sumMetricValues(body, metricName string) float64 {
+	var total float64
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, metricName) {
+			continue
+		}
+		// Value is after the last space on the line.
+		idx := strings.LastIndex(line, " ")
+		if idx < 0 {
+			continue
+		}
+		if v, err := strconv.ParseFloat(strings.TrimSpace(line[idx+1:]), 64); err == nil {
+			total += v
+		}
+	}
+	return total
+}

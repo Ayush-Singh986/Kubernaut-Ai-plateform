@@ -1,0 +1,427 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package controller provides the Kubernetes controller for RemediationRequest CRDs.
+//
+// This file implements consecutive failure blocking logic per BR-ORCH-042.
+// When a signal fingerprint fails ≥3 consecutive times, RO holds the RR in a
+// non-terminal Blocked phase for a cooldown period before allowing retry.
+//
+// Business Requirements:
+// - BR-ORCH-042: Consecutive Failure Blocking with Automatic Cooldown
+// - BR-GATEWAY-185 v1.1: Field selector on spec.signalFingerprint (not labels)
+//
+// Design Decision:
+// - DD-GATEWAY-011 v1.3: Blocking logic moved from Gateway to RO
+//
+// TDD Implementation:
+// - RED: Tests in test/unit/remediationorchestrator/blocking_test.go
+// - GREEN: Constants + methods implementation
+// - Tests validated: Unit (constants), Integration (methods)
+package controller
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/config"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/helpers"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	"github.com/jordigilh/kubernaut/pkg/shared/events"
+)
+
+// ========================================
+// BLOCKING CONFIGURATION CONSTANTS
+// BR-GATEWAY-185 v1.1
+// Validated by: test/unit/remediationorchestrator/blocking_test.go
+// ========================================
+
+// FingerprintFieldIndex is the field index key for spec.signalFingerprint.
+// Used for O(1) lookups. Set up in SetupWithManager().
+// Reference: BR-GATEWAY-185 v1.1
+const FingerprintFieldIndex = "spec.signalFingerprint"
+
+// Issue #91: Field index for child CRD lookups by parent RemediationRequest name
+const RemediationRequestRefNameIndex = "spec.remediationRequestRef.name"
+
+// ========================================
+// BLOCKING LOGIC METHODS
+// Validated by: test/integration/remediationorchestrator/blocking_integration_test.go
+// ========================================
+
+// countConsecutiveFailures counts consecutive Failed RRs for a fingerprint.
+// It lists all RRs with the same fingerprint using field selector on
+// spec.signalFingerprint (immutable, full 64-char), sorts by creation time
+// (newest first), and counts consecutive Failed phases until it hits a
+// Completed or non-terminal phase.
+//
+// Reference: BR-ORCH-042.1, BR-GATEWAY-185 v1.1
+//
+// Returns 0 if:
+// - No RRs exist for fingerprint
+// - List operation fails (conservative - don't block on error)
+// - Most recent RR is Completed (reset counter)
+func (r *Reconciler) countConsecutiveFailures(ctx context.Context, fingerprint string) int {
+	logger := log.FromContext(ctx).WithValues("fingerprint", fingerprint)
+
+	// List all RRs with matching fingerprint using field selector
+	// BR-GATEWAY-185 v1.1: Use spec.signalFingerprint (immutable, 64 chars)
+	// NOT labels (mutable, truncated to 63 chars)
+	rrList := &remediationv1.RemediationRequestList{}
+	if err := r.client.List(ctx, rrList,
+		client.MatchingFields{FingerprintFieldIndex: fingerprint},
+	); err != nil {
+		logger.Error(err, "Failed to list RRs for consecutive failure count - assuming 0")
+		return 0 // Conservative: don't block on error
+	}
+
+	if len(rrList.Items) == 0 {
+		return 0
+	}
+
+	// Sort by creation timestamp, newest first (AC-042-1-3: chronological order)
+	sort.Slice(rrList.Items, func(i, j int) bool {
+		return rrList.Items[i].CreationTimestamp.After(rrList.Items[j].CreationTimestamp.Time)
+	})
+
+	consecutiveFailures := 0
+	for i := range rrList.Items {
+		rr := &rrList.Items[i]
+		switch rr.Status.OverallPhase {
+		case phase.Failed:
+			// Issue #190: Skip inherited/deduplicated failures — they don't represent
+			// actual remediation attempts and should not count toward blocking.
+			if rr.Status.EnsureCompletionStatus().FailurePhase != nil && *rr.Status.EnsureCompletionStatus().FailurePhase == remediationv1.FailurePhaseDeduplicated {
+				continue
+			}
+			consecutiveFailures++
+
+		case phase.Completed:
+			// Completed RR - success resets the counter (AC-042-1-2)
+			logger.V(1).Info("Found Completed RR, resetting failure count",
+				"consecutiveFailures", consecutiveFailures,
+				"completedRR", rr.Name,
+			)
+			return consecutiveFailures
+
+		case phase.Blocked:
+			// Blocked RR - skip (don't double-count the blocking trigger)
+			continue
+
+		case phase.Skipped:
+			// Skipped RR - not a remediation failure, skip
+			// Skipped means resource lock prevented execution, not remediation failure
+			continue
+
+		default:
+			// Active/in-progress phases - skip (not terminal)
+			continue
+		}
+	}
+
+	logger.V(1).Info("Counted consecutive failures",
+		"consecutiveFailures", consecutiveFailures,
+		"totalRRsChecked", len(rrList.Items),
+	)
+	return consecutiveFailures
+}
+
+// handleBlockedPhase is now handled by BlockedHandler via the phase registry.
+// See blocked_handler.go (Issue #666, TP-666-v1 §8.2).
+
+// createCooldownEscalationNotificationIfNeeded creates the escalation
+// notification for a cooldown-expired terminal failure (GAP-5 / #809,
+// BR-ORCH-036), skipping creation if a notification with the deterministic
+// name is already tracked (idempotency across reconciles). Extracted from
+// transitionToFailedTerminal (Wave 6 6e-i GREEN: nestif remediation) — pure
+// code motion, no behavior change.
+func (r *Reconciler) createCooldownEscalationNotificationIfNeeded(ctx context.Context, rr *remediationv1.RemediationRequest, failurePhase remediationv1.FailurePhase, failureReason string, logger logr.Logger) {
+	escalationNR := fmt.Sprintf("nr-escalation-%s", rr.Name)
+	if hasNotificationRef(rr, escalationNR) {
+		return
+	}
+
+	escCtx := &creator.EscalationContext{
+		FailurePhase:  string(failurePhase),
+		FailureReason: failureReason,
+		BlockReason:   string(rr.Status.GetRoutingStatus().BlockReason),
+		Message:       "Cooldown expired after blocking period",
+	}
+	notifName, notifErr := r.notificationCreator.CreateEscalationNotification(ctx, rr, escCtx)
+	if notifErr != nil {
+		logger.Error(notifErr, "Failed to create escalation notification for terminal failure (non-critical)")
+		return
+	}
+
+	logger.Info("Created escalation notification for terminal failure", "notification", notifName)
+	ref := r.buildNotificationRef(ctx, notifName, rr.Namespace)
+	if refErr := helpers.UpdateRemediationRequestStatus(ctx, r.client, rr, func(rr *remediationv1.RemediationRequest) error {
+		rr.Status.EnsureCompletionStatus().NotificationRequestRefs = append(rr.Status.EnsureCompletionStatus().NotificationRequestRefs, ref)
+		return nil
+	}); refErr != nil {
+		logger.Error(refErr, "Failed to persist escalation NR ref (non-critical)", "notification", notifName)
+	}
+	if r.Recorder != nil {
+		r.Recorder.Event(rr, corev1.EventTypeNormal, events.EventReasonNotificationCreated,
+			fmt.Sprintf("Escalation notification created: %s", notifName))
+	}
+}
+
+// transitionToFailedTerminal is the terminal Failed transition that skips blocking check.
+// Used when transitioning from Blocked after cooldown expiry.
+// This prevents infinite loops: Failed -> Blocked -> Failed -> Blocked...
+func (r *Reconciler) transitionToFailedTerminal(ctx context.Context, rr *remediationv1.RemediationRequest, failurePhase remediationv1.FailurePhase, failureErr error) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("remediationRequest", rr.Name)
+	startTime := rr.CreationTimestamp.Time
+
+	failureReason := ""
+	if failureErr != nil {
+		failureReason = failureErr.Error()
+	}
+
+	// GAP-5 / #809: Create escalation NR for cooldown-expired terminal failures (BR-ORCH-036).
+	r.createCooldownEscalationNotificationIfNeeded(ctx, rr, failurePhase, failureReason, logger)
+
+	// REFACTOR-RO-001: Using retry helper
+	err := helpers.UpdateRemediationRequestStatus(ctx, r.client, rr, func(rr *remediationv1.RemediationRequest) error {
+		rr.Status.OverallPhase = phase.Failed
+		completion := rr.Status.EnsureCompletionStatus()
+		completion.FailurePhase = &failurePhase
+		completion.FailureReason = &failureReason
+		// Clear blocking fields since we're transitioning to terminal
+		rr.Status.EnsureRoutingStatus().BlockedUntil = nil
+		// Keep BlockReason for audit trail
+
+		// BR-ORCH-043: Set Ready condition (terminal blocked)
+		remediationrequest.SetReady(rr, false, remediationrequest.ReasonRemediationBlocked, "Remediation blocked", r.Metrics)
+
+		return nil
+	})
+	if err != nil {
+		logger.Error(err, "Failed to transition to terminal Failed")
+		return ctrl.Result{}, fmt.Errorf("failed to transition to Failed: %w", err)
+	}
+
+	// Emit audit event (DD-AUDIT-003)
+	durationMs := time.Since(startTime).Milliseconds()
+	r.emitFailureAudit(ctx, rr, failurePhase, failureErr, durationMs)
+
+	logger.Info("Remediation failed (terminal)",
+		"failurePhase", failurePhase,
+		"reason", failureReason,
+	)
+	return ctrl.Result{}, nil
+}
+
+// handleUnmanagedResourceExpiry re-validates scope when an UnmanagedResource block expires.
+// If still unmanaged: re-block via handleBlocked (emits routing.blocked audit, updates status)
+//
+//	with incremented ConsecutiveFailureCount for backoff progression.
+//
+// If now managed: clear block fields, transition to Pending, emit phase transition audit.
+//
+// Reference: BR-SCOPE-010, ADR-053 (Resource Scope Management), Bug #266
+func (r *Reconciler) handleUnmanagedResourceExpiry(ctx context.Context, rr *remediationv1.RemediationRequest) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("remediationRequest", rr.Name)
+	logger.Info("UnmanagedResource block expired — re-validating scope")
+
+	blocked := r.routingEngine.CheckUnmanagedResource(ctx, rr)
+
+	if blocked != nil {
+		// Still unmanaged — increment failure count (persisted in status update) then re-block.
+		// ConsecutiveFailureCount drives backoff progression in CheckUnmanagedResource.
+		logger.Info("Resource still unmanaged — re-blocking with increased backoff",
+			"newBackoff", blocked.RequeueAfter)
+
+		// Persist the failure count increment first, then re-block via handleBlocked.
+		// handleBlocked's UpdateRemediationRequestStatus refetches the RR, so we must
+		// persist the increment in a separate update to avoid it being lost.
+		err := helpers.UpdateRemediationRequestStatus(ctx, r.client, rr, func(rr *remediationv1.RemediationRequest) error {
+			rr.Status.EnsureRoutingStatus().ConsecutiveFailureCount++
+			return nil
+		})
+		if err != nil {
+			logger.Error(err, "Failed to increment ConsecutiveFailureCount for re-block")
+			return ctrl.Result{}, fmt.Errorf("failed to increment failure count for scope re-block: %w", err)
+		}
+
+		return r.handleBlocked(ctx, rr, blocked, string(remediationv1.PhaseBlocked), "")
+	}
+
+	// Now managed — transition to Pending for re-processing
+	logger.Info("Resource is now managed — unblocking and transitioning to Pending")
+
+	oldPhase := string(rr.Status.OverallPhase)
+	err := helpers.UpdateRemediationRequestStatus(ctx, r.client, rr, func(rr *remediationv1.RemediationRequest) error {
+		rr.Status.OverallPhase = phase.Pending
+		routing := rr.Status.EnsureRoutingStatus()
+		routing.BlockReason = ""
+		routing.BlockMessage = ""
+		routing.BlockedUntil = nil
+		return nil
+	})
+	if err != nil {
+		logger.Error(err, "Failed to transition from Blocked to Pending after scope unblock")
+		return ctrl.Result{}, fmt.Errorf("failed to unblock after scope re-validation: %w", err)
+	}
+
+	r.Metrics.CurrentBlockedGauge.WithLabelValues(rr.Namespace).Dec()
+
+	// ADR-032 §1: Audit the phase transition (Blocked → Pending)
+	r.emitPhaseTransitionAudit(ctx, rr, oldPhase, string(phase.Pending))
+
+	return ctrl.Result{Requeue: true}, nil
+}
+
+// recheckResourceBusyBlock handles Blocked RRs with BlockReason=ResourceBusy.
+// Uses apiReader to check if the blocking WFE has reached a terminal phase.
+// If cleared, resets the RR to Analyzing so routing checks can re-run.
+//
+// Reference: DD-RO-002 (Resource Locking), DD-RO-002-ADDENDUM (Blocked Phase Semantics)
+func (r *Reconciler) recheckResourceBusyBlock(ctx context.Context, rr *remediationv1.RemediationRequest) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("remediationRequest", rr.Name)
+
+	blockingWFE := rr.Status.GetRoutingStatus().BlockingWorkflowExecution
+	if blockingWFE == "" {
+		logger.Info("ResourceBusy block has no blocking WFE reference, clearing")
+		return r.clearEventBasedBlock(ctx, rr, phase.Analyzing)
+	}
+
+	wfe := &workflowexecutionv1.WorkflowExecution{}
+	err := r.apiReader.Get(ctx, client.ObjectKey{
+		Name:      blockingWFE,
+		Namespace: rr.Namespace,
+	}, wfe)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Blocking WFE no longer exists, clearing ResourceBusy block",
+				"blockingWFE", blockingWFE)
+			return r.clearEventBasedBlock(ctx, rr, phase.Analyzing)
+		}
+		logger.Error(err, "Failed to check blocking WFE status")
+		return ctrl.Result{RequeueAfter: config.RequeueResourceBusy}, nil
+	}
+
+	if wfe.Status.Phase == workflowexecutionv1.PhaseCompleted ||
+		wfe.Status.Phase == workflowexecutionv1.PhaseFailed {
+		logger.Info("Blocking WFE reached terminal phase, clearing ResourceBusy block",
+			"blockingWFE", wfe.Name, "wfePhase", wfe.Status.Phase)
+		return r.clearEventBasedBlock(ctx, rr, phase.Analyzing)
+	}
+
+	logger.V(1).Info("Blocking WFE still active, requeueing",
+		"blockingWFE", wfe.Name, "wfePhase", wfe.Status.Phase)
+	return ctrl.Result{RequeueAfter: config.RequeueResourceBusy}, nil
+}
+
+// recheckDuplicateBlock handles Blocked RRs with BlockReason=DuplicateInProgress.
+// Uses apiReader to check if the original RR has reached a terminal phase.
+// Issue #614: Instead of clearing to Pending and re-running the pipeline, inherits
+// the original RR's outcome (Completed → InheritedCompleted, Failed/other → InheritedFailed).
+//
+// Reference: DD-RO-002-ADDENDUM (Blocked Phase Semantics), Issue #614
+func (r *Reconciler) recheckDuplicateBlock(ctx context.Context, rr *remediationv1.RemediationRequest) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("remediationRequest", rr.Name)
+
+	duplicateOf := rr.Status.GetRoutingStatus().DuplicateOf
+	if duplicateOf == "" {
+		logger.Info("DuplicateInProgress block has no original RR reference, clearing")
+		return r.clearEventBasedBlock(ctx, rr, phase.Pending)
+	}
+
+	originalRR := &remediationv1.RemediationRequest{}
+	err := r.apiReader.Get(ctx, client.ObjectKey{
+		Name:      duplicateOf,
+		Namespace: rr.Namespace,
+	}, originalRR)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Original RR deleted, inheriting failure",
+				"duplicateOf", duplicateOf)
+			result, inheritErr := r.transitionToInheritedFailed(ctx, rr,
+				fmt.Errorf("original RemediationRequest %q deleted before completion", duplicateOf),
+				duplicateOf, "RemediationRequest")
+			if inheritErr == nil {
+				r.Metrics.CurrentBlockedGauge.WithLabelValues(rr.Namespace).Dec()
+			}
+			return result, inheritErr
+		}
+		logger.Error(err, "Failed to check original RR status")
+		return ctrl.Result{RequeueAfter: config.RequeueResourceBusy}, nil
+	}
+
+	if IsTerminalPhase(originalRR.Status.OverallPhase) {
+		var result ctrl.Result
+		var inheritErr error
+
+		switch originalRR.Status.OverallPhase {
+		case phase.Completed:
+			logger.Info("Original RR completed, inheriting outcome",
+				"duplicateOf", originalRR.Name)
+			result, inheritErr = r.transitionToInheritedCompleted(ctx, rr, duplicateOf, "RemediationRequest")
+		default:
+			logger.Info("Original RR failed, inheriting failure",
+				"duplicateOf", originalRR.Name, "originalPhase", originalRR.Status.OverallPhase)
+			result, inheritErr = r.transitionToInheritedFailed(ctx, rr,
+				fmt.Errorf("original RemediationRequest %q reached %s", originalRR.Name, originalRR.Status.OverallPhase),
+				duplicateOf, "RemediationRequest")
+		}
+		if inheritErr == nil {
+			r.Metrics.CurrentBlockedGauge.WithLabelValues(rr.Namespace).Dec()
+		}
+		return result, inheritErr
+	}
+
+	logger.V(1).Info("Original RR still active, requeueing",
+		"duplicateOf", originalRR.Name, "originalPhase", originalRR.Status.OverallPhase)
+	return ctrl.Result{RequeueAfter: config.RequeueResourceBusy}, nil
+}
+
+// clearEventBasedBlock clears event-based block fields and resets the RR phase
+// so the reconciliation pipeline can resume.
+func (r *Reconciler) clearEventBasedBlock(ctx context.Context, rr *remediationv1.RemediationRequest, resumePhase phase.Phase) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("remediationRequest", rr.Name)
+
+	err := helpers.UpdateRemediationRequestStatus(ctx, r.client, rr, func(rr *remediationv1.RemediationRequest) error {
+		rr.Status.OverallPhase = resumePhase
+		routing := rr.Status.EnsureRoutingStatus()
+		routing.BlockReason = ""
+		routing.BlockMessage = ""
+		routing.BlockingWorkflowExecution = ""
+		routing.DuplicateOf = ""
+		return nil
+	})
+	if err != nil {
+		logger.Error(err, "Failed to clear event-based block")
+		return ctrl.Result{}, fmt.Errorf("failed to clear event-based block: %w", err)
+	}
+
+	r.Metrics.CurrentBlockedGauge.WithLabelValues(rr.Namespace).Dec()
+	return ctrl.Result{Requeue: true}, nil
+}

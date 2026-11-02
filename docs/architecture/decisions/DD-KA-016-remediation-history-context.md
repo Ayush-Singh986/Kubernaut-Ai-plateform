@@ -1,0 +1,542 @@
+# DD-KA-016: Remediation History Context Enrichment
+
+**Status**: ✅ APPROVED
+**Decision Date**: 2026-02-05
+**Version**: 1.7
+**Confidence**: 95%
+**Applies To**: Kubernaut Agent (KA, `internal/kubernautagent/`), Remediation Orchestrator (RO), DataStorage Service (DS)
+
+---
+
+## Changelog
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | 2026-02-05 | Architecture Team | Initial design: two-tier query, three-way hash comparison, full remediation chain, DS business logic endpoint, prompt reasoning framework |
+| 1.1 | 2026-02-14 | Architecture Team | Updated DS internal logic to reflect EM's component-level audit event architecture (per ADR-EM-001 v1.3). DS now uses a two-step query (RO events by target_resource, then EM component events by correlation_id) and reuses exported scoring functions from effectiveness_handler.go. Health/metric/alert data sourced from typed ogen sub-objects (health_checks, metric_deltas, alert_resolution) on EM component events. signalResolved read from alert_resolution.alert_resolved. Coordinated via issue #82. |
+| 1.2 | 2026-02-12 | Architecture Team | DRIFT-DS-1: Corrected sort order to descending (most recent first) per implementation. DRIFT-KA-1: Added spec_drift Assessment Reason Handling section documenting INCONCLUSIVE semantics, declining effectiveness exclusion, causal chain detection, and LLM reasoning guidance. |
+| 1.3 | 2026-03-27 | Architecture Team | Remediation history API and examples: `workflowType` renamed to `actionType`; RO audit skeleton field `workflow_type` renamed to `action_type` (Issue #528, v1.2). |
+| 1.4 | 2026-03-28 | Architecture Team | Issue #586: Corrected Tier 1 query key from `target_resource` to `pre_remediation_spec_hash`. Both tiers now query by spec hash to preserve causal chain integrity for LLM reasoning. Removed `QueryROEventsByTarget` dead code. |
+| 1.5 | 2026-07-31 | Architecture Team | **Issue #1802**: v1.4's spec-hash-only query key let two unrelated resources sharing an identical Pod/container spec (e.g., templated Deployments from the same Helm chart/GitOps repo) collide — both RO's ineffective-chain blocking (BR-ORCH-042.5) and KA's history-based prompt enrichment could attribute one target's remediation chain to another. Both Tier 1 and Tier 2 now additionally scope by `target_resource` (exact match on the existing `{namespace}/{kind}/{name}` composite), and — **main branch only** — by optional `cluster_id` for fleet deployments where identically-named/-namespaced/-spec'd resources can exist on different clusters (`release/v1.5` has no `cluster_id` concept; that branch's port is target-resource-only). Added **RO** as a formal consumer of this DD: RO's `RoutingEngine.CheckIneffectiveRemediationChain` calls the same DS endpoint/query path KA's enrichment does, so both now share identical target/cluster scoping semantics. New index: `idx_audit_events_cluster_id` (migration 017, main only). |
+| 1.6 | 2026-10-07 | Architecture Team | **Issue #2490**: Approved Option A, a PostgreSQL recursive CTE for complete chained pre/post spec-hash traversal. Preserve #616 dual-hash anchors; recurse only through a candidate EM post-hash equal to the current RO pre-hash, require strictly older RO timestamps, scope every hop by target/optional cluster and history window, deduplicate recursive states with `UNION` and returned event identities with `DISTINCT ON`, and query Tier 2 through the full lookback before partitioning disjoint response windows. Preserve F1 time-unbounded EM correlation. Prompt guidance remains qualitative and does not add an arbitrary retry threshold or workflow Job policy. |
+| 1.7 | 2026-10-07 | Architecture Team | **Issue #2490 security and availability hardening**: bound recursive traversal at depth 256, apply a repository-local 10-second query deadline, request one sentinel row beyond the 10,000-event result cap, and fail closed with a resource-limit error/HTTP 503 rather than return partial history. Sanitize audit-derived recurrence and history fields through the existing prompt injection filter. Add control-mapped coverage for strict temporal traversal, large branching overflow, fail-closed HTTP behavior, and prompt sanitization. |
+| 1.8 | 2026-10-09 | Architecture Team | **Issue #2496**: clarify phase delivery and history identity. Phase 1 context/history tools are optional and history is not pre-injected; Phase 2 automatically fetches only the single resolved target's history, sanitizes/freezes it and hands it to selection; no source-resource metadata is duplicated in the model-facing packet. Preserve strict fail-closed overflow behavior. Prior workflow matching uses mandatory `workflow_id` only; catalog `workflow_name` is required context but is not unique. |
+
+---
+
+## Context & Problem
+
+When a signal fires for a target resource that has already been remediated, the LLM investigation starts from zero — it has no visibility into what was previously attempted. This leads to:
+
+1. **Repeating ineffective remediations**: The LLM recommends ScaleUp for HighCPULoad without knowing ScaleUp was already tried twice and failed.
+2. **No configuration regression detection**: If someone rolls back a deployment to a previously problematic version, the LLM doesn't know this exact configuration caused issues before.
+3. **No awareness of declining effectiveness**: A pattern of ScaleUp attempts with effectiveness 0.4, 0.3, 0.2 clearly shows diminishing returns, but without the history the LLM can't see it.
+4. **Wasted investigation time**: The LLM re-investigates questions that the Effectiveness Monitor (DD-017 v2.0, Level 1) has already answered — "did the pod recover?", "did metrics improve?", "did the alert clear?"
+
+### Scope
+
+This DD covers how KA acquires and uses remediation history context. It does NOT cover:
+
+- How the EM assesses effectiveness (see DD-017 v2.0)
+- How the EM stores data (see DD-017 v2.0, audit traces)
+- The effectiveness scoring formula (see DD-017 v2.0)
+
+### Business Requirements
+
+- **BR-INS-001**: Assess remediation action effectiveness — this DD enables the LLM to consume those assessments
+- **BR-INS-002**: Correlate action outcomes with environment improvements — DS correlates audit events, KA surfaces the correlation
+
+---
+
+## Decision
+
+**APPROVED**: KA queries a DataStorage business logic endpoint for structured remediation history context before constructing the LLM investigation prompt. The context includes the full remediation chain for the target resource with effectiveness data, enabling the LLM to make informed decisions about whether to try something new, escalate, or re-apply a known remedy with justification.
+
+### Issue #2496 phase and identity amendment (v1.8)
+
+The v1.8 amendment narrows **when** history is delivered without changing the target/resource scoping, recursive query, tier, or fail-closed safeguards above:
+
+- **Phase 1/RCA** may advertise `get_namespaced_resource_context` and `get_cluster_resource_context`, but they are optional. No remediation history is pre-injected into the RCA context and RCA completion must not require either call.
+- **Phase 2** automatically resolves/enriches exactly one target and creates the authoritative, sanitized frozen handoff for selection. The model-facing handoff contains one `target` plus target-scoped observations/history/classifications; it does not duplicate per-item source-resource metadata. Existing correlated RCA/audit records remain the source for operational reconstruction.
+- A handoff that cannot be sanitized, frozen/deep-copied, digested or serialized within the configured budget fails closed into the existing review path. It must not silently truncate or return a partial successful history packet.
+- A valid selected workflow is identified and matched by mandatory `workflow_id`. `workflow_name` remains mandatory catalog-authoritative context for display/audit, but is not unique; names can be shared across versions or action types. Action type and version are descriptive context only and never identity fallbacks.
+- A same-`workflow_id` repeat with a completed valid prior assessment requires a bounded structural repeat justification, regardless of whether the prior outcome was successful/remediated or ineffective. Pending, invalid, unknown and SpecDrift assessments do not trigger this requirement. This DD does not add candidate filtering, confidence penalties or a semantic reviewer.
+
+---
+
+## Design Principles
+
+### 1. Separation of Responsibilities
+
+| Component | Responsibility |
+|-----------|---------------|
+| **EM** (DD-017) | Assesses effectiveness, emits structured audit events |
+| **DS** | Owns data intelligence: queries audit traces, correlates events, performs hash comparison, classifies tiers, returns structured response |
+| **KA** | Owns prompt construction: calls one DS endpoint, formats the response into the LLM prompt, adds reasoning guidance |
+| **LLM** | Owns investigation and decision-making: uses history context + its own signal investigation to determine the right course of action |
+
+### 2. Reasoning Framework, Not Investigation Checklists
+
+The prompt tells the LLM HOW to reason about repeated remediation, not WHAT specific factors to check. The LLM determines what contextual factors are relevant based on the signal type and source adapter.
+
+**Good** (reasoning framework):
+> "If the same remediation was applied without resolving the signal, investigate contextual factors relevant to this signal type and source to determine whether the root cause is external or internal to the workload."
+
+**Bad** (investigation checklist):
+> "Check network traffic, memory patterns, and cron job schedules."
+
+The LLM's value is in adapting its investigation to the specific signal and context. Source adapter metadata (Prometheus labels, alert annotations, K8s event reason) naturally guides what the LLM investigates.
+
+### 3. Full Remediation Chain, Not Just Most Recent
+
+Always return the complete chain of remediations for the target resource within the query window. Individual entries are data points; the chain tells the story:
+
+- Pattern of attempts (same remediation repeated vs. different approaches)
+- Declining effectiveness (0.4 → 0.3 → 0.2 = diminishing returns)
+- Escalation history (chain ended in human review = already triaged)
+- Resolution context (what finally worked, if anything)
+
+### 4. LLM-Driven Decision Making, Not Policy-Driven
+
+No Rego rules, no hardcoded escalation thresholds. The LLM receives the history and reasoning guidance, then decides. This preserves the RCA value — the LLM investigates root cause rather than a policy short-circuiting the decision.
+
+---
+
+## Architecture
+
+### Data Flow
+
+```
+New Signal → SP → AA Controller → KA
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ KA reads   │
+                              │ current      │
+                              │ target .spec │
+                              │ → computes   │
+                              │   hash       │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ KA calls   │
+                              │ DS endpoint  │
+                              │ with target  │
+                              │ + hash       │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ DS queries   │
+                              │ audit traces │
+                              │ correlates   │
+                              │ RO + EM      │
+                              │ events by    │
+                              │ RR UID       │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ DS performs  │
+                              │ three-way    │
+                              │ hash match   │
+                              │ tier classif │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ DS returns   │
+                              │ structured   │
+                              │ response     │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌─────────────┐
+                              │ KA formats │
+                              │ prompt with  │
+                              │ history +    │
+                              │ reasoning    │
+                              │ guidance     │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                                   LLM
+                              (investigation
+                               + decision)
+```
+
+### DataStorage Business Logic Endpoint
+
+DS exposes a dedicated endpoint that encapsulates all the complexity of querying, correlating, and classifying remediation history. KA calls one endpoint and receives a ready-to-use response.
+
+**Request**:
+
+```
+GET /api/v1/remediation-history/context
+    ?targetKind=Deployment
+    &targetName=my-app
+    &targetNamespace=prod
+    &currentSpecHash=sha256:aabb1122...
+    &tier1Window=24h
+    &tier2Window=90d
+    &clusterId=cluster-a          # optional, main only (Issue #1802, fleet deployments)
+```
+
+**Response**:
+
+```json
+{
+    "targetResource": "Deployment/prod/my-app",
+    "currentSpecHash": "sha256:aabb1122...",
+    "regressionDetected": true,
+    "tier1": {
+        "window": "24h",
+        "chain": [
+            {
+                "remediationUID": "rr-abc",
+                "signalFingerprint": "fp-123",
+                "signalName": "HighCPULoad",
+                "actionType": "ScaleUp",
+                "outcome": "Success",
+                "effectivenessScore": 0.4,
+                "signalResolved": false,
+                "hashMatch": "postRemediation",
+                "preRemediationSpecHash": "sha256:aabb1122...",
+                "postRemediationSpecHash": "sha256:ccdd3344...",
+                "healthChecks": {
+                    "podRunning": true,
+                    "readinessPass": true,
+                    "restartDelta": 0,
+                    "crashLoops": false,
+                    "oomKilled": false,
+                    "pendingCount": 0
+                },
+                "metricDeltas": {
+                    "cpuBefore": 0.95,
+                    "cpuAfter": 0.92,
+                    "memoryBefore": 0.60,
+                    "memoryAfter": 0.62,
+                    "latencyP95BeforeMs": 200,
+                    "latencyP95AfterMs": 195,
+                    "errorRateBefore": 0.02,
+                    "errorRateAfter": 0.019
+                },
+                "sideEffects": [],
+                "completedAt": "2026-02-05T08:00:00Z",
+                "assessedAt": "2026-02-05T08:05:00Z"
+            },
+            {
+                "remediationUID": "rr-def",
+                "signalFingerprint": "fp-123",
+                "signalName": "HighCPULoad",
+                "actionType": "ScaleUp",
+                "outcome": "Success",
+                "effectivenessScore": 0.3,
+                "signalResolved": false,
+                "hashMatch": "none",
+                "preRemediationSpecHash": "sha256:ccdd3344...",
+                "postRemediationSpecHash": "sha256:eeff5566...",
+                "healthChecks": {
+                    "podRunning": true,
+                    "readinessPass": true,
+                    "restartDelta": 0,
+                    "crashLoops": false,
+                    "oomKilled": false,
+                    "pendingCount": 0
+                },
+                "metricDeltas": {
+                    "cpuBefore": 0.92,
+                    "cpuAfter": 0.90,
+                    "memoryBefore": 0.62,
+                    "memoryAfter": 0.63,
+                    "latencyP95BeforeMs": 195,
+                    "latencyP95AfterMs": 193,
+                    "errorRateBefore": 0.019,
+                    "errorRateAfter": 0.018
+                },
+                "sideEffects": [],
+                "completedAt": "2026-02-05T12:00:00Z",
+                "assessedAt": "2026-02-05T12:05:00Z"
+            }
+        ]
+    },
+    "tier2": {
+        "window": "90d",
+        "chain": [
+            {
+                "remediationUID": "rr-old-001",
+                "signalName": "HighCPULoad",
+                "actionType": "ScaleUp",
+                "outcome": "Success",
+                "effectivenessScore": 0.4,
+                "signalResolved": false,
+                "hashMatch": "preRemediation",
+                "completedAt": "2026-01-15T10:00:00Z"
+            },
+            {
+                "remediationUID": "rr-old-002",
+                "signalName": "HighCPULoad",
+                "actionType": "RestartPod",
+                "outcome": "Success",
+                "effectivenessScore": 0.2,
+                "signalResolved": false,
+                "hashMatch": "none",
+                "completedAt": "2026-01-15T14:00:00Z"
+            },
+            {
+                "remediationUID": "rr-old-003",
+                "signalName": "HighCPULoad",
+                "actionType": null,
+                "outcome": "Escalated",
+                "effectivenessScore": null,
+                "signalResolved": true,
+                "hashMatch": "none",
+                "completedAt": "2026-01-15T16:00:00Z"
+            }
+        ]
+    }
+}
+```
+
+### DS Internal Logic
+
+DS performs the following when serving this endpoint:
+
+1. **Query the linked RO chain**: Anchor `remediation.workflow_created` audit events when either `pre_remediation_spec_hash` matches `currentSpecHash` or a correlated EM event has `post_remediation_spec_hash` matching `currentSpecHash` (#616). Each recursive step considers only a candidate whose correlated EM post-hash equals the current node's RO `pre_remediation_spec_hash` and whose RO timestamp is strictly earlier than the current node. Anchor and recursive candidates are scoped by the requested `target_resource`, optional `cluster_id`, and RO history window; when `cluster_id` is supplied, the correlated EM hash event must carry the same top-level cluster ID as well. Querying by spec hash alone (v1.4, Issue #586) preserved causal chain integrity across a *single* target's own history, but let two *different* targets with identical specs collide; adding `target_resource` (+ `cluster_id` on main) scoping (v1.5, Issue #1802) closes that gap while keeping the spec-hash match for chain integrity.
+2. **Query Tier 1 — EM component events**: For each RO event's `correlation_id`, batch-query EM component events (`event_category = 'effectiveness'`). The EM emits component-level audit events per ADR-EM-001 v1.3:
+   - `effectiveness.health.assessed` — health score + typed `health_checks` sub-object (`pod_running`, `readiness_pass`, `restart_delta`, `crash_loops`, `oom_killed`, `pending_count`)
+   - `effectiveness.alert.assessed` — alert score + typed `alert_resolution` sub-object (`alert_resolved`, `active_count`, `resolution_time_seconds`)
+   - `effectiveness.metrics.assessed` — metrics score + typed `metric_deltas` sub-object (`cpu_before/after`, `memory_before/after`, `latency_p95_before/after_ms`, `error_rate_before/after`)
+   - `effectiveness.hash.computed` — `pre_remediation_spec_hash`, `post_remediation_spec_hash`, `hash_match` (boolean)
+   - `effectiveness.assessment.completed` — lifecycle marker with `reason` ("full", "partial", "expired")
+3. **Correlate**: Join RO and EM events by `correlation_id` (the RemediationRequest name). For each RO event, compute the weighted effectiveness score using `ComputeWeightedScore()` from `effectiveness_handler.go` (DD-017 v2.1 formula). Read `signalResolved` from `alert_resolution.alert_resolved`. Read `healthChecks` and `metricDeltas` from the typed ogen sub-objects on the corresponding EM component events.
+4. **Query Tier 2**: Always query the linked chain across the full Tier 2 lookback (up to 90 days) through the current time so a recent entry can bridge to an older linked entry. Then retain only rows older than the Tier 1 boundary for the Tier 2 response. Apply the same target/cluster scoping and return the historical rows in summary form.
+5. **Hash comparison**: For each remediation record, compare `currentSpecHash` against both `preRemediationSpecHash` and `postRemediationSpecHash`. Tag each record with `hashMatch`: `"preRemediation"`, `"postRemediation"`, or `"none"`. The `preRemediationSpecHash` match signals configuration regression.
+6. **Regression detection**: Set `regressionDetected: true` if any record's `preRemediationSpecHash` matches `currentSpecHash` — the target resource has been reverted to a configuration that previously caused issues.
+7. **Order by completedAt ascending**: Both Tier 1 and Tier 2 chains are ordered oldest-first (`event_timestamp ASC`, `event_id ASC`) so the complete causal progression is deterministic and readable.
+8. **Resource safety and completeness**: The recursive CTE carries traversal depth and stops expanding beyond 256 hops. The repository applies a 10-second query-local deadline and requests one sentinel row beyond `MaxROEventsBySpecHashResults` (10,000) to detect overflow. If the depth, query-time, or complete-result budget is exceeded, DS returns `ErrRemediationHistoryResourceLimit`; the HTTP handler returns RFC 7807 `503 Service Unavailable` and never returns a partial `200` history response. This fail-closed behavior addresses FedRAMP SC-5 and preserves complete-chain semantics for BR-KA-016/BR-ORCH-042.5.
+
+DS retains the existing pre/post spec-hash expression indexes, target-resource index, correlation index, and main-branch cluster index as planner candidates for the bounded CTE and its correlated EM lookups. The query requests `MaxROEventsBySpecHashResults + 1` rows only as an overflow sentinel; no sentinel row is exposed to callers. EM correlation remains time-unbounded for F1, while the RO traversal remains window-bounded and query-time-bounded.
+
+---
+
+## Two-Tier Query Design
+
+### Tier 1: Recent History (24h, Detailed)
+
+- **Purpose**: Full effectiveness data for recent remediations on the same target
+- **Query key**: recursive dual-hash anchor (`pre_remediation_spec_hash` or correlated EM `post_remediation_spec_hash`) followed by causal post-hash links, with `target_resource` (+ optional `cluster_id` on main) and 24h RO window
+- **Additional filter**: Signal fingerprint (for exact recurrence detection)
+- **Returns**: Full remediation chain with all fields — effectiveness scores, metric deltas, health checks, dual hashes
+- **Prompt framing**: Strong signal — "these remediations were attempted recently"
+
+### Tier 2: Historical Hash Lookup (Beyond 24h, Summary)
+
+- **Purpose**: Detect configuration regressions that cross the 24h TTL boundary
+- **Query key**: same recursive dual-hash chain as Tier 1, with `target_resource` (+ optional `cluster_id` on main), queried through the full 90-day lookback and partitioned after traversal
+- **Returns**: Full remediation chain from the matched historical window, in summary form (no metric deltas or health check details)
+- **Prompt framing**: Softer lead — "this configuration was previously observed N days ago, here is the complete remediation sequence that followed"
+- **Lookback cap**: 90 days (hardcoded, can be made configurable if needed)
+
+### Target-Resource and Fleet-Cluster Scoping (v1.5, Issue #1802)
+
+Both tiers additionally scope by the existing `target_resource` composite string (`{namespace}/{kind}/{name}`, already used for audit reconstruction elsewhere — no new field or migration for the base fix) and, **main branch only**, by optional `cluster_id`:
+
+- **Why**: Spec-hash-only matching (v1.4) is correct for tracking one target's *own* remediation chain over time, but two *different* targets can legitimately share an identical Pod/container spec — most commonly, Deployments templated from the same Helm chart or GitOps repo across namespaces, or (on `main`, fleet deployments) across clusters. Without target scoping, an ineffective chain on target A would incorrectly block or bias target B.
+- **RO consumer**: `RoutingEngine.CheckIneffectiveRemediationChain` (BR-ORCH-042.5) queries the identical DS endpoint/repository path used by KA's enrichment. A false cross-target match there is a functional bug (blocks a `WorkflowExecution` that should have been created), not just a prompt-quality issue — this is what Issue #1802 originally reported.
+- **`cluster_id` (main only)**: `release/v1.5` has no `cluster_id` concept; its port of this fix is target-resource-only. On `main`, `cluster_id` is optional — a query with `cluster_id = ""` remains unscoped by cluster (matches pre-#1802/release-v1.5 behavior), preserving hub-local (non-fleet) semantics unchanged.
+- **Index**: `idx_audit_events_cluster_id`, a partial btree index (`WHERE cluster_id IS NOT NULL`) added in migration 017 (main only), lets the planner combine it with the existing `idx_audit_events_target_resource` expression index via a BitmapAnd for fleet-scoped queries.
+
+### Fallthrough Logic
+
+1. KA calls DS with target resource + current spec hash
+2. DS runs the Tier 1 recursive dual-hash query (24h window) → correlates with EM events, detects regression
+3. DS runs the Tier 2 recursive dual-hash query through the full 90-day lookback → filters rows older than the Tier 1 boundary and builds the summary chain
+4. If no matches in either tier → return empty response (fresh investigation, no history context injected into prompt)
+
+---
+
+## Three-Way Spec Hash Comparison
+
+For each remediation record in the chain, DS compares `currentSpecHash` against both stored hashes:
+
+| Current Hash Matches | Meaning | Prompt Implication |
+|---------------------|---------|-------------------|
+| `postRemediationSpecHash` | Config unchanged since our remediation | History is directly relevant — our changes are still active |
+| `preRemediationSpecHash` | Configuration regression — resource reverted to the state that caused the original signal | Proactive signal — the same config caused the same problem before, and the remediation applied at that time had a known effectiveness |
+| Neither | Config was changed to something we haven't seen | Tier 1: other records in the chain may still match. Tier 2: if no match in either tier, fresh investigation |
+
+The `preRemediationSpecHash` match is the most powerful signal. It tells the LLM: "We've seen this exact configuration before. Here's what happened. The remediation applied was [X] with effectiveness [Y]. Don't repeat what didn't work."
+
+---
+
+## spec_drift Assessment Reason Handling
+
+When the Effectiveness Monitor (EM) completes an assessment with `assessment_reason = "spec_drift"` (DD-EM-002 v1.1), the target resource spec was modified during the assessment window. The effectiveness score is unreliable (DS short-circuits to 0.0). KA's prompt builder applies the following semantics:
+
+1. **INCONCLUSIVE treatment**: `spec_drift` entries are marked as **INCONCLUSIVE** in the LLM prompt — they are not counted as effective or ineffective. The 0.0 score is suppressed; the LLM must not interpret it as "poor effectiveness."
+
+2. **Exclusion from declining effectiveness**: `spec_drift` entries are excluded from the declining effectiveness trend analysis. Their 0.0 scores would create false declining trends (e.g., 0.4 → 0.3 → 0.0) since the score is unreliable. The `_detect_declining_effectiveness` logic skips entries where `assessmentReason == "spec_drift"`.
+
+3. **Causal chain detection**: The prompt builder detects when a `spec_drift` entry's `postRemediationSpecHash` matches a subsequent entry's `preRemediationSpecHash`. This proves the spec_drift led to a follow-up remediation (hash continuity). The algorithm:
+   - Builds an index: `preRemediationSpecHash` → `remediationUID` for all entries
+   - For each `spec_drift` entry, checks if its `postRemediationSpecHash` appears as another entry's `preRemediationSpecHash`
+   - If matched, the spec_drift entry is linked to a follow-up remediation UID for prompt semantic rewriting
+
+4. **LLM reasoning guidance**: When any `spec_drift` entry exists in the prompt, KA adds guidance:
+   > "Some remediation assessments were inconclusive because the target resource spec was modified during the assessment window. Do not treat these as failed remediations. Investigate what modified the spec — it may be the root cause or a contributing factor."
+
+   Two prompt variants exist for `spec_drift` entries:
+   - **Default**: "may still be viable under different conditions" — spec changed by external actor (GitOps, manual edit, competing controller)
+   - **Causal chain**: "led to follow-up remediation (UID)" — when hash continuity links the spec_drift to a subsequent remediation
+
+---
+
+## Prompt Construction
+
+### KA Prompt Template
+
+KA formats the DS response into a prompt section injected before the LLM investigation:
+
+**Tier 1 (recent, detailed)**:
+
+```
+## Remediation History for Deployment/prod/my-app (last 24h)
+
+1. [6h ago] ScaleUp (3→5 replicas) - Outcome: Success
+   - Effectiveness: 0.4/1.0 (LOW)
+   - Health: Pod running, readiness passing, no crashes
+   - Metrics: CPU 95% → 92% (minimal improvement), latency unchanged
+   - Signal resolved: NO (HighCPULoad still firing 45min later)
+   - Side effects: None
+   - Target config: UNCHANGED since remediation
+
+2. [2h ago] ScaleUp (5→7 replicas) - Outcome: Success
+   - Effectiveness: 0.3/1.0 (LOW, declining)
+   - Health: Pod running, readiness passing, no crashes
+   - Metrics: CPU 92% → 90% (diminishing returns), latency unchanged
+   - Signal resolved: NO (HighCPULoad still firing 30min later)
+   - Side effects: None
+   - Target config: CHANGED (different from current)
+
+Two ScaleUp remediations with declining effectiveness (0.4 → 0.3) and the
+signal unresolved. Investigate contextual factors relevant to this signal type
+and source to determine whether the root cause is external or internal to
+the workload before recommending the same approach.
+```
+
+**Tier 2 (historical, summary)**:
+
+```
+## Historical Context: Configuration Previously Observed
+
+WARNING: Current resource configuration (spec hash: aabb1122) matches a
+PREVIOUS state observed 21 days ago that triggered the same signal type.
+
+Remediation sequence from that occurrence:
+1. [21 days ago] ScaleUp - Effectiveness: 0.4 - Signal NOT resolved
+2. [21 days ago] RestartPod - Effectiveness: 0.2 - Signal NOT resolved
+3. [21 days ago] Escalated to human review - Signal eventually resolved
+
+The previous remediation sequence for this exact configuration was
+ineffective (ScaleUp and RestartPod both failed). The issue required
+human intervention. Consider this historical context when investigating,
+though note the environment may have changed since then.
+```
+
+**Regression warning** (when `regressionDetected: true`):
+
+```
+CONFIGURATION REGRESSION DETECTED: The current resource spec matches a
+previous pre-remediation state. This configuration has caused issues before.
+```
+
+### Reasoning Guidance (Always Included When History Exists)
+
+```
+If the same remediation type was applied without resolving the underlying
+signal, investigate contextual factors relevant to this signal type and
+source to determine whether the root cause is external or internal to the
+workload. Use available observability data to correlate before recommending
+the same remediation again.
+```
+
+### Audit-Derived Prompt Safety
+
+Action types, signal types, outcomes, resource identifiers, and other values
+originating in audit events are untrusted prompt data. Before history values are
+interpolated into the KA prompt, the prompt builder applies the existing
+`sanitizeField` injection-pattern filter. This is defense in depth for
+DD-KA-005 and FedRAMP SI-10/AC-4; it does not replace structured validation at
+the audit-ingestion boundary.
+
+---
+
+## V1.1 Enhancement Path
+
+When DD-017 Level 2 (AI-Powered Analysis via Kubernaut Agent (KA) PostExec) arrives in V1.1, the EM audit events gain additional fields:
+
+- `root_cause_resolved: true/false`
+- `lessons_learned: [...]`
+- `oscillation_detected: true/false`
+
+DS reads these richer fields from the same audit traces. The DS endpoint response gains corresponding fields. KA formats them into the prompt:
+
+```
+1. [6h ago] ScaleUp - Effectiveness: 0.4
+   - Root cause resolved: NO (problem masked, not fixed)
+   - Lesson: "Memory increase masked a memory leak. Throughput unchanged
+     confirms leak persists."
+   - Oscillation: None detected
+```
+
+No architectural change to KA, DS endpoint contract, or query design. The enhancement is purely additive.
+
+---
+
+## Consequences
+
+### Positive
+
+- LLM makes remediation decisions informed by full history — avoids repeating failures
+- Configuration regression detection catches rollback scenarios that would otherwise start from zero
+- Full remediation chain provides pattern visibility (declining effectiveness, escalation history)
+- Clean separation: DS owns data intelligence, KA owns prompt construction, LLM owns decision-making
+- Prompt reasoning framework preserves LLM flexibility — no hardcoded investigation paths
+- Two-tier design balances detail (24h) with long-term memory (90 days)
+- V1.1 enhancement path is purely additive — no architectural changes
+
+### Negative
+
+- DS endpoint adds complexity to the DataStorage service
+  - **Mitigation**: DS already handles audit queries; this is a specialized aggregation view
+- Prompt grows larger when history exists (additional tokens)
+  - **Mitigation**: In practice, chains are short (5-10 entries max per target within 24h given cooldown periods). Token cost is minimal.
+- Tier 2 query (90-day hash scan) could be slow at scale
+  - **Mitigation**: DS indexes hash columns; capped at 90 days; summary-only response (no metric deltas); depth, query-time, and complete-result budgets fail closed with HTTP 503 rather than silently truncating history
+- Audit-derived action/signal values could influence workflow-selection instructions
+  - **Mitigation**: sanitize history fields with the existing prompt injection filter and cover malicious recurrence values with a control-mapped unit test
+
+---
+
+## Related Decisions
+
+- **DD-017 v2.0**: Effectiveness Monitor V1.0 Level 1 (provides the audit data this DD consumes)
+- **DD-EFFECTIVENESS-001**: Hybrid Automated + AI Analysis approach (Level 1/Level 2 architecture)
+- **DD-EVENT-001**: Controller Event Registry (event reason constants alignment)
+
+---
+
+## Review & Evolution
+
+### When to Revisit
+
+- **MANDATORY**: When DD-017 Level 2 is implemented — add root cause / lessons / oscillation fields to prompt template
+- **OPTIONAL**: If Tier 2 query performance degrades — evaluate materialized view or dedicated index
+- **OPTIONAL**: If prompt token budget becomes a concern — evaluate chain truncation or summarization
+
+---
+
+**Status**: ✅ APPROVED — V1.7
+**Next Review**: When DD-017 Level 2 implementation begins (estimated V1.1, Q2 2026); or when issue #1806 (KA → Kubernaut Agent rename) lands, whichever is sooner

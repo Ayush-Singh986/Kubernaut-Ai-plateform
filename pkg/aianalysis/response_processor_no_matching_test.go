@@ -1,0 +1,427 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package aianalysis contains unit tests for the no_matching_workflows handler
+// in ResponseProcessor.
+//
+// Issue #768: Phase should be Completed (not Failed) when humanReviewReason=no_matching_workflows
+// Issue #769: rootCauseAnalysis must be preserved (rootCause must be populated)
+package aianalysis_test
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// rawJSON marshals v to *apiextensionsv1.JSON, panicking on failure (test-only helper).
+func rawJSON(v interface{}) *apiextensionsv1.JSON {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return &apiextensionsv1.JSON{Raw: raw}
+}
+
+var _ = Describe("ResponseProcessor no_matching_workflows (#768, #769)", func() {
+	var (
+		processor *handlers.ResponseProcessor
+		ctx       context.Context
+		m         *metrics.Metrics
+	)
+
+	BeforeEach(func() {
+		m = metrics.NewMetrics()
+		processor = handlers.NewResponseProcessor(logr.Discard(), m, &noopAuditClient{})
+		ctx = context.Background()
+	})
+
+	createAnalysis := func() *aianalysisv1.AIAnalysis {
+		startedAt := metav1.NewTime(time.Now().Add(-5 * time.Second))
+		return &aianalysisv1.AIAnalysis{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-768",
+				Namespace:  "default",
+				UID:        types.UID("test-uid-768"),
+				Generation: 1,
+			},
+			Spec: aianalysisv1.AIAnalysisSpec{
+				RemediationID: "test-rr-768",
+			},
+			Status: aianalysisv1.AIAnalysisStatus{
+				Phase:     aianalysis.PhaseInvestigating,
+				StartedAt: &startedAt,
+			},
+		}
+	}
+
+	buildNoMatchingWorkflowsResp := func() *agentsessionv1.AgentSessionResult {
+		return &agentsessionv1.AgentSessionResult{
+			IncidentID:              "inc-768-001",
+			Analysis:                "The namespace-quota ResourceQuota in demo-quota is 100% exhausted on memory.",
+			NeedsHumanReview:        true,
+			HumanReviewReason:       "no_matching_workflows",
+			TerminalOutcome:         sharedtypes.TerminalOutcomeNoMatchingWorkflows,
+			WorkflowDiscoveryStatus: sharedtypes.WorkflowDiscoveryStatusCompletedNoMatch,
+			HistoryStatus:           sharedtypes.HistoryStatusAvailable,
+			Confidence:              0.98,
+			Timestamp:               "2026-04-21T00:00:00Z",
+			Warnings:                []string{"No workflows matched the alert criteria"},
+			RootCauseAnalysis: rawJSON(map[string]interface{}{
+				"summary":              "The namespace-quota ResourceQuota is exhausted",
+				"severity":             "medium",
+				"contributing_factors": []string{"ResourceQuota caps memory at 512Mi", "Each pod requests 256Mi"},
+				"remediationTarget":    map[string]interface{}{"kind": "Deployment", "name": "api-server", "namespace": "demo-quota"},
+			}),
+		}
+	}
+
+	It("UT-AA-2520-003: does not bypass human review for an actionable=false result", func() {
+		actionable := false
+		analysis := createAnalysis()
+		resp := &agentsessionv1.AgentSessionResult{
+			IncidentID:              "inc-2520-003",
+			NeedsHumanReview:        true,
+			HumanReviewReason:       aianalysisv1.HumanReviewReasonRCAIncomplete,
+			IsActionable:            &actionable,
+			Warnings:                []string{"Alert not actionable"},
+			TerminalOutcome:         sharedtypes.TerminalOutcomeRCAIncomplete,
+			WorkflowDiscoveryStatus: sharedtypes.WorkflowDiscoveryStatusSkippedDueToFailure,
+		}
+
+		_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseFailed))
+		Expect(analysis.Status.GetReview().NeedsHumanReview).To(BeTrue())
+		Expect(analysis.Status.GetReview().HumanReviewReason).To(Equal(aianalysisv1.HumanReviewReasonRCAIncomplete))
+	})
+
+	assertCondition := func(conditions []metav1.Condition, condType string, expectedStatus metav1.ConditionStatus, expectedReason string) {
+		cond := meta.FindStatusCondition(conditions, condType)
+		ExpectWithOffset(1, cond).ToNot(BeNil(), "Condition %s must be set", condType)
+		ExpectWithOffset(1, cond.Status).To(Equal(expectedStatus),
+			"Condition %s status: expected %s, got %s", condType, expectedStatus, cond.Status)
+		ExpectWithOffset(1, cond.Reason).To(Equal(expectedReason),
+			"Condition %s reason: expected %s, got %s", condType, expectedReason, cond.Reason)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// Issue #768: Phase should be Completed for no_matching_workflows
+	// ═══════════════════════════════════════════════════════════════════════
+
+	Context("#768: Phase correctness for no_matching_workflows", func() {
+		It("UT-AA-768-001: sets Phase=Completed when KA returns needsHumanReview=true + humanReviewReason=no_matching_workflows", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseCompleted),
+				"#768: Phase must be Completed — investigation succeeded, only workflow selection was empty")
+			Expect(string(analysis.Status.Reason)).To(Equal("AnalysisCompleted"),
+				"#768: Reason should be AnalysisCompleted, not WorkflowResolutionFailed")
+			Expect(analysis.Status.SubReason).To(Equal("NoMatchingWorkflows"))
+			Expect(analysis.Status.GetReview().NeedsHumanReview).To(BeTrue(),
+				"#768: NeedsHumanReview must remain true")
+			Expect(analysis.Status.GetReview().HumanReviewReason).To(Equal("no_matching_workflows"))
+		})
+
+		It("UT-AA-768-002: sets InvestigationComplete=True and AnalysisComplete=True for no_matching_workflows", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			assertCondition(analysis.Status.Conditions, aianalysis.ConditionInvestigationComplete,
+				metav1.ConditionTrue, aianalysis.ReasonInvestigationSucceeded)
+			assertCondition(analysis.Status.Conditions, aianalysis.ConditionAnalysisComplete,
+				metav1.ConditionTrue, aianalysis.ReasonAnalysisSucceeded)
+		})
+
+		It("UT-AA-768-003: sets WorkflowResolved=False with reason NoMatchingWorkflows", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			assertCondition(analysis.Status.Conditions, aianalysis.ConditionWorkflowResolved,
+				metav1.ConditionFalse, aianalysis.ReasonNoMatchingWorkflows)
+			assertCondition(analysis.Status.Conditions, aianalysis.ConditionApprovalRequired,
+				metav1.ConditionFalse, "NotApplicable")
+		})
+
+		It("UT-AA-768-004: calls RecordAnalysisComplete (not RecordAnalysisFailed)", func() {
+			auditSpy := &spyAuditClient{}
+			proc := handlers.NewResponseProcessor(logr.Discard(), m, auditSpy)
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := proc.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(auditSpy.completeCount).To(Equal(1),
+				"#768: RecordAnalysisComplete must be called exactly once")
+			Expect(auditSpy.failedCount).To(Equal(0),
+				"#768: RecordAnalysisFailed must NOT be called for no_matching_workflows")
+		})
+
+		It("UT-AA-768-005: preserves Phase=Failed for other humanReviewReasons", func() {
+			otherReasons := []string{
+				"parameter_validation_failed",
+				"image_mismatch",
+				"low_confidence",
+				"llm_parsing_error",
+				"investigation_inconclusive",
+				"rca_incomplete",
+			}
+
+			for _, reason := range otherReasons {
+				analysis := createAnalysis()
+				resp := &agentsessionv1.AgentSessionResult{
+					IncidentID:        "inc-768-other",
+					Analysis:          "Test other reason",
+					NeedsHumanReview:  true,
+					HumanReviewReason: reason,
+					Confidence:        0.5,
+					Timestamp:         "2026-04-21T00:00:00Z",
+				}
+
+				_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseFailed),
+					"Phase must remain Failed for humanReviewReason=%s", reason)
+			}
+		})
+	})
+
+	It("UT-AA-2521-010: keeps the legacy review projection while routing typed history failure", func() {
+		analysis := createAnalysis()
+		resp := &agentsessionv1.AgentSessionResult{
+			IncidentID:              "inc-2521-010",
+			Analysis:                "Actionable RCA preserved",
+			NeedsHumanReview:        true,
+			HumanReviewReason:       aianalysisv1.HumanReviewReasonRCAIncomplete,
+			TerminalOutcome:         sharedtypes.TerminalOutcomeHistoryEnrichmentUnavailable,
+			WorkflowDiscoveryStatus: sharedtypes.WorkflowDiscoveryStatusSkippedDueToFailure,
+			HistoryStatus:           sharedtypes.HistoryStatusTransportUnavailable,
+			Timestamp:               "2026-10-16T00:00:00Z",
+		}
+
+		_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseFailed))
+		Expect(analysis.Status.GetReview().HumanReviewReason).To(Equal(aianalysisv1.HumanReviewReasonRCAIncomplete))
+		Expect(analysis.Status.SubReason).To(Equal("RcaIncomplete"))
+		Expect(analysis.Status.GetRCAResult().TerminalOutcome).To(Equal(sharedtypes.TerminalOutcomeHistoryEnrichmentUnavailable))
+		Expect(analysis.Status.GetRCAResult().HistoryStatus).To(Equal(sharedtypes.HistoryStatusTransportUnavailable))
+	})
+
+	It("UT-AA-2521-011: typed discovery failure overrides a stale legacy no-match reason", func() {
+		analysis := createAnalysis()
+		resp := &agentsessionv1.AgentSessionResult{
+			IncidentID:              "inc-2521-011",
+			Analysis:                "Workflow discovery could not complete",
+			NeedsHumanReview:        true,
+			HumanReviewReason:       aianalysisv1.HumanReviewReasonNoMatchingWorkflows,
+			TerminalOutcome:         sharedtypes.TerminalOutcomeWorkflowDiscoveryFailed,
+			WorkflowDiscoveryStatus: sharedtypes.WorkflowDiscoveryStatusFailed,
+			HistoryStatus:           sharedtypes.HistoryStatusAvailable,
+			Timestamp:               "2026-10-16T00:00:00Z",
+		}
+
+		_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseFailed))
+		Expect(analysis.Status.SubReason).To(Equal("InvestigationInconclusive"))
+		Expect(analysis.Status.SubReason).NotTo(Equal(aianalysisv1.SubReasonNoMatchingWorkflows))
+		Expect(analysis.Status.GetReview().HumanReviewReason).To(Equal("investigation_inconclusive"))
+	})
+
+	It("UT-AA-2521-012: legacy no-match reason without a completed gate cannot complete analysis", func() {
+		analysis := createAnalysis()
+		resp := &agentsessionv1.AgentSessionResult{
+			IncidentID:        "inc-2521-012",
+			Analysis:          "Workflow selection did not produce a result",
+			NeedsHumanReview:  true,
+			HumanReviewReason: aianalysisv1.HumanReviewReasonNoMatchingWorkflows,
+			HistoryStatus:     sharedtypes.HistoryStatusAvailable,
+			Timestamp:         "2026-10-16T00:00:00Z",
+		}
+
+		_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseFailed))
+		Expect(analysis.Status.SubReason).To(Equal("InvestigationInconclusive"))
+		Expect(analysis.Status.SubReason).NotTo(Equal(aianalysisv1.SubReasonNoMatchingWorkflows))
+		Expect(analysis.Status.GetReview().HumanReviewReason).To(Equal("investigation_inconclusive"))
+	})
+
+	It("UT-AA-2521-013: explicit not-actionable outcome overrides a stale typed RCA failure", func() {
+		analysis := createAnalysis()
+		notActionable := false
+		resp := &agentsessionv1.AgentSessionResult{
+			IncidentID:              "inc-2521-013",
+			Analysis:                "The alert is benign",
+			NeedsHumanReview:        false,
+			IsActionable:            &notActionable,
+			Warnings:                []string{"Alert not actionable"},
+			TerminalOutcome:         sharedtypes.TerminalOutcomeRCAIncomplete,
+			WorkflowDiscoveryStatus: sharedtypes.WorkflowDiscoveryStatusSkippedDueToFailure,
+			HistoryStatus:           sharedtypes.HistoryStatusNotRequested,
+			Timestamp:               "2026-10-16T00:00:00Z",
+		}
+
+		_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseCompleted))
+		Expect(analysis.Status.Reason).To(Equal(aianalysisv1.ReasonWorkflowNotNeeded))
+		Expect(analysis.Status.SubReason).To(Equal("NotActionable"))
+		Expect(analysis.Status.GetRCAResult().Actionability).To(Equal(aianalysis.ActionabilityNotActionable))
+		Expect(analysis.Status.GetReview().NeedsHumanReview).To(BeFalse())
+	})
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// Issue #769: rootCauseAnalysis preservation
+	// ═══════════════════════════════════════════════════════════════════════
+
+	Context("#769: RCA preservation for no_matching_workflows", func() {
+		It("UT-AA-769-001: sets rootCause to RCA summary string", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(analysis.Status.GetRCAResult().RootCause).To(Equal("The namespace-quota ResourceQuota is exhausted"),
+				"#769: rootCause must contain the RCA summary, not 'N/A'")
+		})
+
+		It("UT-AA-769-002 / UT-AA-SP-105-001 (BR-AI-008, BR-SP-105): keeps SP severity over model RCA severity", func() {
+			analysis := createAnalysis()
+			analysis.Spec.AnalysisRequest.SignalContext.Severity = "high"
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis).ToNot(BeNil(),
+				"#769: rootCauseAnalysis must be set")
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.Summary).To(
+				Equal("The namespace-quota ResourceQuota is exhausted"))
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.Severity).To(Equal("high"),
+				"SignalProcessing severity must be authoritative in AIAnalysis RCA")
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.ContributingFactors).To(HaveLen(2))
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.RemediationTarget.Kind).To(Equal("Deployment"))
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.RemediationTarget.Name).To(Equal("api-server"))
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.RemediationTarget.Namespace).To(Equal("demo-quota"))
+		})
+
+		It("UT-AA-SP-105-002 (BR-SP-105): uses SP severity when KA omits RCA severity", func() {
+			analysis := createAnalysis()
+			analysis.Spec.AnalysisRequest.SignalContext.Severity = "high"
+			resp := buildNoMatchingWorkflowsResp()
+			resp.RootCauseAnalysis = rawJSON(map[string]interface{}{
+				"summary": "The namespace-quota ResourceQuota is exhausted",
+			})
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.Severity).To(Equal("high"),
+				"SP-classified severity must replace the mapper's unknown fallback")
+		})
+
+		It("UT-AA-2467-001: ignores model severity and keeps RCA signal_name distinct from normalized SP SignalName", func() {
+			analysis := createAnalysis()
+			analysis.Spec.AnalysisRequest.SignalContext.Severity = "critical"
+			analysis.Spec.AnalysisRequest.SignalContext.SignalName = "SPNormalizedMemoryPressure"
+			resp := buildNoMatchingWorkflowsResp()
+			resp.RootCauseAnalysis = rawJSON(map[string]interface{}{
+				"summary":              "A deployment exceeded its memory limit",
+				"severity":             "info",
+				"signal_name":          "OOMKilled",
+				"contributing_factors": []string{"memory limit exceeded"},
+			})
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).NotTo(HaveOccurred())
+
+			rca := analysis.Status.GetRCAResult().RootCauseAnalysis
+			Expect(rca).NotTo(BeNil())
+			Expect(rca.Severity).To(Equal("critical"), "only AIA's SP-derived spec value may populate RCA severity")
+			Expect(rca.SignalType).To(Equal("OOMKilled"), "LLM RCA signal_name remains an effect finding")
+			Expect(analysis.Spec.AnalysisRequest.SignalContext.SignalName).To(Equal("SPNormalizedMemoryPressure"),
+				"the LLM effect finding must not replace SP's normalized input signal name")
+		})
+
+		It("UT-AA-2467-002: does not invent unknown severity when an invalid AIA input lacks SP severity", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis.Severity).To(BeEmpty(),
+				"invalid AIA input must not be completed with model severity or an invented unknown classification")
+		})
+
+		It("UT-AA-769-003: handles nil RCA gracefully — no panic, fields remain empty", func() {
+			analysis := createAnalysis()
+			resp := buildNoMatchingWorkflowsResp()
+			resp.RootCauseAnalysis = nil
+
+			_, err := processor.ProcessAgentSessionResult(ctx, analysis, resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(analysis.Status.GetRCAResult().RootCause).To(BeEmpty())
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis).To(BeNil())
+			Expect(analysis.Status.Phase).To(Equal(aianalysis.PhaseCompleted),
+				"Phase must still be Completed even without RCA")
+		})
+	})
+})
+
+// spyAuditClient tracks which audit methods are called for assertion.
+type spyAuditClient struct {
+	noopAuditClient
+	completeCount int
+	failedCount   int
+}
+
+func (s *spyAuditClient) RecordAnalysisComplete(_ context.Context, _ *aianalysisv1.AIAnalysis) {
+	s.completeCount++
+}
+
+func (s *spyAuditClient) RecordAnalysisFailed(_ context.Context, _ *aianalysisv1.AIAnalysis, _ error) error {
+	s.failedCount++
+	return nil
+}

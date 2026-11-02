@@ -1,0 +1,31 @@
+# Gateway Service Configuration
+# ADR-030: Service Configuration Management
+# Per CRD_FIELD_NAMING_CONVENTION.md: camelCase for YAML fields
+
+server:
+  listenAddr: ":8080"
+  maxConcurrentRequests: 100
+  readTimeout: 30s
+  writeTimeout: 30s
+  idleTimeout: 120s
+
+middleware:
+  # Rate limiting delegated to proxy (ADR-048)
+
+# ADR-030: DataStorage connectivity (audit trail + workflow catalog)
+datastorage:
+  url: "http://data-storage-service:8080"
+  timeout: 10s
+  buffer:
+    bufferSize: 10000
+    batchSize: 100
+    flushInterval: 1s
+    maxRetries: 3
+
+processing:
+  deduplication:
+    ttl: 5m  # DEPRECATED: No effect (DD-GATEWAY-011)
+  retry:
+    maxAttempts: 3
+    initialBackoff: 100ms
+    maxBackoff: 5s

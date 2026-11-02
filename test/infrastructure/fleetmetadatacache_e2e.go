@@ -1,0 +1,616 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+)
+
+// keycloakHostPortFMC is the Kind extraPortMappings host port for Keycloak in
+// kind-fleetmetadatacache-config.yaml. Matches the NodePort (30557) directly,
+// following the Dex convention this lane previously used -- see
+// waitForKeycloakReady in keycloak_e2e.go.
+const keycloakHostPortFMC = 30557
+
+// SetupFMCE2EInfrastructure deploys the dedicated Fleet Metadata Cache (FMC)
+// E2E stack: Keycloak (OIDC IdP + RFC 8693 token exchange) + the fleet-core
+// stack (Istio + Kuadrant MCP Gateway + kube-mcp-server + Valkey + FMC) via
+// DeployFleetCoreInfra.
+//
+// DataStorage is deliberately NOT deployed here: FMC is audit-exempt
+// (DD-AUDIT-003) and never calls DataStorage's API, so unlike other E2E
+// lanes this one has no audit-trail dependency to satisfy.
+//
+// Unlike the "fleet" E2E suite (test/e2e/fleet/), this lane does NOT deploy
+// Gateway, RemediationOrchestrator, or the other 8+ Kubernaut services --
+// it proves FMC's own journeys in isolation (BR-INTEGRATION-065):
+//   - Real OAuth2 client_credentials token acquisition from Keycloak
+//   - Real discovery of MCPServerRegistrations via the Kuadrant MCP Gateway
+//   - Real Valkey-backed scope resolution served by FMC's HTTP API
+//   - Real RFC 8693 Standard Token Exchange: kube-mcp-server runs in
+//     passthrough mode and exchanges FMC's token for a K8s-API-scoped token,
+//     preserving FMC's identity end-to-end (Spike S17/S18; see
+//     docs/testing/BR-INTEGRATION-054/TEST_PLAN.md E2E-FMC-054-014).
+//
+// Keycloak replaces Dex in this lane only -- the full "fleet" suite
+// (test/infrastructure/fleet_e2e.go DeployFleetInfra) still uses Dex, since
+// Dex does not implement RFC 8693 Standard Token Exchange.
+//
+// The returned remoteKubeconfigPath is the second, independent Kind
+// cluster's kubeconfig (DD-TEST-013, Spike S19) backing the "prod-east"
+// registration -- callers (suite_test.go) must populate
+// shared.Harness.RemoteKubeconfigPath/RemoteK8sClient from it and tear that
+// cluster down alongside the primary one in SynchronizedAfterSuite.
+//
+// Authority: Issue #54, ADR-068, BR-INTEGRATION-065, DD-TEST-013.
+func SetupFMCE2EInfrastructure(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) (fmcImage, remoteKubeconfigPath string, err error) {
+	return setupFMCE2EInfrastructure(ctx, clusterName, kubeconfigPath, registry.GatewayKuadrant, writer)
+}
+
+// SetupFMCE2EInfrastructureEAIGW is the Envoy AI Gateway (EAIGW) sibling of
+// SetupFMCE2EInfrastructure (Spike S18, Phase B): identical Phases 1-6
+// (image, Kind cluster, TLS, Keycloak, API server OIDC patch) and the same
+// passthrough+STS kube-mcp-server token-exchange design, but Phase 7 fronts
+// kube-mcp-server with Envoy AI Gateway instead of Kuadrant
+// (deployEnvoyAIGatewayInfra/deployEnvoyAIGatewayRegistrations in
+// fleet_e2e.go) -- see the "Key design decision" section of the EAIGW plan
+// doc for why the RFC 8693 exchange itself needs no gateway-specific changes.
+//
+// Uses kind-fleetmetadatacache-eaigw-config.yaml (a separate, isolated Kind
+// cluster) so this lane can run alongside the Kuadrant lane in CI without
+// port collisions.
+func SetupFMCE2EInfrastructureEAIGW(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) (fmcImage, remoteKubeconfigPath string, err error) {
+	return setupFMCE2EInfrastructure(ctx, clusterName, kubeconfigPath, registry.GatewayEAIGW, writer)
+}
+
+// SetupFMCHubOnlyInfrastructure provisions the FMC lane's Keycloak, EAIGW,
+// kube-mcp-server, Valkey, and FMC components into an already-created AF E2E
+// cluster. It reuses the AF lane's existing inter-service CA, registers only
+// the logical hub, and creates no remote Kind cluster (DD-TEST-019).
+func SetupFMCHubOnlyInfrastructure(ctx context.Context, clusterName, kubeconfigPath, namespace, fmcImage string, writer io.Writer) (*FleetHelmOptions, error) {
+	if strings.TrimSpace(fmcImage) == "" {
+		return nil, fmt.Errorf("fmc image is required for hub-only FMC infrastructure")
+	}
+	_, _ = fmt.Fprintln(writer, "🚀 Provisioning hub-only Fleet core from the FMC E2E setup...")
+
+	oidcConfig := OIDCPatchConfig{
+		IssuerURL:      "https://keycloak:8443/realms/kubernaut-demo",
+		ClientID:       "k8s-api",
+		UsernameClaim:  "preferred_username",
+		UsernamePrefix: "keycloak:",
+	}
+	keycloakStarted := startAFInfraSetupStep(writer, "deploy Fleet-lane Keycloak")
+	if err := DeployKeycloakInfra(ctx, namespace, kubeconfigPath, keycloakHostPortFMC, false, writer); err != nil {
+		finishAFInfraSetupStep(writer, "deploy Fleet-lane Keycloak", keycloakStarted)
+		return nil, fmt.Errorf("deploy FMC-lane Keycloak: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "deploy Fleet-lane Keycloak", keycloakStarted)
+	apiServerOIDCStarted := startAFInfraSetupStep(writer, "configure Fleet-lane API server OIDC")
+	if err := patchAPIServerForOIDCConfig(ctx, clusterName, kubeconfigPath, oidcConfig, namespace, writer); err != nil {
+		finishAFInfraSetupStep(writer, "configure Fleet-lane API server OIDC", apiServerOIDCStarted)
+		return nil, fmt.Errorf("patch AF Fleet cluster API server for Keycloak OIDC: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "configure Fleet-lane API server OIDC", apiServerOIDCStarted)
+
+	const (
+		fleetClientID     = "kubernaut-fleet-read"
+		fleetClientSecret = "e2e-fleet-secret"
+	)
+	fleetScopes := []string{"kube-mcp-server-audience"}
+	authConfig := KubeMCPServerAuthConfig{
+		Mode:                KubeMCPServerAuthModePassthrough,
+		GatewayType:         registry.GatewayEAIGW,
+		MCPGatewayNamespace: DefaultMCPGatewayNamespace,
+		RequireOAuth:        true,
+		AuthorizationURL:    oidcConfig.IssuerURL,
+		KeycloakNamespace:   namespace,
+		OAuthAudience:       "kube-mcp-server",
+		StsClientID:         "kube-mcp-server",
+		StsClientSecret:     "e2e-kube-mcp-server-secret",
+		StsAudience:         "k8s-api",
+		StsScopes:           []string{"k8s-api-audience"},
+		CAFilePath:          "/etc/tls-ca/ca.crt",
+		HubClusterID:        "hub",
+	}
+	gatewayStarted := startAFInfraSetupStep(writer, "deploy Fleet-lane Gateway and kube-mcp-server")
+	mcpGatewayEndpoint, err := DeployFleetGatewayInfra(ctx, namespace, kubeconfigPath, authConfig, writer)
+	if err != nil {
+		finishAFInfraSetupStep(writer, "deploy Fleet-lane Gateway and kube-mcp-server", gatewayStarted)
+		return nil, fmt.Errorf("deploy hub-only FMC-lane Gateway: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "deploy Fleet-lane Gateway and kube-mcp-server", gatewayStarted)
+	rbacStarted := startAFInfraSetupStep(writer, "grant Fleet-lane exchanged identity RBAC")
+	if err := applyExchangedIdentityRBAC(ctx, kubeconfigPath, writer); err != nil {
+		finishAFInfraSetupStep(writer, "grant Fleet-lane exchanged identity RBAC", rbacStarted)
+		return nil, fmt.Errorf("grant the exchanged hub identity read access: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "grant Fleet-lane exchanged identity RBAC", rbacStarted)
+	keycloakFleetReadToken := func() (string, error) {
+		return GetKeycloakClientCredentialsToken(ctx, KeycloakFleetTokenConfig{
+			TokenEndpoint:  fmt.Sprintf("https://localhost:%d/realms/kubernaut-demo/protocol/openid-connect/token", keycloakHostPortFMC),
+			ClientID:       fleetClientID,
+			ClientSecret:   fleetClientSecret,
+			Scopes:         fleetScopes,
+			KubeconfigPath: kubeconfigPath,
+		})
+	}
+	_, hubToolPrefix := fleetHubRegistrationIdentity(authConfig)
+	gatewayReadyStarted := startAFInfraSetupStep(writer, "wait for Fleet-lane authenticated Gateway readiness")
+	if err := WaitForFleetReady(ctx, keycloakFleetReadToken, eaigwGatewayNodePort, hubToolPrefix, kubeconfigPath, writer); err != nil {
+		finishAFInfraSetupStep(writer, "wait for Fleet-lane authenticated Gateway readiness", gatewayReadyStarted)
+		return nil, fmt.Errorf("wait for hub-only Gateway readiness: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "wait for Fleet-lane authenticated Gateway readiness", gatewayReadyStarted)
+	oauthSecretStarted := startAFInfraSetupStep(writer, "deploy Fleet OAuth2 credentials")
+	if err := deployFleetOAuth2Secret(ctx, namespace, kubeconfigPath, writer, false); err != nil {
+		finishAFInfraSetupStep(writer, "deploy Fleet OAuth2 credentials", oauthSecretStarted)
+		return nil, fmt.Errorf("deploy shared AF/KA Fleet OAuth2 secret: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "deploy Fleet OAuth2 credentials", oauthSecretStarted)
+	fmcOAuth2 := FMCOAuth2Config{
+		TokenURL:     "https://keycloak:8443/realms/kubernaut-demo/protocol/openid-connect/token",
+		ClientID:     fleetClientID,
+		ClientSecret: fleetClientSecret,
+		Scopes:       fleetScopes,
+	}
+	fmcStarted := startAFInfraSetupStep(writer, "deploy Fleet-lane Valkey and Metadata Cache")
+	if err := deployValkeyAndFMC(ctx, namespace, kubeconfigPath, fmcImage, mcpGatewayEndpoint,
+		authConfig, fmcOAuth2, os.Getenv("E2E_COVERAGE") == trueFixture, writer); err != nil {
+		finishAFInfraSetupStep(writer, "deploy Fleet-lane Valkey and Metadata Cache", fmcStarted)
+		return nil, fmt.Errorf("deploy FMC lane Valkey/FMC components: %w", err)
+	}
+	finishAFInfraSetupStep(writer, "deploy Fleet-lane Valkey and Metadata Cache", fmcStarted)
+
+	return &FleetHelmOptions{
+		MCPGatewayEndpoint:        mcpGatewayEndpoint,
+		MCPGatewayType:            string(registry.GatewayEAIGW),
+		MCPGatewayNamespace:       DefaultMCPGatewayNamespace,
+		OAuth2TokenURL:            keycloakFleetTokenURLFor(namespace, namespace),
+		OAuth2CredentialsSecret:   fleetOAuth2SecretName,
+		OAuth2Scopes:              fleetScopes,
+		WEOAuth2CredentialsSecret: fleetOAuth2SecretName,
+		SignalProcessingNamespace: namespace,
+		// Hub-only FMC is deployed by deployValkeyAndFMC in the application
+		// namespace. This field is the FMC service namespace for the AF raw
+		// config; the MCP Gateway watch namespace is carried separately in the
+		// raw FMC config through authConfig.MCPGatewayNamespace.
+		FleetMetadataCacheNamespace: namespace,
+	}, nil
+}
+
+func setupFMCE2EInfrastructure(ctx context.Context, clusterName, kubeconfigPath string, gatewayType registry.MCPGatewayType, writer io.Writer) (fmcImage, remoteKubeconfigPath string, err error) {
+	gatewayLabel := gatewayLabelKuadrant
+	kindConfigPath := "test/infrastructure/kind-fleetmetadatacache-config.yaml"
+	mcpGatewayNodePort := 31975
+	loopbackToolPrefix := "loopback_cluster_"
+	if gatewayType == registry.GatewayEAIGW {
+		gatewayLabel = gatewayLabelEAIGW
+		kindConfigPath = "test/infrastructure/kind-fleetmetadatacache-eaigw-config.yaml"
+		mcpGatewayNodePort = eaigwGatewayNodePort
+		// EAIGW does not support an explicit tool-name prefix (unlike Kuadrant's
+		// MCPServerRegistration.spec.prefix) -- it auto-derives "<Backend name>__"
+		// from the Backend, confirmed against the Backend named "loopback-cluster"
+		// registered in deployEnvoyAIGatewayRegistrations (Spike S18).
+		loopbackToolPrefix = "loopback-cluster__"
+	}
+
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🚀 Fleet Metadata Cache (FMC) E2E Infrastructure")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintf(writer, "  Deploys: Keycloak + Fleet Core (%s/kube-mcp-server/Valkey/FMC)\n", gatewayLabel)
+	_, _ = fmt.Fprintln(writer, "  Skips: Gateway, RemediationOrchestrator, and other Kubernaut services")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	namespace := kubernautSystem
+
+	// ── Phase 1: Build fleetmetadatacache image (before cluster creation) ──
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 1: Building fleetmetadatacache image (NO CLUSTER YET)...")
+	buildCfg := E2EImageConfig{
+		ServiceName:      "fleetmetadatacache",
+		ImageName:        "fleetmetadatacache",
+		DockerfilePath:   "docker/fleetmetadatacache.Dockerfile",
+		BuildContextPath: "",
+		EnableCoverage:   os.Getenv("E2E_COVERAGE") == trueFixture,
+	}
+	fmcImage, err = BuildImageForKind(ctx, buildCfg, writer)
+	if err != nil {
+		return "", "", fmt.Errorf("fleetmetadatacache image build failed: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ FleetMetadataCache image built: %s\n", fmcImage)
+
+	// ── Phase 2: Create Kind cluster + namespace ─────────────────────────
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 2: Creating Kind cluster + namespace...")
+	opts := KindClusterOptions{
+		ClusterName:             clusterName,
+		KubeconfigPath:          kubeconfigPath,
+		ConfigPath:              kindConfigPath,
+		WaitTimeout:             "5m",
+		DeleteExisting:          false,
+		ReuseExisting:           false,
+		UsePodman:               true,
+		ProjectRootAsWorkingDir: true, // DD-TEST-007: For ./coverdata resolution
+	}
+	if clusterErr := CreateKindClusterWithConfig(ctx, opts, writer); clusterErr != nil {
+		return "", "", fmt.Errorf("failed to create Kind cluster: %w", clusterErr)
+	}
+
+	if nsErr := CreateTestNamespace(ctx, namespace, kubeconfigPath, writer); nsErr != nil {
+		return "", "", fmt.Errorf("failed to create namespace: %w", nsErr)
+	}
+
+	// ── Phase 3: Load image into Kind ────────────────────────────────────
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 3: Loading image into Kind...")
+	if loadErr := LoadImageToKind(ctx, fmcImage, "fleetmetadatacache", clusterName, writer); loadErr != nil {
+		return "", "", fmt.Errorf("failed to load fleetmetadatacache image: %w", loadErr)
+	}
+
+	// ── Phase 4: Inter-service TLS (must precede Keycloak) ───────────────
+	// No audit signing cert here (GenerateSigningCertSecret): that secret is
+	// only consumed by DataStorage's hash-chain signing, and this lane does
+	// not deploy DataStorage (FMC is audit-exempt, DD-AUDIT-003).
+	_, _ = fmt.Fprintln(writer, "\n🔐 PHASE 4: Generating inter-service TLS...")
+	if _, tlsErr := GenerateInterServiceTLS(ctx, kubeconfigPath, namespace, writer); tlsErr != nil {
+		return "", "", fmt.Errorf("failed to generate inter-service TLS: %w", tlsErr)
+	}
+
+	// ── Phase 5: Keycloak OIDC + token-exchange provider (must be ready before API server OIDC patch) ─
+	_, _ = fmt.Fprintln(writer, "\n🔑 PHASE 5: Deploying Keycloak OIDC provider...")
+	// persistent=false: this lane is short-lived (BR-PLATFORM-014 scopes
+	// persistence to the demo entry point only), same behavior as before.
+	if kcErr := DeployKeycloakInfra(ctx, namespace, kubeconfigPath, keycloakHostPortFMC, false, writer); kcErr != nil {
+		return "", "", fmt.Errorf("failed to deploy Keycloak: %w", kcErr)
+	}
+
+	// ── Phase 6: Patch API server for OIDC (needs Keycloak already running) ──
+	// ClientID is "k8s-api", NOT "kubernaut-fleet-read": the API server must
+	// validate the *exchanged* token's audience (kube-mcp-server presents it
+	// after RFC 8693 exchange), not the original caller's token audience.
+	// UsernameClaim=preferred_username: Spike S18 proved this claim survives
+	// the exchange unchanged, preserving FMC's identity for RBAC purposes.
+	_, _ = fmt.Fprintln(writer, "\n🔑 PHASE 6: Patching API server for OIDC (Keycloak issuer, k8s-api audience)...")
+	oidcCfg := OIDCPatchConfig{
+		IssuerURL:      "https://keycloak:8443/realms/kubernaut-demo",
+		ClientID:       "k8s-api",
+		UsernameClaim:  "preferred_username",
+		UsernamePrefix: "keycloak:",
+	}
+	if oidcErr := patchAPIServerForOIDCConfig(ctx, clusterName, kubeconfigPath, oidcCfg, namespace, writer); oidcErr != nil {
+		return "", "", fmt.Errorf("API server OIDC patching failed: %w", oidcErr)
+	}
+
+	// ── Phase 6b: Provision remote cluster for cross-cluster isolation ──
+	// Backs "prod-east" with a genuinely separate Kubernetes control plane
+	// (DD-TEST-013, Spike S19) instead of the loopback pattern every other
+	// registered cluster uses. Must run after Phase 5 (Keycloak up) and
+	// Phase 6 (primary cluster exists, for its node bridge IP), and before
+	// Phase 7 builds the primary's kube-mcp-server auth config with
+	// RemoteBridge set.
+	_, _ = fmt.Fprintln(writer, "\n🌍 PHASE 6b: Provisioning remote cluster (cross-cluster isolation, DD-TEST-013)...")
+	remoteClusterName := clusterName + "-remote"
+	remoteKubeconfigPath = filepath.Join(filepath.Dir(kubeconfigPath), remoteClusterName+"-config")
+	remoteKubeMCPAuthConfig := KubeMCPServerAuthConfig{
+		Mode:             KubeMCPServerAuthModePassthrough,
+		GatewayType:      gatewayType,
+		RequireOAuth:     true,
+		AuthorizationURL: "https://keycloak:8443/realms/kubernaut-demo",
+		OAuthAudience:    "kube-mcp-server",
+		StsClientID:      "kube-mcp-server",
+		StsClientSecret:  "e2e-kube-mcp-server-secret",
+		StsAudience:      "k8s-api",
+		StsScopes:        []string{"k8s-api-audience"},
+		CAFilePath:       "/etc/tls-ca/ca.crt",
+	}
+	// ExtraWorkerNodes=0: this standalone FMC E2E lane only exercises the
+	// "prod-east" cross-cluster bridge (DD-TEST-013) and has no demo
+	// scenario needing a worker node distinct from the control plane --
+	// unlike the "fleet" suite's spoke (see SetupRemoteClusterForFMC call
+	// in fleet_e2e.go), which threads Issue #2333's spokeWorkers through.
+	remoteBridge, remoteErr := SetupRemoteClusterForFMC(ctx, RemoteClusterFMCConfig{
+		PrimaryClusterName:    clusterName,
+		PrimaryKubeconfigPath: kubeconfigPath,
+		RemoteClusterName:     remoteClusterName,
+		RemoteKubeconfigPath:  remoteKubeconfigPath,
+		MCPServerNamespace:    DefaultRemoteMCPServerNamespace,
+		KeycloakIssuerURL:     oidcCfg.IssuerURL,
+		KeycloakNodePort:      keycloakHostPortFMC,
+		AuthConfig:            remoteKubeMCPAuthConfig,
+	}, writer)
+	if remoteErr != nil {
+		return "", "", fmt.Errorf("remote cluster provisioning failed: %w", remoteErr)
+	}
+
+	// Issue #2314: SetupRemoteClusterForFMC only creates the configured remote
+	// MCP namespace (mcp-system by default) on the remote cluster --
+	// kubernaut-system (namespace) never existed there.
+	// shared/cross_cluster_isolation.go's E2E-FMC-054-015
+	// creates a Service directly in it on the remote cluster (h.Namespace),
+	// which fails with "namespaces \"kubernaut-system\" not found" now that
+	// the remote cluster is genuinely separate (DD-TEST-013) rather than a
+	// loopback pointing at the primary's own Helm-managed namespace.
+	_, _ = fmt.Fprintf(writer, "\n📁 Creating %s namespace on the remote cluster (Issue #2314)...\n", namespace)
+	if err := CreateTestNamespace(ctx, namespace, remoteKubeconfigPath, writer); err != nil {
+		return "", "", fmt.Errorf("failed to create %s namespace on remote cluster: %w", namespace, err)
+	}
+
+	// ── Phase 7: Fleet core (Istio + Kuadrant + kube-mcp-server + Valkey + FMC) ─
+	// kube-mcp-server runs in passthrough mode with RFC 8693 token exchange
+	// (Spike S17/S18): it forwards FMC's incoming Bearer token, exchanges it
+	// for a token scoped to the "k8s-api" audience, and presents that
+	// exchanged token to the Kubernetes API server -- validating the real
+	// production token-exchange wiring end-to-end (E2E-FMC-054-014).
+	_, _ = fmt.Fprintln(writer, "\n🌐 PHASE 7: Deploying fleet-core infrastructure (kube-mcp-server: passthrough + token exchange)...")
+
+	// FMC's own client_credentials grant now goes to Keycloak instead of DEX
+	// (Keycloak replaces DEX in this lane -- Spike S17/S18).
+	fmcOAuth2Config := FMCOAuth2Config{
+		TokenURL:     "https://keycloak:8443/realms/kubernaut-demo/protocol/openid-connect/token",
+		ClientID:     "kubernaut-fleet-read",
+		ClientSecret: "e2e-fleet-secret",
+		// Keycloak's kubernaut-fleet-read client has no "openid"/"groups"
+		// scope assigned (pkg/fleet/fmc/config's DEX-flavored default);
+		// request the audience-mapper scope instead (Spike S17/S18).
+		Scopes: []string{"kube-mcp-server-audience"},
+	}
+
+	kubeMCPAuthConfig := KubeMCPServerAuthConfig{
+		Mode:                KubeMCPServerAuthModePassthrough,
+		GatewayType:         gatewayType,
+		MCPGatewayNamespace: DefaultMCPGatewayNamespace,
+		RequireOAuth:        true,
+		AuthorizationURL:    "https://keycloak:8443/realms/kubernaut-demo",
+		OAuthAudience:       "kube-mcp-server",
+		StsClientID:         "kube-mcp-server",
+		StsClientSecret:     "e2e-kube-mcp-server-secret",
+		StsAudience:         "k8s-api",
+		StsScopes:           []string{"k8s-api-audience"},
+		CAFilePath:          "/etc/tls-ca/ca.crt",
+		RemoteBridge:        remoteBridge,
+	}
+
+	if err := runFMCFleetCorePhase(ctx, namespace, kubeconfigPath, fmcImage, gatewayType, fmcOAuth2Config, &kubeMCPAuthConfig, buildCfg.EnableCoverage, mcpGatewayNodePort, loopbackToolPrefix, writer); err != nil {
+		return "", "", err
+	}
+
+	// ── Phase 8: Expose FMC's own API + health via NodePort ──────────────
+	// DD-TEST-001 mandates NodePort over kubectl port-forward for E2E test
+	// stability. DeployFleetCoreInfra only creates a ClusterIP Service for
+	// FMC (fleetmetadatacache-service, for in-cluster GW/RO callers), so this
+	// is an additive Service selecting the same pods -- no shared-code change.
+	//
+	// Issue #1683: adds the dedicated health port (readyz/healthz moved off
+	// the now-TLS-protected API port, Section 4.3 design decision) alongside
+	// the pre-existing API port.
+	_, _ = fmt.Fprintln(writer, "\n🔌 PHASE 8: Exposing FMC API + health via NodePort (DD-TEST-001)...")
+	fmcNodePortManifest := fmt.Sprintf(`---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleetmetadatacache-e2e-nodeport
+  namespace: %s
+  labels:
+    app: fleetmetadatacache
+    component: fleet-e2e
+spec:
+  type: NodePort
+  selector:
+    app: fleetmetadatacache
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+    nodePort: 30150
+  - name: health
+    port: 8081
+    targetPort: 8081
+    nodePort: 30151
+`, namespace)
+	if npErr := kubectlApplyManifest(ctx, kubeconfigPath, writer, fmcNodePortManifest); npErr != nil {
+		return "", "", fmt.Errorf("failed to expose FMC API via NodePort: %w", npErr)
+	}
+	_, _ = fmt.Fprintln(writer, "    ✅ FMC API reachable at https://localhost:8150, health at http://localhost:8151")
+
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "✅ FMC E2E Infrastructure READY")
+	_, _ = fmt.Fprintln(writer, "  FMC API:      http://localhost:8150")
+	_, _ = fmt.Fprintf(writer, "  MCP Gateway:  https://localhost:%d/mcp (%s)\n", mcpGatewayNodePort, gatewayLabel)
+	_, _ = fmt.Fprintln(writer, "  Keycloak:     https://localhost:30557/realms/kubernaut-demo")
+	_, _ = fmt.Fprintf(writer, "  Remote cluster (prod-east): %s\n", remoteClusterName)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	return fmcImage, remoteKubeconfigPath, nil
+}
+
+func configureKuadrantBrokerCredential(ctx context.Context, kubeconfigPath string, gatewayType registry.MCPGatewayType, oauth FMCOAuth2Config, auth *KubeMCPServerAuthConfig) error {
+	if gatewayType == registry.GatewayEAIGW {
+		return nil
+	}
+	token, err := GetKeycloakClientCredentialsToken(ctx, KeycloakFleetTokenConfig{
+		TokenEndpoint:  fmt.Sprintf("https://localhost:%d/realms/kubernaut-demo/protocol/openid-connect/token", keycloakHostPortFMC),
+		ClientID:       oauth.ClientID,
+		ClientSecret:   oauth.ClientSecret,
+		Scopes:         oauth.Scopes,
+		KubeconfigPath: kubeconfigPath,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to obtain Kuadrant broker's kube-mcp-server discovery credential: %w", err)
+	}
+	auth.BrokerCredentialToken = token
+	return nil
+}
+
+func deployFMCFleetCore(ctx context.Context, namespace, kubeconfigPath, fmcImage string, auth KubeMCPServerAuthConfig, oauth FMCOAuth2Config, coverage bool, writer io.Writer) error {
+	if err := DeployFleetCoreInfra(ctx, namespace, kubeconfigPath, fmcImage, auth, oauth, coverage, writer); err != nil {
+		return fmt.Errorf("fleet-core infra deployment failed: %w", err)
+	}
+	return nil
+}
+
+func runFMCFleetCorePhase(ctx context.Context, namespace, kubeconfigPath, fmcImage string, gatewayType registry.MCPGatewayType, oauth FMCOAuth2Config, auth *KubeMCPServerAuthConfig, coverage bool, nodePort int, toolPrefix string, writer io.Writer) error {
+	if err := configureKuadrantBrokerCredential(ctx, kubeconfigPath, gatewayType, oauth, auth); err != nil {
+		return err
+	}
+	if err := deployFMCFleetCore(ctx, namespace, kubeconfigPath, fmcImage, *auth, oauth, coverage, writer); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(writer, "\n🔑 PHASE 7b: Creating RBAC for the exchanged FMC identity...")
+	if err := applyExchangedIdentityRBAC(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("exchanged-identity RBAC creation failed: %w", err)
+	}
+	tokenFunc := func() (string, error) {
+		return GetKeycloakClientCredentialsToken(ctx, KeycloakFleetTokenConfig{TokenEndpoint: fmt.Sprintf("https://localhost:%d/realms/kubernaut-demo/protocol/openid-connect/token", keycloakHostPortFMC), ClientID: oauth.ClientID, ClientSecret: oauth.ClientSecret, Scopes: oauth.Scopes, KubeconfigPath: kubeconfigPath})
+	}
+	if err := WaitForFleetReady(ctx, tokenFunc, nodePort, toolPrefix, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("fleet readiness check failed: %w", err)
+	}
+	return nil
+}
+
+// applyExchangedIdentityRBAC binds the K8s identity that survives kube-mcp-server's
+// RFC 8693 token exchange (Spike S18: preferred_username=service-account-kubernaut-fleet-read,
+// namespaced by --oidc-username-prefix=keycloak: in patchAPIServerForOIDCConfig)
+// to the "view" ClusterRole, matching the read-only scope FMC's dedicated
+// ServiceAccount would have under cluster_auth_mode=kubeconfig.
+func applyExchangedIdentityRBAC(ctx context.Context, kubeconfigPath string, writer io.Writer) error {
+	rbacManifest := `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fmc-exchanged-identity-binding
+  labels:
+    app: fleetmetadatacache
+    component: fleet-e2e
+    authorization: token-exchange-spike-s17-s18
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: User
+  name: "keycloak:service-account-kubernaut-fleet-read"
+  apiGroup: rbac.authorization.k8s.io
+`
+	if err := kubectlApplyManifest(ctx, kubeconfigPath, writer, rbacManifest); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(writer, "  ✅ RBAC created for keycloak:service-account-kubernaut-fleet-read (view)")
+
+	// The built-in "view" ClusterRole deliberately excludes cluster-scoped
+	// Node resources (upstream Kubernetes convention). FMC's Syncer lists
+	// Node alongside namespaced kinds (syncer.go's kind list), so grant a
+	// minimal supplementary read on nodes to the same exchanged identity.
+	nodesRBACManifest := `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fmc-exchanged-identity-nodes-read
+  labels:
+    app: fleetmetadatacache
+    component: fleet-e2e
+    authorization: token-exchange-spike-s17-s18
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fmc-exchanged-identity-nodes-binding
+  labels:
+    app: fleetmetadatacache
+    component: fleet-e2e
+    authorization: token-exchange-spike-s17-s18
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fmc-exchanged-identity-nodes-read
+subjects:
+- kind: User
+  name: "keycloak:service-account-kubernaut-fleet-read"
+  apiGroup: rbac.authorization.k8s.io
+`
+	if err := kubectlApplyManifest(ctx, kubeconfigPath, writer, nodesRBACManifest); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(writer, "  ✅ RBAC created for keycloak:service-account-kubernaut-fleet-read (nodes read, view doesn't cover cluster-scoped Node)")
+	return nil
+}
+
+// applyExchangedIdentityWriteRBAC grants the dedicated WorkflowExecution
+// exchanged identity an additional, strictly minimal write grant on batch/jobs.
+//
+// Issue #1542: job-backend workflows (e.g. crashloop-config-fix-v1) require
+// WE's Job executor to create a K8s Job on the remote cluster when
+// RemediationRequest.ClusterID is set. In passthrough auth mode, kube-mcp-server
+// forwards the caller's exchanged token as-is, so the identity itself must
+// carry the write permission -- the "view" ClusterRole from
+// applyExchangedIdentityRBAC is read-only by design.
+//
+// kube-mcp-server's create-or-update tool issues a "patch" (server-side
+// apply) against the remote API server regardless of whether the object
+// already exists, so "patch" (and "update", for non-SSA fallbacks) must be
+// granted alongside "create" -- a bare "create" grant is insufficient and
+// fails with "cannot patch resource jobs" (see CI runs 28718786969,
+// E2E-FLEET-014).
+//
+// This is a SEPARATE function (not a change to applyExchangedIdentityRBAC).
+// It is wired into the full-pipeline fleet suite and the fleet demo; the
+// FMC-only E2E lane (test/e2e/fleetmetadatacache) remains read-only, matching
+// its BR-FLEET-0xx read-path scope.
+func applyExchangedIdentityWriteRBAC(ctx context.Context, kubeconfigPath, clientID string, writer io.Writer) error {
+	rbacManifest := fmt.Sprintf(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-exchanged-identity-job-write
+  labels:
+    app: workflowexecution
+    component: fleet-e2e
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-exchanged-identity-job-write-binding
+  labels:
+    app: workflowexecution
+    component: fleet-e2e
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-exchanged-identity-job-write
+subjects:
+- kind: User
+  name: "keycloak:service-account-%[1]s"
+  apiGroup: rbac.authorization.k8s.io
+`, clientID)
+	if err := kubectlApplyManifest(ctx, kubeconfigPath, writer, rbacManifest); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ RBAC created for keycloak:service-account-%s (batch/jobs write, Issue #1542)\n", clientID)
+	return nil
+}

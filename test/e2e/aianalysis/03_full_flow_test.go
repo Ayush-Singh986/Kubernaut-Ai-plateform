@@ -1,0 +1,447 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package aianalysis
+
+import (
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+var _ = Describe("Full User Journey E2E", Label("e2e", "full-flow"), func() {
+	const (
+		// #2204: 30s (the old suite default) is too tight once AgentSession
+		// dispatch load in this shared per-process KA container gets bursty --
+		// CI RCA (run 32303708986) timed out here at exactly 30.000s waiting
+		// for Investigating->Completed. Bumped to 60s to match the same
+		// dispatch-latency headroom already applied to
+		// 08_session_async_flow_test.go/09_detected_labels_e2e_test.go.
+		timeout  = 60 * time.Second
+		interval = 500 * time.Millisecond // Poll twice per second
+	)
+
+	// Per reconciliation-phases.md v2.1: 4-phase flow
+	// Pending → Investigating → Analyzing → Completed
+
+	Context("Production incident analysis - BR-AI-001", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			_ = createTestNamespace(ctx, "full-flow-prod")
+			// #2204 follow-up (2026-08-20 helios08 RCA): RemediationRequestRef.Name
+			// must be unique per BeforeEach invocation, not a static literal --
+			// this Context has two Its ("should complete full 4-phase..." and
+			// "should require approval..."), and with --procs > 1 Ginkgo can
+			// schedule them onto different parallel processes running
+			// concurrently. AgentSessionCreator.GetOrCreate derives the child
+			// AgentSession's name deterministically from this field alone
+			// (as-<name>) with no ownership check, so both processes raced to
+			// create/adopt the SAME AgentSession; the loser's AIAnalysis
+			// silently inherited a foreign, already-terminal session it
+			// doesn't own, and its owner-scoped watch never woke it again --
+			// it hung until the 60s Eventually below timed out. Confirmed live
+			// on helios08 (TEST_PROCS=4): the stuck AIAnalysis's AgentSession
+			// ownerReference pointed at the OTHER It's AIAnalysis UID.
+			suffix := randomSuffix()
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-prod-incident-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-remediation-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-rem-001",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-fingerprint-001",
+							Severity:         "high",
+							SignalName:       "CrashLoopBackOff",
+							SignalMode:       "reactive",
+							Environment:      "production",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Deployment",
+								Name:      "payment-service",
+								Namespace: "payments",
+							},
+							EnrichmentResults: types.EnrichmentResults{
+								KubernetesContext: &types.KubernetesContext{
+									CustomLabels: map[string][]string{
+										"team":        {"payments"},
+										"cost_center": {"revenue"},
+									},
+								},
+							},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+		})
+
+		It("should complete full 4-phase reconciliation cycle", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis for production incident")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for 4-phase reconciliation to complete")
+			// NOTE: In E2E tests with mock LLM, reconciliation completes in <1 second
+			// (vs 30-60s in production with real LLM latency). We cannot reliably observe
+			// intermediate phases (Pending → Investigating → Analyzing) because the
+			// controller processes faster than Kubernetes watch latency and test polling.
+			// Instead, we verify the final "Completed" state and business outcomes.
+			// Per reconciliation-phases.md v2.1: Pending → Investigating → Analyzing → Completed
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying final status")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+
+			// Production should require approval per Rego policy
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeTrue())
+
+			// Should have workflow selected
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow).NotTo(BeNil())
+
+			// Should have completion timestamp
+			Expect(analysis.Status.CompletedAt).NotTo(BeZero())
+
+			// E2E-AA-163-002: TotalAnalysisTime populated by controller
+			// Uses >= 0 because mock LLM responds instantly; sub-second analyses truncate to 0
+			Expect(analysis.Status.GetInvestigationMetadata().TotalAnalysisTime).To(BeNumerically(">=", 0))
+
+			// E2E-AA-163-001: RootCauseAnalysis populated from mock LLM response
+			Expect(analysis.Status.GetRCAResult().RootCauseAnalysis).NotTo(BeNil())
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.Summary).NotTo(BeEmpty())
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.Severity).To(BeElementOf("critical", "high", "warning", "info", "unknown"))
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.SignalType).NotTo(BeEmpty())
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.ContributingFactors).To(ContainElement("configuration_regression"))
+
+			// E2E-AA-163-001: RemediationTarget populated from mock LLM (crashloop scenario returns Deployment)
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.RemediationTarget).NotTo(BeNil())
+			Expect(analysis.Status.RCAResult.RootCauseAnalysis.RemediationTarget.Kind).To(Equal("Deployment"))
+
+			// E2E-AA-163-002: Condition assertions for completed AA
+			Expect(analysis.Status.Conditions).To(ContainElements(
+				And(HaveField("Type", "Ready"), HaveField("Status", metav1.ConditionTrue)),
+				And(HaveField("Type", "InvestigationComplete"), HaveField("Status", metav1.ConditionTrue)),
+				And(HaveField("Type", "AnalysisComplete"), HaveField("Status", metav1.ConditionTrue)),
+				And(HaveField("Type", "WorkflowResolved"), HaveField("Status", metav1.ConditionTrue)),
+			))
+		})
+
+		It("should require approval for production environment - BR-AI-013", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating production AIAnalysis")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for completion")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying approval required")
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeTrue())
+			Expect(analysis.Status.GetApproval().ApprovalReason).NotTo(BeEmpty())
+			Expect(analysis.Status.GetApproval().ApprovalContext).NotTo(BeNil())
+		})
+	})
+
+	Context("Staging incident analysis - auto-approve", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			// #2204 follow-up: unique RemediationRequestRef.Name per call (see
+			// Production incident analysis Context above for full rationale).
+			suffix := randomSuffix()
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-staging-incident-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-remediation-staging-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-rem-002",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-fingerprint-002",
+							Severity:         "warning",
+							SignalName:       "OOMKilled",
+							SignalMode:       "reactive",
+							Environment:      "staging", // Non-production = auto-approve
+							BusinessPriority: "P2",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "web-app",
+								Namespace: "staging",
+							},
+							EnrichmentResults: types.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+		})
+
+		It("should auto-approve for staging environment", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating staging AIAnalysis")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for completion")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying auto-approved (no approval required)")
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeFalse())
+		})
+	})
+
+	Context("Data quality warnings - BR-AI-011", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			_ = createTestNamespace(ctx, "full-flow-data-quality")
+			// #2204 follow-up: unique RemediationRequestRef.Name per call (see
+			// Production incident analysis Context above for full rationale).
+			suffix := randomSuffix()
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-data-quality-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-remediation-dq-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-rem-004",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-fingerprint-004",
+							Severity:         "warning",
+							SignalName:       "CrashLoopBackOff",
+							SignalMode:       "reactive",
+							Environment:      "production",
+							BusinessPriority: "P2",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "test-app",
+								Namespace: "production",
+							},
+							EnrichmentResults: types.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation},
+					},
+				},
+			}
+		})
+
+		It("should require approval for data quality issues in production", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis with detection failures")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for completion")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying approval required due to data quality")
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeTrue())
+		})
+	})
+
+	// E2E-AA-163-003: AlternativeWorkflows - Mock LLM low_confidence scenario returns alternative_workflows
+	Context("Low confidence scenario - alternative workflows", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			_ = createTestNamespace(ctx, "full-flow-low-conf")
+			// #2204 follow-up: unique RemediationRequestRef.Name per call (see
+			// Production incident analysis Context above for full rationale).
+			suffix := randomSuffix()
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-low-conf-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-remediation-low-conf-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-rem-low-conf",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-fingerprint-low-conf",
+							Severity:         "warning",
+							SignalName:       "MOCK_LOW_CONFIDENCE", // Triggers mock scenario with alternative_workflows
+							SignalMode:       "reactive",
+							Environment:      "staging",
+							BusinessPriority: "P2",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "web-app",
+								Namespace: "staging",
+							},
+							EnrichmentResults: types.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+		})
+
+		It("should populate AlternativeWorkflows when mock returns alternatives - E2E-AA-163-003", func() {
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis with MOCK_LOW_CONFIDENCE signal type")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for Failed phase (BR-KA-197 AC-4: confidence 0.35 < 0.7 threshold -> Failed/LowConfidence)")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Failed"))
+
+			By("Verifying failure reason per BR-KA-197 AC-4")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+			Expect(analysis.Status.Reason).To(Equal(aianalysisv1.ReasonWorkflowResolutionFailed))
+			Expect(analysis.Status.SubReason).To(Equal("LowConfidence"))
+			Expect(analysis.Status.GetReview().NeedsHumanReview).To(BeTrue(),
+				"NeedsHumanReview must be true when confidence < threshold (BR-KA-197)")
+
+			By("Verifying AlternativeWorkflows populated (mock low_confidence scenario returns exactly 2 alternatives)")
+			Expect(analysis.Status.GetRCAResult().AlternativeWorkflows).To(HaveLen(2))
+			alt0 := analysis.Status.RCAResult.AlternativeWorkflows[0]
+			alt1 := analysis.Status.RCAResult.AlternativeWorkflows[1]
+			Expect(alt0.WorkflowID).NotTo(BeEmpty(),
+				"alternative[0] must have a workflow ID (may be DS-overridden or deterministic)")
+			Expect(alt0.Rationale).To(Equal("Alternative approach for ambiguous root cause"))
+			Expect(alt1.WorkflowID).NotTo(BeEmpty(),
+				"alternative[1] must have a workflow ID (may be DS-overridden or deterministic)")
+			Expect(alt1.Rationale).To(Equal("Requires human expertise to determine correct remediation"))
+			Expect(alt0.WorkflowID).NotTo(Equal(alt1.WorkflowID),
+				"alternatives must reference distinct workflows")
+			Expect(alt0.Confidence).To(BeNumerically(">", alt1.Confidence))
+		})
+	})
+
+	// E2E-AA-163-004: ValidationAttemptsHistory - Mock LLM max_retries_exhausted scenario
+	Context("Max retries exhausted - validation attempts history", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			_ = createTestNamespace(ctx, "full-flow-max-retries")
+			// #2204 follow-up: unique RemediationRequestRef.Name per call (see
+			// Production incident analysis Context above for full rationale).
+			suffix := randomSuffix()
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-max-retries-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-remediation-max-retries-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-rem-max-retries",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-fingerprint-max-retries",
+							Severity:         "high",
+							SignalName:       "MOCK_MAX_RETRIES_EXHAUSTED", // Triggers mock scenario with 3 failed validation attempts
+							SignalMode:       "reactive",
+							Environment:      "staging",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "llm-parse-fail-pod",
+								Namespace: "staging",
+							},
+							EnrichmentResults: types.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+		})
+
+		It("should populate ValidationAttemptsHistory with 3 failed attempts - E2E-AA-163-004", func() {
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis with MOCK_MAX_RETRIES_EXHAUSTED signal type")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for phase to reach Failed or Completed (self-correction loop + HTTP round-trips need headroom)")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, 60*time.Second, interval).Should(Or(Equal("Failed"), Equal("Completed")))
+
+			By("Verifying ValidationAttemptsHistory populated with 3 attempts")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+			Expect(analysis.Status.GetInvestigationMetadata().ValidationAttemptsHistory).To(HaveLen(3))
+			for i, attempt := range analysis.Status.InvestigationMetadata.ValidationAttemptsHistory {
+				Expect(attempt.Attempt).To(Equal(i + 1))
+				Expect(attempt.IsValid).To(BeFalse())
+				Expect(attempt.Errors).NotTo(BeEmpty())
+			}
+		})
+	})
+})

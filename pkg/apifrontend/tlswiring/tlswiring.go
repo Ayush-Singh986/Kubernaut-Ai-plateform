@@ -1,0 +1,202 @@
+// Package tlswiring provides TLS configuration helpers for the API Frontend.
+// It wraps the kubernaut shared TLS package with AF-specific logic for
+// conditional server TLS and per-dependency outbound transports.
+//
+// FedRAMP / FIPS 140-3 Compliance Notes (CK-01):
+//   - Server TLS is configured with MinVersion TLS 1.2 and only AEAD cipher suites
+//     (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) with ECDHE key exchange.
+//   - For native FIPS 140-3 mode, production binaries are built with
+//     GOFIPS140=certified, selecting the validated Go Cryptographic Module.
+//   - Outbound transports also enforce TLS 1.2+ with system-default cipher selection.
+//   - ChaCha20-Poly1305 is not FIPS-approved; native FIPS mode excludes it from
+//     TLS negotiation. In non-FIPS builds it provides good performance on platforms
+//     without AES-NI hardware acceleration.
+package tlswiring
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/go-logr/logr"
+	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+)
+
+// ConfigureServer sets up required TLS on the API server based on certDir.
+// Missing or invalid certificate material is returned as an error so the API
+// cannot silently downgrade to plaintext.
+// CK-02: Enforces TLS 1.2+ with FedRAMP-compatible cipher suites.
+func ConfigureServer(server *http.Server, certDir string) (bool, *sharedtls.CertReloader, error) {
+	_, reloader, err := sharedtls.ConfigureRequiredTLS(server, certDir)
+	if err != nil {
+		return false, nil, err
+	}
+	if server.TLSConfig == nil {
+		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12} // #nosec G402
+	}
+	server.TLSConfig.MinVersion = tls.VersionTLS12
+	server.TLSConfig.CipherSuites = []uint16{
+		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	}
+	return true, reloader, nil
+}
+
+// CheckPartialTLSMaterial returns a diagnostic message if exactly one of
+// tls.crt or tls.key exists in certDir. Returns "" when both or neither exist.
+func CheckPartialTLSMaterial(certDir string) string {
+	if certDir == "" {
+		return ""
+	}
+	certExists := fileExists(filepath.Join(certDir, "tls.crt"))
+	keyExists := fileExists(filepath.Join(certDir, "tls.key"))
+	if certExists && !keyExists {
+		return fmt.Sprintf("tls.key is missing from %s", certDir)
+	}
+	if !certExists && keyExists {
+		return fmt.Sprintf("tls.crt is missing from %s", certDir)
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// OutboundTransport returns a TLS-configured http.RoundTripper if caFile is
+// non-empty, or nil (meaning "use default transport") otherwise.
+func OutboundTransport(caFile string) (http.RoundTripper, error) {
+	if caFile == "" {
+		// nolint:nilnil // intentional "disabled" sentinel: nil http.RoundTripper
+		// is documented-safe (http.Client falls back to DefaultTransport), not an
+		// error condition (Issue #1546 Tier 2).
+		return nil, nil
+	}
+	return sharedtls.NewTLSTransport(caFile)
+}
+
+// CAReloadableTransport returns an http.RoundTripper whose CA trust is
+// updated whenever the underlying CA file changes on disk. The returned
+// watcher must be started by the caller via Start(ctx).
+func CAReloadableTransport(caFile string, logger logr.Logger) (http.RoundTripper, *hotreload.FileWatcher, error) {
+	if caFile == "" {
+		return nil, nil, nil
+	}
+
+	rt := &reloadableCATransport{caFile: caFile}
+	if err := rt.reload(); err != nil {
+		return nil, nil, fmt.Errorf("initial CA load from %s: %w", caFile, err)
+	}
+
+	watcher, err := hotreload.NewFileWatcher(caFile, func(_ string) error {
+		if reloadErr := rt.reload(); reloadErr != nil {
+			logger.Error(reloadErr, "CA reload failed, keeping previous trust", "file", caFile)
+			return reloadErr
+		}
+		logger.Info("outbound CA trust reloaded", "file", caFile)
+		return nil
+	}, logger.WithName("ca-reloader"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return rt, watcher, nil
+}
+
+type reloadableCATransport struct {
+	caFile string
+	mu     sync.RWMutex
+	inner  *http.Transport
+}
+
+// RoundTrip delegates to the current inner transport under a read lock.
+func (t *reloadableCATransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.RLock()
+	transport := t.inner
+	t.mu.RUnlock()
+	return transport.RoundTrip(req)
+}
+
+func (t *reloadableCATransport) reload() error {
+	caPEM, err := os.ReadFile(t.caFile)
+	if err != nil {
+		return fmt.Errorf("reading CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("no valid certificates found in %s", t.caFile)
+	}
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return fmt.Errorf("http.DefaultTransport is not *http.Transport")
+	}
+	transport := base.Clone()
+	transport.TLSClientConfig = &tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	t.mu.Lock()
+	t.inner = transport
+	t.mu.Unlock()
+	return nil
+}
+
+// StartCertFileWatcher starts a file watcher on the TLS certificate directory
+// that triggers hot-reload of the server certificate when the file changes.
+// Returns nil watcher if reloader is nil (TLS disabled).
+func StartCertFileWatcher(ctx context.Context, certDir string, reloader *sharedtls.CertReloader, logger logr.Logger) (*hotreload.FileWatcher, error) {
+	// nolint:nilnil // intentional "TLS disabled, nothing to watch" sentinel,
+	// not an error — already documented above ("Returns nil watcher if
+	// reloader is nil"); sole caller (cmd/apifrontend/main.go) already guards
+	// with `if certWatcher != nil` before use (Issue #1546 Tier 2).
+	if reloader == nil || certDir == "" {
+		return nil, nil
+	}
+	certFile := filepath.Join(certDir, "tls.crt")
+	watcher, err := hotreload.NewFileWatcher(certFile, reloader.ReloadCallback, logger.WithName("cert-reloader"))
+	if err != nil {
+		return nil, err
+	}
+	if err := watcher.Start(ctx); err != nil {
+		return nil, err
+	}
+	return watcher, nil
+}
+
+// StartCAFileWatcher starts a file watcher for the outbound CA certificate.
+// Delegates to sharedtls.StartCAFileWatcher which reads $TLS_CA_FILE.
+// Returns nil watcher if TLS_CA_FILE is not set. onReload, if provided, is
+// invoked after every reload attempt (nil error on success) so callers can
+// wire audit-trail parity (GAP-11, Issue #2285).
+func StartCAFileWatcher(ctx context.Context, logger logr.Logger, onReload ...func(error)) (*hotreload.FileWatcher, error) {
+	return sharedtls.StartCAFileWatcher(ctx, logger, onReload...)
+}
+
+// ValidateCAFilePath checks that a CA file path, if non-empty, points to a
+// readable file containing at least one valid PEM certificate.
+func ValidateCAFilePath(field, path string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- path is from operator-controlled config, not user input
+	if err != nil {
+		return fmt.Errorf("%s: cannot read CA file %q: %w", field, path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return fmt.Errorf("%s: no valid PEM certificates in %q", field, path)
+	}
+	return nil
+}

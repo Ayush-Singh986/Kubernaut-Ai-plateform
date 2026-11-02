@@ -1,0 +1,183 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package aianalysis
+
+import (
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// E2E-AA-084-001: Proactive Signal Mode Pass-Through to KA
+//
+// Business Requirement: BR-AI-084 (Proactive Signal Mode Prompt Strategy)
+// Architecture: ADR-054 (Proactive Signal Mode Classification)
+//
+// Tests that AA correctly passes signalMode from its CRD spec to KA
+// and that the Mock LLM returns a proactive-aware response.
+//
+// Data Flow: AA.Spec.SignalContext.SignalMode="proactive" → KA → Mock LLM → AA.Status
+
+var _ = Describe("E2E-AA-084-001: Proactive Signal Mode Investigation", Label("e2e", "signalmode", "aianalysis"), func() {
+	const (
+		timeout  = 30 * time.Second
+		interval = 500 * time.Millisecond
+	)
+
+	Context("Proactive OOMKill investigation (BR-AI-084)", func() {
+		It("should complete analysis with proactive signal mode context", func() {
+			// BUSINESS CONTEXT:
+			// AA receives signalMode=proactive from RO (copied from SP.Status).
+			// AA passes this to KA, which adapts the prompt for preemptive analysis.
+			// Mock LLM detects proactive keywords and returns the oomkilled_predictive scenario.
+			//
+			// This E2E test validates the full AA → KA → Mock LLM pipeline with
+			// proactive signal mode context flowing through all components.
+
+			// #2204 follow-up (2026-08-20 helios08 RCA): RemediationRequestRef.Name
+			// must be unique per call, not a static literal -- AgentSessionCreator.
+			// GetOrCreate derives the child AgentSession's name deterministically
+			// from this field alone (as-<name>) with no ownership check, so a
+			// static value risks a cross-spec/cross-process name collision (see
+			// test/e2e/aianalysis/03_full_flow_test.go for the confirmed repro).
+			suffix := randomSuffix()
+			analysis := &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-proactive-oomkill-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-proactive-remediation-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-proactive-rem-001",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-proactive-fingerprint-001",
+							Severity:         "critical",
+							SignalName:       "OOMKilled", // Normalized by SP from PredictedOOMKill
+							SignalMode:       "proactive", // BR-AI-084: Proactive signal mode
+							Environment:      "production",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Deployment",
+								Name:      "api-server",
+								Namespace: controllerNamespace,
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+
+			By("Creating AIAnalysis with signalMode=proactive")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Waiting for AA to complete investigation (4-phase reconciliation)")
+			// The Mock LLM should detect the proactive keywords in the prompt
+			// and return the oomkilled_predictive scenario response.
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"),
+				"AA should complete investigation with proactive signal mode")
+
+			By("Verifying analysis completed successfully")
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+
+			// The AA controller should have passed signalMode=proactive to KA,
+			// which should have adapted the prompt for preemptive analysis.
+			// The Mock LLM returns a workflow for the proactive scenario.
+			Expect(analysis.Status.CompletedAt).ToNot(BeZero(),
+				"CompletedAt should be set after successful completion")
+
+			GinkgoWriter.Println("E2E-AA-084-001: Proactive signal mode investigation completed in Kind cluster")
+		})
+	})
+
+	Context("Reactive signal mode investigation (backwards compatibility)", func() {
+		It("should complete standard RCA analysis for reactive signal mode", func() {
+			// BUSINESS CONTEXT:
+			// Existing reactive signals should continue working with standard RCA.
+			// signalMode=reactive (or empty) should produce normal investigation results.
+
+			// #2204 follow-up: unique RemediationRequestRef.Name per call (see
+			// Proactive OOMKill investigation Context above for full rationale).
+			suffix := randomSuffix()
+			analysis := &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-reactive-oomkill-" + suffix,
+					Namespace: controllerNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      "e2e-reactive-remediation-" + suffix,
+						Namespace: controllerNamespace,
+					},
+					RemediationID: "e2e-reactive-rem-001",
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "e2e-reactive-fingerprint-001",
+							Severity:         "critical",
+							SignalName:       "OOMKilled",
+							SignalMode:       "reactive", // Explicit reactive mode
+							Environment:      "production",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "worker-pod",
+								Namespace: controllerNamespace,
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+
+			By("Creating AIAnalysis with signalMode=reactive")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Waiting for AA to complete standard RCA investigation")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"),
+				"AA should complete standard RCA with reactive signal mode")
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+			Expect(analysis.Status.CompletedAt).ToNot(BeZero())
+
+			GinkgoWriter.Println("E2E-AA-084-001: Reactive signal mode backwards compatibility validated")
+		})
+	})
+})

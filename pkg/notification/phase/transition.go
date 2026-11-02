@@ -1,0 +1,294 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package phase
+
+import (
+	"fmt"
+
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+)
+
+// ========================================
+// PHASE TRANSITION DECISION LOGIC
+// 📋 Extracted from internal/controller/notification (determinePhaseTransition)
+// ========================================
+//
+// This file contains the pure business logic for determining phase transitions
+// based on delivery results and channel states. It is independent of K8s
+// persistence, metrics, or audit concerns.
+//
+// The controller delegates to DetermineTransition() for the decision, then
+// handles the K8s persistence (AtomicStatusUpdate, metrics, audit) itself.
+//
+// Business Requirements:
+// - BR-NOT-053: At-Least-Once Delivery
+// - BR-NOT-054: Delivery Retry with Exponential Backoff
+// - NT-BUG-003: Check for partial success before marking as Failed
+// - NT-BUG-005: Handle partial success correctly during retry loop
+// - NT-BUG-006: PartiallySent vs Retrying Phase Confusion
+// ========================================
+
+// DeliveryResult contains the results of a delivery loop for phase transition determination.
+type DeliveryResult struct {
+	// ChannelResults maps channel name to delivery error (nil = success)
+	ChannelResults map[string]error
+
+	// FailureCount is the number of channels that failed in this delivery loop
+	FailureCount int
+
+	// DeliveryAttempts from this delivery loop (used to count new successes)
+	DeliveryAttempts []notificationv1.DeliveryAttempt
+}
+
+// ChannelState provides pre-computed state information about a delivery channel.
+// The controller builds this from its helper methods before calling DetermineTransition.
+type ChannelState struct {
+	// AlreadySucceeded indicates the channel has already delivered successfully
+	// (from persisted status + in-memory tracking)
+	AlreadySucceeded bool
+
+	// AttemptCount is the total number of delivery attempts for this channel
+	// (persisted + in-flight)
+	AttemptCount int
+
+	// HasPermanentError indicates the channel has a non-retryable error
+	HasPermanentError bool
+}
+
+// TransitionDecision contains the result of phase transition determination.
+type TransitionDecision struct {
+	// NextPhase is the determined next phase for the notification.
+	// When PhaseUnchanged is true, this holds the current phase (no transition).
+	NextPhase Phase
+
+	// Reason is the machine-readable reason for the transition
+	Reason string
+
+	// Message is a human-readable description of the transition
+	Message string
+
+	// IsTerminal indicates if the next phase is a terminal state (Sent, PartiallySent, Failed)
+	IsTerminal bool
+
+	// ShouldRequeue indicates if the notification should be requeued for retry
+	ShouldRequeue bool
+
+	// PhaseUnchanged indicates no phase transition occurs (stay in current phase)
+	PhaseUnchanged bool
+
+	// IsPermanentFailure indicates this is a permanent failure (all retries exhausted)
+	// Used by the controller to distinguish permanent vs temporary failure handling
+	IsPermanentFailure bool
+
+	// MaxFailedAttemptCount is the maximum attempt count among failed channels.
+	// Used by the caller to calculate exponential backoff duration.
+	MaxFailedAttemptCount int
+}
+
+// DetermineTransition determines the next phase based on delivery results and channel states.
+//
+// This function encodes the pure business logic for phase transition decisions,
+// independent of K8s persistence, metrics, or audit concerns.
+//
+// Parameters:
+//   - notification: The notification being processed (read-only, for status access)
+//   - channels: The resolved delivery channels (from routing rules)
+//   - result: The delivery loop results
+//   - channelStates: Map of channel name to pre-computed ChannelState
+//   - maxAttempts: Maximum retry attempts from the retry policy
+//
+// The caller is responsible for:
+//   - Resolving channels from routing rules
+//   - Building channelStates from its helper methods (channelAlreadySucceeded, etc.)
+//   - Executing the K8s persistence based on the returned decision
+//   - Calculating backoff duration using MaxFailedAttemptCount
+func DetermineTransition(
+	notification *notificationv1.NotificationRequest,
+	channels []notificationv1.Channel,
+	result *DeliveryResult,
+	channelStates map[string]ChannelState,
+	maxAttempts int,
+) *TransitionDecision {
+	totalChannels := len(channels)
+
+	// #263: Guard against zero channels. This can happen when the caller
+	// fails to propagate routing-resolved channels (e.g., variable shadowing).
+	// Treating 0==0 as "all succeeded" silently drops notifications.
+	if totalChannels == 0 {
+		return &TransitionDecision{
+			NextPhase:          Failed,
+			Reason:             string(notificationv1.StatusReasonNoChannelsResolved),
+			Message:            "No delivery channels resolved — cannot deliver notification",
+			IsTerminal:         true,
+			IsPermanentFailure: true,
+		}
+	}
+
+	// Count successful deliveries from BOTH status and current delivery loop attempts.
+	// Status.SuccessfulDeliveries reflects persisted state; result.DeliveryAttempts
+	// contains NEW attempts from the current loop that haven't been persisted yet.
+	totalSuccessful := countSuccessfulDeliveries(notification, result)
+
+	// Case 1: All channels delivered successfully → Sent (terminal)
+	if totalSuccessful == totalChannels {
+		return &TransitionDecision{
+			NextPhase:  Sent,
+			Reason:     string(notificationv1.StatusReasonAllDeliveriesSucceeded),
+			Message:    fmt.Sprintf("Successfully delivered to %d channel(s)", totalSuccessful),
+			IsTerminal: true,
+		}
+	}
+
+	// Check if all channels have exhausted their retries (or succeeded/permanent-errored)
+	if allChannelsExhaustedRetries(channels, channelStates, maxAttempts) {
+		return buildExhaustedTransition(totalSuccessful, totalChannels, channels, channelStates)
+	}
+
+	// Not all channels exhausted — check for failures with retries remaining
+	if result.FailureCount > 0 {
+		return buildRetryingTransition(notification, channels, channelStates, totalSuccessful, totalChannels)
+	}
+
+	// Case 6: No failures (partial success with no failures — shouldn't normally reach here)
+	return &TransitionDecision{
+		NextPhase:      notification.Status.Phase,
+		ShouldRequeue:  true,
+		PhaseUnchanged: true,
+	}
+}
+
+// countSuccessfulDeliveries counts successful deliveries from BOTH persisted
+// status and the current delivery loop's new attempts (which haven't been
+// persisted yet). Extracted from DetermineTransition (Wave 6 6b GREEN:
+// funlen remediation) — pure code motion, no behavior change.
+func countSuccessfulDeliveries(notification *notificationv1.NotificationRequest, result *DeliveryResult) int {
+	total := notification.Status.SuccessfulDeliveries
+	for _, attempt := range result.DeliveryAttempts {
+		if attempt.Status == notificationv1.DeliveryAttemptStatusSuccess {
+			total++
+		}
+	}
+	return total
+}
+
+// allChannelsExhaustedRetries reports whether every channel has either
+// already succeeded, hit a permanent error, or exhausted its retry budget —
+// i.e. no channel can make further progress. Extracted from
+// DetermineTransition (Wave 6 6b GREEN: funlen remediation) — pure code
+// motion, no behavior change.
+func allChannelsExhaustedRetries(channels []notificationv1.Channel, channelStates map[string]ChannelState, maxAttempts int) bool {
+	for _, channel := range channels {
+		state := channelStates[string(channel)]
+		if !state.AlreadySucceeded && !state.HasPermanentError && state.AttemptCount < maxAttempts {
+			return false
+		}
+	}
+	return true
+}
+
+// allChannelsHavePermanentErrors reports whether every channel's failure is
+// non-retryable (used to distinguish "MaxRetriesExhausted" from
+// "AllDeliveriesFailed" as the terminal failure reason). Extracted from
+// DetermineTransition (Wave 6 6b GREEN: funlen remediation) — pure code
+// motion, no behavior change.
+func allChannelsHavePermanentErrors(channels []notificationv1.Channel, channelStates map[string]ChannelState) bool {
+	for _, channel := range channels {
+		if !channelStates[string(channel)].HasPermanentError {
+			return false
+		}
+	}
+	return true
+}
+
+// maxAttemptCountForFailedChannels returns the highest attempt count among
+// channels that have not yet succeeded, used for exponential backoff
+// calculation by the caller. Extracted from DetermineTransition (Wave 6 6b
+// GREEN: funlen remediation) — pure code motion, no behavior change.
+func maxAttemptCountForFailedChannels(channels []notificationv1.Channel, channelStates map[string]ChannelState) int {
+	maxAttempts := 0
+	for _, channel := range channels {
+		state := channelStates[string(channel)]
+		if !state.AlreadySucceeded && state.AttemptCount > maxAttempts {
+			maxAttempts = state.AttemptCount
+		}
+	}
+	return maxAttempts
+}
+
+// buildExhaustedTransition builds the TransitionDecision for the case where
+// every channel has exhausted its retry budget: NT-BUG-003 partial success
+// (PartiallySent) or complete failure (Failed), classifying the failure
+// reason as permanent-error vs retry-exhaustion. Extracted from
+// DetermineTransition (Wave 6 6b GREEN: funlen remediation) — pure code
+// motion, no behavior change.
+func buildExhaustedTransition(totalSuccessful, totalChannels int, channels []notificationv1.Channel, channelStates map[string]ChannelState) *TransitionDecision {
+	// NT-BUG-003: Check for partial success before marking as Failed
+	if totalSuccessful > 0 && totalSuccessful < totalChannels {
+		// Case 2: Partial success, all retries exhausted → PartiallySent (terminal)
+		return &TransitionDecision{
+			NextPhase:  PartiallySent,
+			Reason:     string(notificationv1.StatusReasonPartialDeliverySuccess),
+			Message:    fmt.Sprintf("Delivered to %d/%d channel(s), others failed", totalSuccessful, totalChannels),
+			IsTerminal: true,
+		}
+	}
+
+	reason := "MaxRetriesExhausted"
+	if allChannelsHavePermanentErrors(channels, channelStates) {
+		reason = string(notificationv1.StatusReasonAllDeliveriesFailed)
+	}
+
+	// Case 3: All retries exhausted with no successes → Failed (terminal, permanent)
+	return &TransitionDecision{
+		NextPhase:          Failed,
+		Reason:             reason,
+		Message:            "All delivery attempts failed or exhausted retries",
+		IsTerminal:         true,
+		IsPermanentFailure: true,
+	}
+}
+
+// buildRetryingTransition builds the TransitionDecision for the case where
+// at least one channel failed but retries remain: NT-BUG-005/006 partial
+// success while retrying, or all channels failed with retries remaining.
+// Extracted from DetermineTransition (Wave 6 6b GREEN: funlen remediation) —
+// pure code motion, no behavior change.
+func buildRetryingTransition(notification *notificationv1.NotificationRequest, channels []notificationv1.Channel, channelStates map[string]ChannelState, totalSuccessful, totalChannels int) *TransitionDecision {
+	maxFailedAttempts := maxAttemptCountForFailedChannels(channels, channelStates)
+
+	if totalSuccessful > 0 {
+		// Case 4: NT-BUG-005/006: Partial success with retries remaining → Retrying
+		return &TransitionDecision{
+			NextPhase: Retrying,
+			Reason:    string(notificationv1.StatusReasonPartialFailureRetrying),
+			Message: fmt.Sprintf("Delivered to %d/%d channel(s), retrying failed channels",
+				totalSuccessful, totalChannels),
+			ShouldRequeue:         true,
+			MaxFailedAttemptCount: maxFailedAttempts,
+		}
+	}
+
+	// Case 5: All channels failed, retries remain → stay in current phase, requeue
+	return &TransitionDecision{
+		NextPhase:             notification.Status.Phase,
+		Reason:                string(notificationv1.StatusReasonAllDeliveriesFailed),
+		Message:               "Delivery failed, will retry with backoff",
+		ShouldRequeue:         true,
+		PhaseUnchanged:        true,
+		MaxFailedAttemptCount: maxFailedAttempts,
+	}
+}

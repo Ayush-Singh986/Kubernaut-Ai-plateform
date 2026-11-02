@@ -1,0 +1,1793 @@
+package config_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	urlPrometheus9090     = "http://prometheus:9090"
+	urlRealmsKubernaut    = "https://sso.example.com/realms/kubernaut"
+	claudeSonnet420250514 = "claude-sonnet-4-20250514"
+	gemini20Flash         = "gemini-2.0-flash"
+	pathLlmKey            = "/etc/secrets/llm-key"
+	pathCaPem             = "/etc/ca/ca.pem"
+	pathClientCrt         = "/etc/certs/client.crt"
+	pathClientKey         = "/etc/certs/client.key"
+	gpt4o                 = "gpt-4o"
+)
+
+// validConfig returns a Config that passes Validate() for use as a base in tests.
+func validConfig() *config.Config {
+	return &config.Config{
+		Server: config.ServerConfig{Port: 8443, MetricsPort: 9090, HealthPort: 8081},
+		Agent: config.AgentConfig{
+			KABaseURL:     "http://localhost:8080",
+			KAMCPEndpoint: "http://localhost:8080/api/v1/mcp/",
+			DSBaseURL:     "http://localhost:9090",
+			DSHealthURL:   "http://localhost:9091/readyz",
+		},
+		MCP:       config.MCPConfig{Enabled: false},
+		AgentCard: config.AgentCardConfig{URL: "https://localhost:8443"},
+		Logging:   config.LoggingConfig{Level: "INFO"},
+		RateLimit: config.RateLimitConfig{IPRequestsPerSec: 100, UserRequestsPerSec: 50},
+		Shutdown:  config.ShutdownConfig{DrainSeconds: 15},
+		Resilience: config.ResilienceConfig{
+			KA:  config.DependencyConfig{CBFailureThreshold: 5},
+			DS:  config.DependencyConfig{CBFailureThreshold: 3},
+			K8s: config.DependencyConfig{CBFailureThreshold: 5},
+		},
+	}
+}
+
+var _ = Describe("Tier 1: Config Loading — Load()", func() {
+	It("UT-AF-039-001 loads valid full YAML", func() {
+		data, err := os.ReadFile("testdata/valid.yaml")
+		Expect(err).NotTo(HaveOccurred(), "read fixture")
+
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(9090))
+		Expect(cfg.Agent.LLM.VertexProject).To(Equal("my-project"))
+		Expect(cfg.Agent.LLM.VertexLocation).To(Equal("us-east1"))
+		Expect(cfg.Agent.KABaseURL).To(Equal("https://ka.example.com"))
+		Expect(cfg.Agent.KAMCPEndpoint).To(Equal("https://ka.example.com/api/v1/mcp/"))
+		Expect(cfg.Agent.DSBaseURL).To(Equal("https://ds.example.com"))
+		Expect(cfg.MCP.Enabled).To(BeTrue())
+		Expect(cfg.AgentCard.URL).To(Equal("https://af.example.com"))
+	})
+
+	It("UT-AF-039-002 applies defaults for omitted fields", func() {
+		data := []byte("agent:\n  llm:\n    vertexProject: \"p\"\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+
+		defaults := config.DefaultConfig()
+		Expect(cfg.Server.Port).To(Equal(defaults.Server.Port))
+		Expect(cfg.Agent.LLM.VertexLocation).To(Equal(defaults.Agent.LLM.VertexLocation))
+	})
+
+	It("UT-AF-039-003 rejects malformed YAML", func() {
+		data := []byte("server:\n  port: [invalid")
+		_, err := config.Load(data)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("pars"))
+	})
+
+	It("UT-AF-039-004 accepts empty input with defaults", func() {
+		cfg, err := config.Load([]byte(""))
+		Expect(err).NotTo(HaveOccurred())
+
+		defaults := config.DefaultConfig()
+		Expect(cfg.Server.Port).To(Equal(defaults.Server.Port))
+	})
+
+	It("UT-AF-039-005 ignores unknown keys", func() {
+		data := []byte("server:\n  port: 9090\nunknownField: \"should be ignored\"\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(9090))
+	})
+
+	It("UT-AF-039-006 preserves zero booleans", func() {
+		data := []byte("mcp:\n  enabled: false\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.MCP.Enabled).To(BeFalse())
+	})
+
+	It("UT-AF-039-007 loads port as integer", func() {
+		data := []byte("server:\n  port: 3000\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(3000))
+	})
+
+	It("UT-AF-039-008 merges partial YAML with defaults", func() {
+		data := []byte("server:\n  port: 7777\nagent:\n  llm:\n    vertexProject: \"partial\"\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(7777))
+		Expect(cfg.Agent.LLM.VertexProject).To(Equal("partial"))
+
+		defaults := config.DefaultConfig()
+		Expect(cfg.Agent.LLM.VertexLocation).To(Equal(defaults.Agent.LLM.VertexLocation))
+	})
+})
+
+var _ = Describe("Tier 2: Config Validation — Validate()", func() {
+	It("UT-AF-039-009 accepts DefaultConfig", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	DescribeTable("UT-AF-039-010, 011, 012 port range validation",
+		func(port int, wantErr bool) {
+			cfg := validConfig()
+			cfg.Server.Port = port
+			err := cfg.Validate()
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("server.port"))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("port < 1", -1, true),
+		Entry("port = 0", 0, true),
+		Entry("port > 65535", 70000, true),
+		Entry("port = 1 (privileged)", 1, true),
+		Entry("port = 80 (privileged)", 80, true),
+		Entry("port = 1023 (privileged)", 1023, true),
+		Entry("port = 1024 (min valid)", 1024, false),
+		Entry("port = 65535 (max valid)", 65535, false),
+		Entry("port = 8443 (typical)", 8443, false),
+	)
+
+	DescribeTable("UT-AF-039-013, 015, 016 required URL fields",
+		func(mutate func(*config.Config), wantSub string) {
+			cfg := validConfig()
+			mutate(cfg)
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantSub))
+		},
+		Entry("empty kaBaseURL", func(c *config.Config) { c.Agent.KABaseURL = "" }, "kaBaseURL"),
+		Entry("empty kaMCPEndpoint", func(c *config.Config) { c.Agent.KAMCPEndpoint = "" }, "kaMCPEndpoint"),
+		Entry("empty dsBaseURL", func(c *config.Config) { c.Agent.DSBaseURL = "" }, "dsBaseURL"),
+		// IT-AUDIT-1985-002: dsHealthURL is required, distinct from dsBaseURL,
+		// so DataStorageProber (#1985) always has a real health endpoint to gate on.
+		Entry("empty dsHealthURL", func(c *config.Config) { c.Agent.DSHealthURL = "" }, "dsHealthURL"),
+	)
+
+	DescribeTable("UT-AF-039-014, 017 malformed URLs",
+		func(mutate func(*config.Config), wantSub string) {
+			cfg := validConfig()
+			mutate(cfg)
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantSub))
+		},
+		Entry("kaBaseURL no scheme", func(c *config.Config) { c.Agent.KABaseURL = "not-a-url" }, "kaBaseURL"),
+		Entry("dsBaseURL no scheme", func(c *config.Config) { c.Agent.DSBaseURL = "://bad" }, "dsBaseURL"),
+		Entry("dsHealthURL no scheme", func(c *config.Config) { c.Agent.DSHealthURL = "://bad" }, "dsHealthURL"),
+	)
+
+	It("UT-AF-039-018 accepts valid complete config", func() {
+		cfg := validConfig()
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-039-019 error message includes field name", func() {
+		cfg := validConfig()
+		cfg.Server.Port = -1
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("server.port"))
+	})
+
+	It("UT-AF-039-020 returns first error only", func() {
+		cfg := validConfig()
+		cfg.Server.Port = -1
+		cfg.Agent.KABaseURL = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		errStr := err.Error()
+		Expect(strings.Contains(errStr, "server.port") && strings.Contains(errStr, "kaBaseURL")).To(BeFalse())
+	})
+})
+
+var _ = Describe("Tier 3: Default Resolution — ResolveDefaults()", func() {
+	It("UT-AF-039-021 sets AgentCard URL from port", func() {
+		cfg := validConfig()
+		cfg.AgentCard.URL = ""
+		cfg.Server.Port = 8443
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		Expect(cfg.AgentCard.URL).To(Equal("https://localhost:8443"))
+	})
+
+	It("UT-AF-039-022 preserves explicit URL", func() {
+		cfg := validConfig()
+		cfg.AgentCard.URL = "https://custom.example.com"
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		Expect(cfg.AgentCard.URL).To(Equal("https://custom.example.com"))
+	})
+
+	It("UT-AF-039-023 is idempotent", func() {
+		cfg := validConfig()
+		cfg.AgentCard.URL = ""
+		cfg.Server.Port = 9000
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		first := cfg.AgentCard.URL
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		Expect(cfg.AgentCard.URL).To(Equal(first))
+	})
+
+	It("UT-AF-039-024 resolves defaults before validate", func() {
+		cfg := validConfig()
+		cfg.AgentCard.URL = ""
+		cfg.Server.Port = 8443
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		Expect(cfg.Validate()).To(Succeed())
+	})
+})
+
+var _ = Describe("Tier 4: Startup Integration", func() {
+	It("UT-AF-039-025 loads from valid file path", func() {
+		path := filepath.Join("testdata", "valid.yaml")
+		data, err := os.ReadFile(filepath.Clean(path))
+		Expect(err).NotTo(HaveOccurred())
+
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(9090))
+	})
+
+	It("UT-AF-039-026 reports error for missing file", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "nonexistent.yaml")
+		_, err := os.ReadFile(filepath.Clean(path))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("nonexistent.yaml"))
+	})
+
+	It("UT-AF-039-027 error includes path", func() {
+		path := "/nonexistent/path/config.yaml"
+		_, err := os.ReadFile(filepath.Clean(path))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(path))
+	})
+
+	It("UT-AF-039-028 rejects invalid file content", func() {
+		dir := GinkgoT().TempDir()
+		path := filepath.Join(dir, "bad.yaml")
+		Expect(os.WriteFile(path, []byte(":::not yaml"), 0o644)).To(Succeed())
+
+		data, err := os.ReadFile(filepath.Clean(path))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = config.Load(data)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("UT-AF-039-029 loads via cleaned path", func() {
+		dir := GinkgoT().TempDir()
+		nested := filepath.Join(dir, "sub")
+		Expect(os.MkdirAll(nested, 0o755)).To(Succeed())
+
+		cfgPath := filepath.Join(nested, "config.yaml")
+		Expect(os.WriteFile(cfgPath, []byte("server:\n  port: 4444\n"), 0o644)).To(Succeed())
+
+		traversalPath := filepath.Join(dir, "sub", "..", "sub", "config.yaml")
+		cleaned := filepath.Clean(traversalPath)
+		data, err := os.ReadFile(cleaned)
+		Expect(err).NotTo(HaveOccurred())
+
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.Port).To(Equal(4444))
+	})
+
+	It("UT-AF-039-030 + UT-AF-1251-001 forbids os.Getenv in production code", func() {
+		bannedFiles := map[string]string{
+			filepath.Join("..", "..", "..", "cmd", "apifrontend", "main.go"): "main.go",
+			"config.go": "config.go",
+		}
+
+		allowedGetenvCounts := map[string]int{
+			"config.go": 1,
+			"main.go":   1,
+		}
+
+		for path, label := range bannedFiles {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				Skip("cannot read " + label + " from test context: " + err.Error())
+			}
+			content := string(data)
+			count := strings.Count(content, "os.Getenv")
+			allowed := allowedGetenvCounts[label]
+			Expect(count).To(BeNumerically("<=", allowed),
+				"%s contains %d os.Getenv calls (allowed %d) — env vars are banned per architectural constraint (exception: BR-PLATFORM-1262 PORT override)",
+				label, count, allowed)
+			Expect(content).NotTo(ContainSubstring("envOr"),
+				"%s contains envOr — env vars are banned per architectural constraint", label)
+		}
+	})
+})
+
+var _ = Describe("Tier 5: Extended Config Fields (v2)", func() {
+	It("UT-AF-039-031 loads auth fields", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.IssuerURL).To(Equal(urlRealmsKubernaut))
+		Expect(cfg.Auth.Audience).To(Equal("apifrontend"))
+	})
+
+	It("loads auth JWKS URL", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  jwksURL: "https://sso.example.com/realms/kubernaut/protocol/openid-connect/certs"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.JWKSURL).To(Equal("https://sso.example.com/realms/kubernaut/protocol/openid-connect/certs"))
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("rejects invalid auth JWKS URL on validate", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  jwksURL: "not-a-url"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).NotTo(Succeed())
+	})
+
+	It("loads auth enableReplayProtection", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  enableReplayProtection: true
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.EnableReplayProtection).To(BeTrue())
+	})
+
+	It("GAP-08 (#1505) loads a distributed redis replay cache config", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6379"
+    redisDB: 1
+    credentialsPath: "/etc/apifrontend/valkey/valkey-secrets.yaml"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache).NotTo(BeNil())
+		Expect(cfg.Auth.ReplayCache.Backend).To(Equal("redis"))
+		Expect(cfg.Auth.ReplayCache.RedisAddr).To(Equal("valkey.kubernaut-system.svc:6379"))
+		Expect(cfg.Auth.ReplayCache.RedisDB).To(Equal(1))
+		Expect(cfg.Auth.ReplayCache.IsDistributed()).To(BeTrue())
+	})
+
+	It("GAP-08 (#1505) rejects a redis replay cache config missing redisAddr", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(MatchError(ContainSubstring("redisAddr")))
+	})
+
+	It("GAP-08 (#1505) rejects an unknown replay cache backend", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: memcached
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(MatchError(ContainSubstring(`backend must be one of`)))
+	})
+
+	It("GAP-08 (#1505) treats a nil replayCache block as not distributed", func() {
+		var rc *config.ReplayCacheConfig
+		Expect(rc.IsDistributed()).To(BeFalse())
+	})
+
+	// DD-PLATFORM-006 DA9: the replay-cache Valkey connection had no TLS
+	// support at all -- discovered when DA8 made Valkey TLS-only. These
+	// tests prove the new optional tls block parses and defaults safely.
+	It("DD-PLATFORM-006 DA9 loads a replay cache TLS block", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6380"
+    tls:
+      enabled: true
+      caFile: "/etc/tls-ca/ca.crt"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache.TLS).NotTo(BeNil())
+		Expect(cfg.Auth.ReplayCache.TLS.Enabled).To(BeTrue())
+		Expect(cfg.Auth.ReplayCache.TLS.CAFile).To(Equal("/etc/tls-ca/ca.crt"))
+	})
+
+	It("DD-PLATFORM-006 DA9 defaults replay cache TLS to nil (unencrypted) when omitted", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6379"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache.TLS).To(BeNil())
+	})
+
+	It("DD-PLATFORM-006 DA9 loads optional mTLS certFile/keyFile alongside caFile", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6380"
+    tls:
+      enabled: true
+      caFile: "/etc/tls-ca/ca.crt"
+      certFile: "/etc/certs/client.crt"
+      keyFile: "/etc/certs/client.key"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache.TLS.CertFile).To(Equal("/etc/certs/client.crt"))
+		Expect(cfg.Auth.ReplayCache.TLS.KeyFile).To(Equal("/etc/certs/client.key"))
+	})
+
+	It("#1999 loads trustedProxyCIDRs for jti replay-cache source binding", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6379"
+    trustedProxyCIDRs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache.TrustedProxyCIDRs).To(Equal([]string{"10.0.0.0/8", "172.16.0.0/12"}))
+	})
+
+	It("#1999 defaults trustedProxyCIDRs to empty (fail-closed) when omitted", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6379"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(Succeed())
+		Expect(cfg.Auth.ReplayCache.TrustedProxyCIDRs).To(BeEmpty())
+	})
+
+	It("#1999 rejects a malformed trustedProxyCIDRs entry", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  replayCache:
+    backend: redis
+    redisAddr: "valkey.kubernaut-system.svc:6379"
+    trustedProxyCIDRs:
+      - "not-a-cidr"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Validate()).To(MatchError(ContainSubstring("invalid CIDR")))
+	})
+
+	It("UT-AF-1247-001 loads allowInsecureIssuers field", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  allowInsecureIssuers: true
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.AllowInsecureIssuers).To(BeTrue())
+	})
+
+	It("UT-AF-1247-002 defaults allowInsecureIssuers to false", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.AllowInsecureIssuers).To(BeFalse())
+	})
+
+	It("UT-AF-1247-003 loads all #1247 auth fields together", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  jwksURL: "https://sso.example.com/realms/kubernaut/protocol/openid-connect/certs"
+  audience: "apifrontend"
+  oidcCaFile: "/etc/apifrontend/ingress-ca/ca.crt"
+  allowInsecureIssuers: false
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.JWKSURL).To(Equal("https://sso.example.com/realms/kubernaut/protocol/openid-connect/certs"))
+		Expect(cfg.Auth.OIDCCaFile).To(Equal("/etc/apifrontend/ingress-ca/ca.crt"))
+		Expect(cfg.Auth.AllowInsecureIssuers).To(BeFalse())
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	DescribeTable("UT-AF-039-032 loads logging level",
+		func(level string) {
+			data := []byte("logging:\n  level: " + level + "\n")
+			cfg, err := config.Load(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.EqualFold(cfg.Logging.Level, level)).To(BeTrue())
+		},
+		Entry("debug lowercase", "debug"),
+		Entry("DEBUG uppercase", "DEBUG"),
+		Entry("info lowercase", "info"),
+		Entry("INFO uppercase", "INFO"),
+		Entry("warn lowercase", "warn"),
+		Entry("WARN uppercase", "WARN"),
+		Entry("error lowercase", "error"),
+		Entry("ERROR uppercase", "ERROR"),
+	)
+
+	It("UT-AF-039-033 loads rate limit fields", func() {
+		data := []byte(`
+rateLimit:
+  ipRequestsPerSec: 200
+  userRequestsPerSec: 75
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.RateLimit.IPRequestsPerSec).To(Equal(200))
+		Expect(cfg.RateLimit.UserRequestsPerSec).To(Equal(75))
+	})
+
+	It("UT-AF-039-034 loads shutdown drainSeconds", func() {
+		data := []byte("shutdown:\n  drainSeconds: 30\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Shutdown.DrainSeconds).To(Equal(30))
+	})
+
+	It("UT-AF-039-035 DefaultConfig has extended defaults", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Logging.Level).To(Equal("INFO"))
+		Expect(cfg.Shutdown.DrainSeconds).To(Equal(15))
+		Expect(cfg.RateLimit.IPRequestsPerSec).To(Equal(100))
+		Expect(cfg.RateLimit.UserRequestsPerSec).To(Equal(50))
+	})
+})
+
+var _ = Describe("TC-P2C-03: DefaultConfig field assertions", func() {
+	It("TC-P2C-03a DefaultConfig port is 8443", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Server.Port).To(Equal(8443))
+	})
+
+	It("TC-P2C-03b DefaultConfig drainSeconds is 15", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Shutdown.DrainSeconds).To(Equal(15))
+	})
+
+	It("TC-P2C-03c DefaultConfig resilience thresholds are non-zero", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Resilience.KA.CBFailureThreshold).To(BeNumerically(">", 0))
+		Expect(cfg.Resilience.DS.CBFailureThreshold).To(BeNumerically(">", 0))
+		Expect(cfg.Resilience.K8s.CBFailureThreshold).To(BeNumerically(">", 0))
+	})
+
+	It("TC-P2C-03d: Issue #2220 DefaultConfig sets MCP.SessionIdleTimeout to 30m explicitly (single source of truth, no longer relying on the removed cmd/apifrontend zero-value fallback)", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.MCP.SessionIdleTimeout).To(Equal(30 * time.Minute))
+	})
+})
+
+var _ = Describe("Tier 5b: Configurable Ports (Issue #1339)", func() {
+	It("UT-AF-1339-001 DefaultConfig metricsPort is 9090", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Server.MetricsPort).To(Equal(9090))
+	})
+
+	It("UT-AF-1339-002 YAML override for metricsPort", func() {
+		data := []byte("server:\n  metricsPort: 9191\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.MetricsPort).To(Equal(9191))
+	})
+
+	It("UT-AF-1339-003 DefaultConfig healthPort is 8081", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Server.HealthPort).To(Equal(8081))
+	})
+
+	It("UT-AF-1339-004 YAML override for healthPort", func() {
+		data := []byte("server:\n  healthPort: 8082\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.HealthPort).To(Equal(8082))
+	})
+
+	DescribeTable("UT-AF-1339-005 port range validation",
+		func(field string, mutate func(*config.Config), wantSub string) {
+			cfg := validConfig()
+			mutate(cfg)
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantSub))
+		},
+		Entry("metricsPort = 0", "metricsPort", func(c *config.Config) { c.Server.MetricsPort = 0 }, "server.metricsPort"),
+		Entry("metricsPort = 80", "metricsPort", func(c *config.Config) { c.Server.MetricsPort = 80 }, "server.metricsPort"),
+		Entry("metricsPort = 70000", "metricsPort", func(c *config.Config) { c.Server.MetricsPort = 70000 }, "server.metricsPort"),
+		Entry("healthPort = 0", "healthPort", func(c *config.Config) { c.Server.HealthPort = 0 }, "server.healthPort"),
+		Entry("healthPort = 1023", "healthPort", func(c *config.Config) { c.Server.HealthPort = 1023 }, "server.healthPort"),
+		Entry("healthPort = 70000", "healthPort", func(c *config.Config) { c.Server.HealthPort = 70000 }, "server.healthPort"),
+	)
+
+	DescribeTable("UT-AF-1339-006 port collision validation",
+		func(port, metrics, health int, wantSub string) {
+			cfg := validConfig()
+			cfg.Server.Port = port
+			cfg.Server.MetricsPort = metrics
+			cfg.Server.HealthPort = health
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantSub))
+		},
+		Entry("port == metricsPort", 9090, 9090, 8081, "server.port and server.metricsPort must be distinct"),
+		Entry("port == healthPort", 8081, 9090, 8081, "server.port and server.healthPort must be distinct"),
+		Entry("metricsPort == healthPort", 8443, 9090, 9090, "server.metricsPort and server.healthPort must be distinct"),
+	)
+
+	It("UT-AF-1339-007 accepts valid distinct ports", func() {
+		cfg := validConfig()
+		cfg.Server.Port = 8443
+		cfg.Server.MetricsPort = 9191
+		cfg.Server.HealthPort = 8082
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-1339-008 omitted ports use defaults from Load", func() {
+		data := []byte("server:\n  port: 8443\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Server.MetricsPort).To(Equal(9090))
+		Expect(cfg.Server.HealthPort).To(Equal(8081))
+	})
+})
+
+var _ = Describe("Tier 5c: pprof/debug profiling gate (Issue #2275, supersedes #1995)", func() {
+	// Debug.PprofEnabled defaults to false (profiling OFF, Go zero value),
+	// mirroring kubernautagent's secure-by-default posture. Issue #2275
+	// renames the old negative-polarity server.disableProfiling (default
+	// true) to a positive-polarity, shared debug.pprofEnabled so
+	// kubernaut-operator's CRD field maps 1:1 with no negation layer.
+	It("UT-AF-2275-001 DefaultConfig disables profiling by default (secure-by-default, mirrors KA)", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Debug.PprofEnabled).To(BeFalse())
+	})
+
+	It("UT-AF-2275-002 YAML can opt in to profiling by setting debug.pprofEnabled: true", func() {
+		data := []byte("debug:\n  pprofEnabled: true\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Debug.PprofEnabled).To(BeTrue())
+	})
+
+	It("UT-AF-2275-003 omitted debug in YAML keeps the secure default", func() {
+		data := []byte("server:\n  port: 8443\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Debug.PprofEnabled).To(BeFalse())
+	})
+})
+
+var _ = Describe("Tier 6: Extended Validation (v2)", func() {
+	It("UT-AF-039-036 rejects auth issuerURL without scheme", func() {
+		cfg := validConfig()
+		cfg.Auth.IssuerURL = "sso.example.com/realms/kubernaut"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("auth.issuerURL"))
+	})
+
+	It("UT-AF-039-037 accepts empty auth as optional", func() {
+		cfg := validConfig()
+		cfg.Auth.IssuerURL = ""
+		cfg.Auth.Audience = ""
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-039-038 rejects invalid logging level", func() {
+		cfg := validConfig()
+		cfg.Logging.Level = "TRACE"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("logging.level"))
+	})
+
+	DescribeTable("UT-AF-039-039 accepts valid logging levels",
+		func(level string) {
+			cfg := validConfig()
+			cfg.Logging.Level = level
+			Expect(cfg.Validate()).To(Succeed())
+		},
+		Entry("DEBUG", "DEBUG"),
+		Entry("INFO", "INFO"),
+		Entry("WARN", "WARN"),
+		Entry("ERROR", "ERROR"),
+		Entry("debug", "debug"),
+		Entry("info", "info"),
+		Entry("warn", "warn"),
+		Entry("error", "error"),
+	)
+
+	It("UT-AF-039-040 rejects zero ipRequestsPerSec", func() {
+		cfg := validConfig()
+		cfg.RateLimit.IPRequestsPerSec = 0
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("rateLimit"))
+	})
+
+	It("UT-AF-039-041 rejects negative userRequestsPerSec", func() {
+		cfg := validConfig()
+		cfg.RateLimit.UserRequestsPerSec = -1
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("rateLimit"))
+	})
+
+	It("UT-AF-039-042 rejects zero drainSeconds", func() {
+		cfg := validConfig()
+		cfg.Shutdown.DrainSeconds = 0
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("shutdown.drainSeconds"))
+	})
+})
+
+var _ = Describe("Tier 7: Resilience Config (Issue #38)", func() {
+	It("UT-AF-038-001 loads resilience config", func() {
+		data := []byte(`
+resilience:
+  ka:
+    connectTimeout: 5s
+    requestTimeout: 30s
+    cbMaxRequests: 3
+    cbInterval: 10s
+    cbTimeout: 30s
+    cbFailureThreshold: 5
+    retryMax: 2
+    retryInitBackoff: 500ms
+    retryMaxBackoff: 5s
+    retryableStatuses: [502, 503, 504]
+  ds:
+    connectTimeout: 3s
+    requestTimeout: 10s
+    cbMaxRequests: 3
+    cbInterval: 10s
+    cbTimeout: 15s
+    cbFailureThreshold: 3
+    retryMax: 3
+    retryInitBackoff: 200ms
+    retryMaxBackoff: 3s
+    retryableStatuses: [502, 503, 504]
+  k8s:
+    connectTimeout: 5s
+    requestTimeout: 30s
+    cbMaxRequests: 3
+    cbInterval: 10s
+    cbTimeout: 30s
+    cbFailureThreshold: 5
+    retryMax: 0
+    retryInitBackoff: 0s
+    retryMaxBackoff: 0s
+    retryableStatuses: []
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Resilience.KA.ConnectTimeout.String()).To(Equal("5s"))
+		Expect(cfg.Resilience.KA.RequestTimeout.String()).To(Equal("30s"))
+		Expect(cfg.Resilience.KA.CBMaxRequests).To(Equal(uint32(3)))
+		Expect(cfg.Resilience.KA.CBFailureThreshold).To(Equal(uint32(5)))
+		Expect(cfg.Resilience.KA.RetryMax).To(Equal(2))
+		Expect(cfg.Resilience.DS.ConnectTimeout.String()).To(Equal("3s"))
+		Expect(cfg.Resilience.DS.CBFailureThreshold).To(Equal(uint32(3)))
+		Expect(cfg.Resilience.DS.RetryMax).To(Equal(3))
+		Expect(cfg.Resilience.KA.RetryableStatuses).To(HaveLen(3))
+	})
+
+	It("UT-AF-038-002 rejects negative connectTimeout", func() {
+		cfg := validConfig()
+		cfg.Resilience.KA.ConnectTimeout = -1
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("connectTimeout"))
+	})
+
+	It("UT-AF-038-003 rejects negative requestTimeout", func() {
+		cfg := validConfig()
+		cfg.Resilience.DS.RequestTimeout = -1
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("requestTimeout"))
+	})
+
+	It("UT-AF-038-004 rejects cbFailureThreshold > 100", func() {
+		cfg := validConfig()
+		cfg.Resilience.KA.CBFailureThreshold = 101
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("cbFailureThreshold"))
+	})
+
+	It("rejects cbFailureThreshold == 0", func() {
+		cfg := validConfig()
+		cfg.Resilience.KA.CBFailureThreshold = 0
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("cbFailureThreshold"))
+	})
+
+	It("UT-AF-038-005 rejects retryMax > 10", func() {
+		cfg := validConfig()
+		cfg.Resilience.DS.RetryMax = 11
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("retryMax"))
+	})
+
+	It("UT-AF-038-006 rejects retryableStatuses out of range", func() {
+		cfg := validConfig()
+		cfg.Resilience.KA.RetryableStatuses = []int{200, 503}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("retryableStatuses"))
+	})
+
+	It("UT-AF-038-007 applies resilience defaults when omitted", func() {
+		data := []byte("server:\n  port: 8443\n")
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+
+		defaults := config.DefaultConfig()
+		Expect(cfg.Resilience.KA.RequestTimeout).To(Equal(defaults.Resilience.KA.RequestTimeout))
+		Expect(cfg.Resilience.DS.CBFailureThreshold).To(Equal(defaults.Resilience.DS.CBFailureThreshold))
+	})
+
+	It("UT-AF-038-008 rejects requestTimeout less than connectTimeout", func() {
+		cfg := validConfig()
+		cfg.Resilience.KA.ConnectTimeout = 10000000000 // 10s
+		cfg.Resilience.KA.RequestTimeout = 5000000000  // 5s
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("requestTimeout"))
+	})
+
+	It("requires PrometheusURL when severity triage enabled", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("prometheusURL"))
+	})
+
+	It("skips severity triage validation when disabled", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = false
+		cfg.SeverityTriage.PrometheusURL = ""
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("rejects severity triage LLMConfidence out of range", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLMConfidence = 1.5
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("llmConfidence"))
+	})
+
+	It("accepts valid severity triage config", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLMConfidence = 0.7
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// BR-AI-1404: Severity triage independent LLM configuration (FedRAMP IA-5(1), SC-8)
+	It("UT-AF-1404-004 accepts severityTriage.llm with valid vertex_ai config", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = &types.LLMConfig{
+			Provider:       types.LLMProviderVertexAI,
+			Model:          gemini20Flash,
+			VertexProject:  "triage-project",
+			VertexLocation: "us-central1",
+		}
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-1404-005 accepts severityTriage.llm with valid gemini config", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = &types.LLMConfig{
+			Provider:   types.LLMProviderGemini,
+			Model:      gemini20Flash,
+			APIKeyFile: "/etc/secrets/gemini-key",
+		}
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-1404-006 rejects severityTriage.llm with missing model", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = &types.LLMConfig{
+			Provider:       types.LLMProviderVertexAI,
+			Model:          "",
+			VertexProject:  "triage-project",
+			VertexLocation: "us-central1",
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("model"))
+	})
+
+	It("UT-AF-1404-007 rejects severityTriage.llm with invalid provider", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = &types.LLMConfig{
+			Provider: "invalid_provider",
+			Model:    "some-model",
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("provider"))
+	})
+
+	It("UT-AF-1404-008 skips severityTriage.llm validation when nil (inherits agent.llm)", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = nil
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-1404-009 rejects vertex_ai severityTriage.llm without vertexProject", func() {
+		cfg := validConfig()
+		cfg.SeverityTriage.Enabled = true
+		cfg.SeverityTriage.PrometheusURL = urlPrometheus9090
+		cfg.SeverityTriage.LLM = &types.LLMConfig{
+			Provider:       types.LLMProviderVertexAI,
+			Model:          gemini20Flash,
+			VertexProject:  "",
+			VertexLocation: "us-central1",
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("vertexProject"))
+	})
+
+	DescribeTable("requires session namespace when TTLs are set",
+		func(namespace string, disconn, retention time.Duration, wantErr bool) {
+			cfg := validConfig()
+			cfg.Session.Namespace = namespace
+			cfg.Session.DisconnectTTL = disconn
+			cfg.Session.RetentionTTL = retention
+			err := cfg.Validate()
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("session.namespace"))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("empty namespace with disconnectTTL rejects", "", 5*time.Minute, time.Duration(0), true),
+		Entry("empty namespace with retentionTTL rejects", "", time.Duration(0), 720*time.Hour, true),
+		Entry("empty namespace with both TTLs rejects", "", 10*time.Minute, 720*time.Hour, true),
+		Entry("set namespace with TTLs passes", "kubernaut-system", 10*time.Minute, 720*time.Hour, false),
+		Entry("empty namespace with zero TTLs passes", "", time.Duration(0), time.Duration(0), false),
+	)
+})
+
+var _ = Describe("Tier 7b: Retention TTL Floor (AU-11)", func() {
+	DescribeTable("UT-AF-1272-011 session.retentionTTL must be >= 30d",
+		func(ttl time.Duration, wantErr bool) {
+			cfg := validConfig()
+			cfg.Session.Namespace = "kubernaut-system"
+			cfg.Session.RetentionTTL = ttl
+			err := cfg.Validate()
+			if wantErr {
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("retentionTTL"))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("zero TTL passes (not configured)", time.Duration(0), false),
+		Entry("29 days rejects", 29*24*time.Hour, true),
+		Entry("30 days passes", 30*24*time.Hour, false),
+		Entry("90 days passes", 90*24*time.Hour, false),
+	)
+})
+
+var _ = Describe("Tier 8: OIDC CA File (Issue #1245)", func() {
+	It("UT-AF-1245-010 loads oidcCaFile field", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  oidcCaFile: "/etc/apifrontend/ingress-ca/ca.crt"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.OIDCCaFile).To(Equal("/etc/apifrontend/ingress-ca/ca.crt"))
+	})
+
+	It("UT-AF-1245-011 defaults oidcCaFile to empty when omitted", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.OIDCCaFile).To(BeEmpty())
+	})
+
+	It("UT-AF-1245-012 rejects relative oidcCaFile path", func() {
+		cfg := validConfig()
+		cfg.Auth.IssuerURL = urlRealmsKubernaut
+		cfg.Auth.OIDCCaFile = "relative/path/ca.crt"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("oidcCaFile"))
+	})
+
+	It("UT-AF-1245-013 accepts absolute oidcCaFile path", func() {
+		cfg := validConfig()
+		cfg.Auth.IssuerURL = urlRealmsKubernaut
+		cfg.Auth.OIDCCaFile = "/etc/apifrontend/ingress-ca/ca.crt"
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("UT-AF-1245-014 accepts empty oidcCaFile as optional", func() {
+		cfg := validConfig()
+		cfg.Auth.IssuerURL = urlRealmsKubernaut
+		cfg.Auth.OIDCCaFile = ""
+		Expect(cfg.Validate()).To(Succeed())
+	})
+})
+
+var _ = Describe("Tier 9: LLM Config Validation (Issue #1252)", func() {
+	It("accepts empty LLM provider as optional", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = ""
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("rejects unknown LLM provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = "totally_unknown"
+		cfg.Agent.LLM.Model = "some-model"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("agent.llm.provider"))
+	})
+
+	It("requires model when provider is set", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("agent.llm.model"))
+	})
+
+	It("requires vertexProject for vertex_ai provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderVertexAI
+		cfg.Agent.LLM.Model = claudeSonnet420250514
+		cfg.Agent.LLM.VertexProject = ""
+		cfg.Agent.LLM.VertexLocation = "us-central1"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("vertexProject"))
+	})
+
+	It("requires vertexLocation for vertex_ai provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderVertexAI
+		cfg.Agent.LLM.Model = claudeSonnet420250514
+		cfg.Agent.LLM.VertexProject = "my-project"
+		cfg.Agent.LLM.VertexLocation = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("vertexLocation"))
+	})
+
+	It("accepts gemini provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("accepts anthropic provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderAnthropic
+		cfg.Agent.LLM.Model = claudeSonnet420250514
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	It("requires credentials for gemini provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("apiKeyFile"))
+	})
+
+	It("rejects relative apiKeyFile path", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = "relative/path/key"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("apiKeyFile"))
+	})
+
+	It("requires tokenURL when oauth2 enabled", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.OAuth2.Enabled = true
+		cfg.Agent.LLM.OAuth2.TokenURL = ""
+		cfg.Agent.LLM.OAuth2.CredentialsDir = "/etc/creds"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tokenURL"))
+	})
+
+	It("requires credentialsDir when oauth2 enabled", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.OAuth2.Enabled = true
+		cfg.Agent.LLM.OAuth2.TokenURL = "https://auth.example.com/token"
+		cfg.Agent.LLM.OAuth2.CredentialsDir = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("credentialsDir"))
+	})
+
+	It("ResolveDefaults loads LLM API key from file", func() {
+		dir := GinkgoT().TempDir()
+		keyFile := filepath.Join(dir, "llm-api-key")
+		Expect(os.WriteFile(keyFile, []byte("  secret-key-123  \n"), 0o600)).To(Succeed())
+
+		cfg := validConfig()
+		cfg.Agent.LLM.APIKeyFile = keyFile
+		Expect(cfg.ResolveDefaults()).To(Succeed())
+		Expect(cfg.Agent.LLM.APIKey).To(Equal("secret-key-123"))
+	})
+
+	It("ResolveDefaults errors when apiKeyFile not found", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.APIKeyFile = "/nonexistent/path/key"
+		err := cfg.ResolveDefaults()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("/nonexistent/path/key"))
+	})
+
+	It("ResolveDefaults errors when apiKeyFile is empty", func() {
+		dir := GinkgoT().TempDir()
+		keyFile := filepath.Join(dir, "llm-api-key")
+		Expect(os.WriteFile(keyFile, []byte("   \n"), 0o600)).To(Succeed())
+
+		cfg := validConfig()
+		cfg.Agent.LLM.APIKeyFile = keyFile
+		err := cfg.ResolveDefaults()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("empty"))
+	})
+
+	It("loads LLM config from YAML", func() {
+		data := []byte(`
+agent:
+  llm:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    endpoint: "https://anthropic.example.com"
+    apiKeyFile: "/etc/secrets/anthropic-key"
+    tlsCaFile: "/etc/ca/custom.pem"
+    oauth2:
+      enabled: true
+      tokenURL: "https://auth.example.com/token"
+      scopes: ["llm:invoke"]
+      credentialsDir: "/etc/oauth2"
+    circuitBreaker:
+      enabled: true
+      maxRequests: 5
+      interval: 15s
+      timeout: 45s
+      failureThreshold: 3
+    customHeaders:
+      - name: X-Tenant-ID
+        value: "kubernaut"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Agent.LLM.Provider).To(Equal(types.LLMProviderAnthropic))
+		Expect(cfg.Agent.LLM.Model).To(Equal(claudeSonnet420250514))
+		Expect(cfg.Agent.LLM.Endpoint).To(Equal("https://anthropic.example.com"))
+		Expect(cfg.Agent.LLM.OAuth2.Enabled).To(BeTrue())
+		Expect(cfg.Agent.LLM.OAuth2.TokenURL).To(Equal("https://auth.example.com/token"))
+		Expect(cfg.Agent.LLM.OAuth2.Scopes).To(Equal([]string{"llm:invoke"}))
+		Expect(cfg.Agent.LLM.CircuitBreaker.Enabled).To(BeTrue())
+		Expect(cfg.Agent.LLM.CircuitBreaker.MaxRequests).To(Equal(uint32(5)))
+		Expect(cfg.Agent.LLM.CustomHeaders).To(HaveLen(1))
+		Expect(cfg.Agent.LLM.CustomHeaders[0].Name).To(Equal("X-Tenant-ID"))
+	})
+})
+
+var _ = Describe("Tier 10: LLM mTLS Config Validation (Issue #1342)", func() {
+
+	// UT-AF-1342-010: tlsCertFile without tlsKeyFile is rejected
+	It("UT-AF-1342-010: rejects tlsCertFile without tlsKeyFile", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tlsCertFile"))
+		Expect(err.Error()).To(ContainSubstring("tlsKeyFile"))
+	})
+
+	// UT-AF-1342-011: tlsKeyFile without tlsCertFile is rejected
+	It("UT-AF-1342-011: rejects tlsKeyFile without tlsCertFile", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = ""
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tlsCertFile"))
+	})
+
+	// UT-AF-1342-012: relative tlsCertFile path is rejected
+	It("UT-AF-1342-012: rejects relative tlsCertFile path", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = "relative/client.crt"
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tlsCertFile"))
+		Expect(err.Error()).To(ContainSubstring("absolute path"))
+	})
+
+	// UT-AF-1342-013: relative tlsKeyFile path is rejected
+	It("UT-AF-1342-013: rejects relative tlsKeyFile path", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = "relative/client.key"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tlsKeyFile"))
+		Expect(err.Error()).To(ContainSubstring("absolute path"))
+	})
+
+	// UT-AF-1342-014: mTLS without tlsCaFile is rejected (SC-8: server verification mandatory)
+	It("UT-AF-1342-014: rejects mTLS without tlsCaFile", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = ""
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tlsCaFile"))
+		Expect(err.Error()).To(ContainSubstring("server verification"))
+	})
+
+	// UT-AF-1342-015: valid mTLS config accepted
+	It("UT-AF-1342-015: accepts valid mTLS config", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderGemini
+		cfg.Agent.LLM.Model = gemini20Flash
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1342-016: vertex_ai with transport options is accepted (gate removed)
+	It("UT-AF-1342-016: accepts vertex_ai with transport options", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderVertexAI
+		cfg.Agent.LLM.Model = claudeSonnet420250514
+		cfg.Agent.LLM.VertexProject = "my-project"
+		cfg.Agent.LLM.VertexLocation = "us-central1"
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1342-017: anthropic with transport options is accepted (gate removed)
+	It("UT-AF-1342-017: accepts anthropic with transport options", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderAnthropic
+		cfg.Agent.LLM.Model = claudeSonnet420250514
+		cfg.Agent.LLM.APIKeyFile = pathLlmKey
+		cfg.Agent.LLM.TLSCaFile = pathCaPem
+		cfg.Agent.LLM.TLSCertFile = pathClientCrt
+		cfg.Agent.LLM.TLSKeyFile = pathClientKey
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1342-018: YAML parsing includes tlsCertFile and tlsKeyFile
+	It("UT-AF-1342-018: parses mTLS fields from YAML", func() {
+		data := []byte(`
+agent:
+  llm:
+    provider: gemini
+    model: gemini-2.0-flash
+    apiKeyFile: "/etc/secrets/llm-key"
+    tlsCaFile: "/etc/ca/ca.pem"
+    tlsCertFile: "/etc/certs/client.crt"
+    tlsKeyFile: "/etc/certs/client.key"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Agent.LLM.TLSCertFile).To(Equal(pathClientCrt))
+		Expect(cfg.Agent.LLM.TLSKeyFile).To(Equal(pathClientKey))
+	})
+})
+
+var _ = Describe("AF SA Token Config (#1287)", func() {
+	It("UT-AF-1287-001: KABearerTokenFile parsed from YAML", func() {
+		data := []byte(`
+server:
+  port: 8443
+agent:
+  kaBaseURL: "http://ka:8080"
+  kaMCPEndpoint: "http://ka:8080/api/v1/mcp/"
+  dsBaseURL: "http://ds:9090"
+  kaBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+logging:
+  level: INFO
+rateLimit:
+  ipRequestsPerSec: 100
+  userRequestsPerSec: 50
+shutdown:
+  drainSeconds: 15
+resilience:
+  ka:
+    cbFailureThreshold: 5
+  ds:
+    cbFailureThreshold: 3
+  k8s:
+    cbFailureThreshold: 5
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Agent.KABearerTokenFile).To(Equal("/var/run/secrets/kubernetes.io/serviceaccount/token"))
+	})
+
+	It("UT-AF-1287-008: Validate rejects inaccessible KABearerTokenFile (IA-5)", func() {
+		data := []byte(`
+server:
+  port: 8443
+agent:
+  kaBaseURL: "http://ka:8080"
+  kaMCPEndpoint: "http://ka:8080/api/v1/mcp/"
+  dsBaseURL: "http://ds:9090"
+  kaBearerTokenFile: "/nonexistent/path/to/token"
+logging:
+  level: INFO
+rateLimit:
+  ipRequestsPerSec: 100
+  userRequestsPerSec: 50
+shutdown:
+  drainSeconds: 15
+resilience:
+  ka:
+    cbFailureThreshold: 5
+  ds:
+    cbFailureThreshold: 3
+  k8s:
+    cbFailureThreshold: 5
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		err = cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("kaBearerTokenFile"))
+		Expect(err.Error()).To(ContainSubstring("not accessible"))
+	})
+
+	It("UT-AF-1287-003: missing KABearerTokenFile means empty (no auth)", func() {
+		data := []byte(`
+server:
+  port: 8443
+agent:
+  kaBaseURL: "http://ka:8080"
+  kaMCPEndpoint: "http://ka:8080/api/v1/mcp/"
+  dsBaseURL: "http://ds:9090"
+logging:
+  level: INFO
+rateLimit:
+  ipRequestsPerSec: 100
+  userRequestsPerSec: 50
+shutdown:
+  drainSeconds: 15
+resilience:
+  ka:
+    cbFailureThreshold: 5
+  ds:
+    cbFailureThreshold: 3
+  k8s:
+    cbFailureThreshold: 5
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Agent.KABearerTokenFile).To(BeEmpty())
+	})
+})
+
+var _ = Describe("Multi-provider JWT config (#1436)", func() {
+	It("UT-AF-1436-001: config YAML with jwtProviders[] array loads correctly", func() {
+		data := []byte(`
+auth:
+  jwtProviders:
+    - name: "keycloak"
+      issuerURL: "https://keycloak.example.com/realms/kubernaut"
+      jwksURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"
+      audiences:
+        - "kubernaut-apifrontend"
+      claimMappings:
+        username: "preferred_username"
+        groups: "groups"
+    - name: "spire"
+      issuerURL: "https://oidc-discovery.example.com"
+      jwksURL: "https://spire-oidc.example.com/keys"
+      audiences:
+        - "spiffe://trust-domain/ns/kubernaut/sa/af"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.JWTProviders).To(HaveLen(2))
+
+		kc := cfg.Auth.JWTProviders[0]
+		Expect(kc.Name).To(Equal("keycloak"))
+		Expect(kc.IssuerURL).To(Equal("https://keycloak.example.com/realms/kubernaut"))
+		Expect(kc.JWKSURL).To(Equal("https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"))
+		Expect(kc.Audiences).To(Equal([]string{"kubernaut-apifrontend"}))
+		Expect(kc.ClaimMappings.Username).To(Equal("preferred_username"))
+		Expect(kc.ClaimMappings.Groups).To(Equal("groups"))
+
+		sp := cfg.Auth.JWTProviders[1]
+		Expect(sp.Name).To(Equal("spire"))
+		Expect(sp.IssuerURL).To(Equal("https://oidc-discovery.example.com"))
+		Expect(sp.Audiences).To(HaveLen(1))
+	})
+
+	It("UT-AF-1436-002: config YAML with legacy issuerURL only loads (backward compat)", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.IssuerURL).To(Equal(urlRealmsKubernaut))
+		Expect(cfg.Auth.JWTProviders).To(BeEmpty())
+	})
+
+	It("UT-AF-1436-003: config YAML with both issuerURL and jwtProviders loads", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://legacy.example.com"
+  audience: "af"
+  jwtProviders:
+    - name: "keycloak"
+      issuerURL: "https://keycloak.example.com/realms/kubernaut"
+      audiences: ["kubernaut-apifrontend"]
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.IssuerURL).To(Equal("https://legacy.example.com"))
+		Expect(cfg.Auth.JWTProviders).To(HaveLen(1))
+	})
+
+	It("UT-AF-1436-004: jwtProviders entry with empty issuerURL rejected", func() {
+		cfg := validConfig()
+		cfg.Auth.JWTProviders = []config.JWTProviderConfig{
+			{Name: "bad", IssuerURL: "", Audiences: []string{"aud"}},
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("issuerURL"))
+	})
+
+	It("UT-AF-1436-005: jwtProviders entry with empty audiences rejected", func() {
+		cfg := validConfig()
+		cfg.Auth.JWTProviders = []config.JWTProviderConfig{
+			{Name: "bad", IssuerURL: "https://issuer.example.com", Audiences: []string{}},
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("audiences"))
+	})
+
+	It("UT-AF-1436-006: jwtProviders with duplicate names rejected", func() {
+		cfg := validConfig()
+		cfg.Auth.JWTProviders = []config.JWTProviderConfig{
+			{Name: "dup", IssuerURL: "https://a.example.com", Audiences: []string{"aud"}},
+			{Name: "dup", IssuerURL: "https://b.example.com", Audiences: []string{"aud"}},
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("duplicate"))
+	})
+
+	It("UT-AF-1436-007: HTTP jwksURL with allowInsecureIssuers=false rejected", func() {
+		cfg := validConfig()
+		cfg.Auth.AllowInsecureIssuers = false
+		cfg.Auth.JWTProviders = []config.JWTProviderConfig{
+			{
+				Name:      "insecure",
+				IssuerURL: "https://issuer.example.com",
+				JWKSURL:   "http://insecure.example.com/keys",
+				Audiences: []string{"aud"},
+			},
+		}
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("https"))
+	})
+
+	It("UT-AF-1436-008: HTTP jwksURL with allowInsecureIssuers=true accepted", func() {
+		cfg := validConfig()
+		cfg.Auth.AllowInsecureIssuers = true
+		cfg.Auth.JWTProviders = []config.JWTProviderConfig{
+			{
+				Name:      "dev",
+				IssuerURL: "http://issuer.local",
+				JWKSURL:   "http://issuer.local/keys",
+				Audiences: []string{"aud"},
+			},
+		}
+		Expect(cfg.Validate()).To(Succeed())
+	})
+})
+
+var _ = Describe("Tier 11: OpenAI-Compatible LLM Provider Config (Issue #1254)", func() {
+
+	// UT-AF-1254-001 [SI-10, CM-6]: Operator configuring provider: openai passes validation
+	It("UT-AF-1254-001 accepts openai provider with valid model+endpoint+apiKeyFile", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderOpenAI
+		cfg.Agent.LLM.Model = gpt4o
+		cfg.Agent.LLM.Endpoint = "https://api.openai.com/v1"
+		cfg.Agent.LLM.APIKeyFile = "/etc/secrets/openai-key"
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1254-002 [SI-10, CM-6]: Operator configuring provider: openai_compatible passes validation
+	It("UT-AF-1254-002 accepts openai_compatible provider with valid model+endpoint", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderOpenAICompatible
+		cfg.Agent.LLM.Model = "llama3.1"
+		cfg.Agent.LLM.Endpoint = "http://llamastack:8080/v1"
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1254-003 [SI-10]: Unknown provider is rejected at startup
+	It("UT-AF-1254-003 rejects unknown provider", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = "unknown_provider"
+		cfg.Agent.LLM.Model = "some-model"
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("provider"))
+	})
+
+	// UT-AF-1254-004 [SI-10, CM-6]: Endpoint required for OpenAI providers
+	DescribeTable("UT-AF-1254-004 requires endpoint for OpenAI providers",
+		func(provider string) {
+			cfg := validConfig()
+			cfg.Agent.LLM.Provider = provider
+			cfg.Agent.LLM.Model = gpt4o
+			cfg.Agent.LLM.Endpoint = ""
+			cfg.Agent.LLM.APIKeyFile = "/etc/secrets/key"
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("endpoint"))
+		},
+		Entry("openai without endpoint", types.LLMProviderOpenAI),
+		Entry("openai_compatible without endpoint", types.LLMProviderOpenAICompatible),
+	)
+
+	// UT-AF-1254-005 [IA-5, CM-6]: apiKeyFile optional for openai_compatible (keyless LlamaStack)
+	It("UT-AF-1254-005 accepts openai_compatible without apiKeyFile (keyless)", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderOpenAICompatible
+		cfg.Agent.LLM.Model = "llama3.1"
+		cfg.Agent.LLM.Endpoint = "http://llamastack:8080/v1"
+		cfg.Agent.LLM.APIKeyFile = ""
+		Expect(cfg.Validate()).To(Succeed())
+	})
+
+	// UT-AF-1254-006 [IA-5, SI-10]: apiKeyFile required for openai (not openai_compatible)
+	It("UT-AF-1254-006 rejects openai without apiKeyFile", func() {
+		cfg := validConfig()
+		cfg.Agent.LLM.Provider = types.LLMProviderOpenAI
+		cfg.Agent.LLM.Model = gpt4o
+		cfg.Agent.LLM.Endpoint = "https://api.openai.com/v1"
+		cfg.Agent.LLM.APIKeyFile = ""
+		err := cfg.Validate()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("apiKeyFile"))
+	})
+})
+
+var _ = Describe("Auth auto-detect config (#1309)", func() {
+	It("UT-AF-1309-010: config YAML without kubernetesAuthEnabled loads without error", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.IssuerURL).To(Equal(urlRealmsKubernaut))
+	})
+
+	It("UT-AF-1309-011: config YAML with stale kubernetesAuthEnabled loads without error", func() {
+		data := []byte(`
+auth:
+  issuerURL: "https://sso.example.com/realms/kubernaut"
+  audience: "apifrontend"
+  kubernetesAuthEnabled: true
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Auth.IssuerURL).To(Equal(urlRealmsKubernaut))
+	})
+})
+
+var _ = Describe("Interactive config (#1366)", func() {
+
+	It("UT-AF-1366-004: DefaultConfig sets interactive.enabled to true", func() {
+		cfg := config.DefaultConfig()
+		Expect(cfg.Interactive.Enabled).To(BeTrue(),
+			"interactive.enabled must default to true for backward compatibility")
+	})
+
+	It("UT-AF-1366-005: Load parses interactive.enabled from YAML", func() {
+		data := []byte(`
+server:
+  port: 8443
+  metricsPort: 9090
+  healthPort: 8081
+agent:
+  kaBaseURL: "http://localhost:8080"
+  kaMCPEndpoint: "http://localhost:8080/api/v1/mcp/"
+  dsBaseURL: "http://localhost:9090"
+interactive:
+  enabled: false
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Interactive.Enabled).To(BeFalse())
+	})
+
+	It("UT-AF-1366-006: Load without interactive section defaults to enabled=true", func() {
+		data := []byte(`
+server:
+  port: 8443
+  metricsPort: 9090
+  healthPort: 8081
+agent:
+  kaBaseURL: "http://localhost:8080"
+  kaMCPEndpoint: "http://localhost:8080/api/v1/mcp/"
+  dsBaseURL: "http://localhost:9090"
+`)
+		cfg, err := config.Load(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Interactive.Enabled).To(BeTrue(),
+			"omitting interactive section should default to enabled=true")
+	})
+})

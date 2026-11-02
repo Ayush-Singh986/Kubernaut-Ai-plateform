@@ -1,0 +1,953 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// minKindVersionMajor, minKindVersionMinor define the minimum supported Kind
+// CLI version. Kind CLI v0.32.0 is the first release that can `kind load` node
+// images using containerd's config v4 format (see kindest/node:v1.36.1+ and
+// https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0). Older CLI
+// versions fail with "unknown containerd config version: 4".
+//
+// This is a minimum-version check (not exact-match) so future Kind patch/minor
+// releases don't require a code change here -- only the CI install step
+// (KIND_VERSION) needs bumping when we want to pick up a newer default.
+const (
+	minKindVersionMajor = 0
+	minKindVersionMinor = 32
+)
+
+var kindVersionPattern = regexp.MustCompile(`kind v(\d+)\.(\d+)\.(\d+)`)
+
+// kindNodeImagePattern extracts a Kind node's image reference (e.g.
+// "kindest/node:v1.36.1@sha256:...") from the first "image:" line in a Kind
+// Cluster config, so generated worker nodes stay pinned to the same K8s
+// version as the existing control-plane node (appendWorkerNodesToKindConfig).
+var kindNodeImagePattern = regexp.MustCompile(`(?m)^\s*image:\s*(\S+)`)
+
+const kindNodeCPUEnv = "KUBERNAUT_E2E_KIND_NODE_CPUS"
+
+// kindHostPortPattern matches only Kind extraPortMappings hostPort fields.
+// Container ports and in-cluster service ports must remain unchanged when an
+// isolated E2E run selects a separate host-port block.
+var kindHostPortPattern = regexp.MustCompile(`(?m)^(\s*hostPort:\s*)(\d+)(\s*(?:#.*)?)$`)
+
+// checkKindVersionOutput parses `kind version` output (format: "kind v0.32.0
+// go1.26.4 linux/amd64") and returns an error if the installed CLI is older
+// than the minimum required version. Pure function (no I/O) so it is
+// independently unit-testable from the exec.Command wrapper below.
+func checkKindVersionOutput(versionStr string) error {
+	matches := kindVersionPattern.FindStringSubmatch(versionStr)
+	if matches == nil {
+		return fmt.Errorf("could not parse kind version from output: %s", versionStr)
+	}
+
+	major, _ := strconv.Atoi(matches[1])
+	minor, _ := strconv.Atoi(matches[2])
+
+	if major < minKindVersionMajor || (major == minKindVersionMajor && minor < minKindVersionMinor) {
+		return fmt.Errorf("kind version too old: required >= v%d.%d.0, got: %s", minKindVersionMajor, minKindVersionMinor, versionStr)
+	}
+	return nil
+}
+
+// validateKindVersion shells out to `kind version` and validates the result
+// against the minimum required version, logging progress to writer.
+func validateKindVersion(ctx context.Context, writer io.Writer) error {
+	versionCmd := exec.CommandContext(ctx, "kind", "version")
+	versionOutput, err := versionCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to get kind version: %w", err)
+	}
+	versionStr := string(versionOutput)
+
+	if err := checkKindVersionOutput(versionStr); err != nil {
+		_, _ = fmt.Fprintf(writer, "  ⚠️  WARNING: Kind version too old\n")
+		_, _ = fmt.Fprintf(writer, "     Current: %s", versionStr)
+		_, _ = fmt.Fprintf(writer, "     Required: kind v%d.%d.0 or newer\n", minKindVersionMajor, minKindVersionMinor)
+		_, _ = fmt.Fprintf(writer, "     Install: go install sigs.k8s.io/kind@v%d.%d.0\n", minKindVersionMajor, minKindVersionMinor)
+		return err
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ Kind version validated: %s", versionStr)
+	return nil
+}
+
+// appendWorkerNodesToKindConfig returns kindConfigYAML with workerCount
+// additional `role: worker` node entries appended to its `nodes:` list, each
+// pinned to the same node image as the existing control-plane node (Issue
+// #2333: E2E demo scenarios that taint/drain/pressure-test a worker node
+// distinct from the control plane need one on the spoke cluster). Kind
+// requires this at cluster-creation time -- it cannot add nodes to an
+// already-running cluster -- so callers must only invoke this when actually
+// creating (not reusing) a cluster.
+//
+// workerCount=0 is a no-op passthrough (returns kindConfigYAML unchanged),
+// so callers with no worker nodes requested incur no behavior change.
+func appendWorkerNodesToKindConfig(kindConfigYAML string, workerCount int) (string, error) {
+	if workerCount == 0 {
+		return kindConfigYAML, nil
+	}
+
+	match := kindNodeImagePattern.FindStringSubmatch(kindConfigYAML)
+	if match == nil {
+		return "", fmt.Errorf("no node image found in kind config to pin worker nodes to")
+	}
+	image := match[1]
+
+	var b strings.Builder
+	b.WriteString(kindConfigYAML)
+	if !strings.HasSuffix(kindConfigYAML, "\n") {
+		b.WriteString("\n")
+	}
+	for i := 0; i < workerCount; i++ {
+		b.WriteString(fmt.Sprintf("- role: worker\n  image: %s\n", image))
+	}
+	return b.String(), nil
+}
+
+// offsetKindHostPorts shifts every Kind extraPortMappings hostPort by offset.
+// This keeps the shared NodePort/service contract intact while allowing two
+// Kind clusters owned by different users to coexist on one host.
+func offsetKindHostPorts(kindConfigYAML string, offset int) (string, error) {
+	if offset == 0 {
+		return kindConfigYAML, nil
+	}
+	if offset < 0 {
+		return "", fmt.Errorf("host port offset must be non-negative")
+	}
+
+	for _, match := range kindHostPortPattern.FindAllStringSubmatch(kindConfigYAML, -1) {
+		port, err := strconv.Atoi(match[2])
+		if err != nil {
+			return "", fmt.Errorf("parse host port %q: %w", match[2], err)
+		}
+		shifted := port + offset
+		if shifted < 1 || shifted > 65535 {
+			return "", fmt.Errorf("host port %d is outside valid range after offset %d", shifted, offset)
+		}
+	}
+
+	return kindHostPortPattern.ReplaceAllStringFunc(kindConfigYAML, func(line string) string {
+		match := kindHostPortPattern.FindStringSubmatch(line)
+		port, _ := strconv.Atoi(match[2]) // validated in the pass above
+		return match[1] + strconv.Itoa(port+offset) + match[3]
+	}), nil
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Shared Kind Cluster Helpers - Reusable across all E2E test services
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ExtraMount represents a Kind cluster extraMount configuration
+type ExtraMount struct {
+	HostPath      string
+	ContainerPath string
+	ReadOnly      bool
+}
+
+// kindCreateClusterMaxAttempts caps retries for `kind create cluster` when it
+// fails with a known-transient container-runtime error (Issue #1769).
+//
+// GitHub-hosted runners intermittently install a podman/crun combination where
+// the OCI runtime rejects the generated container config ("crun: unknown
+// version specified"), causing `kind create cluster` to fail with exit status
+// 126 while starting the control-plane container. This is a transient
+// container-runtime hiccup on the runner -- not a Kind config, kubeconfig, or
+// application-code problem -- and Kind itself already tears down the
+// partially-created node ("Deleted nodes: [...]") before returning, so retrying
+// the whole `kind create cluster` invocation from scratch is safe.
+const kindCreateClusterMaxAttempts = 3
+
+// transientKindRuntimeErrorPatterns are substrings of `kind create cluster`
+// output that indicate a transient container-runtime failure worth retrying,
+// as opposed to a genuine config/environment problem that would just fail
+// identically on every attempt.
+var transientKindRuntimeErrorPatterns = []string{
+	"crun: unknown version specified",
+	"OCI runtime error",
+	// #2327/#2326 helios08 fleet E2E triage: `podman rm -f` on a stale node
+	// container returns before the runtime has fully released the container
+	// name (overlay unmount / cgroup teardown lag), so the very next `kind
+	// create cluster` can still observe it and refuse with this error even
+	// though `podman ps -a` already reports it gone. purgeStaleKindCluster
+	// re-runs on every retry of this whole call (see caller), so the growing
+	// backoff between attempts gives the runtime time to settle.
+	"node(s) already exist for a cluster with the name",
+}
+
+// isTransientKindRuntimeError reports whether kind's combined output matches a
+// known-transient container-runtime failure signature.
+func isTransientKindRuntimeError(output string) bool {
+	for _, pattern := range transientKindRuntimeErrorPatterns {
+		if strings.Contains(output, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLiveNodeInOutput parses `kind get nodes` combined output and reports
+// whether it lists at least one real node. Pure function (no I/O) so it is
+// independently unit-testable from the exec.Command wrapper below, mirroring
+// checkKindVersionOutput above.
+//
+// `kind get nodes` exits 0 and still prints diagnostic banner lines
+// ("using podman due to KIND_EXPERIMENTAL_PROVIDER", "enabling experimental
+// podman provider") even when zero nodes exist -- it only ever signals "no
+// nodes" via the literal text "No kind nodes found for cluster", never via a
+// non-zero exit code or empty output. Checking output non-emptiness alone
+// is always true regardless of whether any node actually exists, silently
+// defeating the whole check (caught via helios08 fleet E2E triage, PR
+// #2327/#2326, after an initial version of this fix shipped with exactly
+// that bug).
+func hasLiveNodeInOutput(output string) bool {
+	return strings.TrimSpace(output) != "" && !strings.Contains(output, "No kind nodes found")
+}
+
+func kindNodeNamesFromOutput(output, clusterName string) []string {
+	prefix := clusterName + "-"
+	seen := make(map[string]struct{})
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		name := strings.TrimSpace(line)
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+// applyOptionalKindNodeCPUQuota applies an opt-in per-node Podman CPU limit.
+// CI-equivalent Helios runs set KUBERNAUT_E2E_KIND_NODE_CPUS=2 for the hub and
+// spoke, keeping the two Kind nodes within a four-vCPU budget. The default is
+// unchanged so existing local and CI lanes retain their current behavior.
+func applyOptionalKindNodeCPUQuota(ctx context.Context, clusterName string, writer io.Writer) error {
+	rawCPUs := strings.TrimSpace(os.Getenv(kindNodeCPUEnv))
+	if rawCPUs == "" {
+		return nil
+	}
+	cpus, err := strconv.ParseFloat(rawCPUs, 64)
+	if err != nil || cpus <= 0 {
+		return fmt.Errorf("invalid %s value %q: expected a positive CPU count", kindNodeCPUEnv, rawCPUs)
+	}
+	if strings.TrimSpace(os.Getenv("KIND_EXPERIMENTAL_PROVIDER")) != containerRuntimePodman {
+		return fmt.Errorf("%s requires KIND_EXPERIMENTAL_PROVIDER=podman", kindNodeCPUEnv)
+	}
+
+	nodesCmd := exec.CommandContext(ctx, "kind", "get", "nodes", "--name", clusterName)
+	nodesCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	output, err := nodesCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("list Kind nodes for CPU quota: %w", err)
+	}
+	nodes := kindNodeNamesFromOutput(string(output), clusterName)
+	if len(nodes) == 0 {
+		return fmt.Errorf("no Kind nodes found for CPU quota on cluster %s", clusterName)
+	}
+	quota := strconv.FormatFloat(cpus, 'f', -1, 64)
+	for _, node := range nodes {
+		updateCmd := exec.CommandContext(ctx, "podman", "update", "--cpus", quota, node)
+		updateCmd.Stdout = writer
+		updateCmd.Stderr = writer
+		if err := updateCmd.Run(); err != nil {
+			return fmt.Errorf("apply CPU quota %s to Kind node %s: %w", quota, node, err)
+		}
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ Applied %s CPU quota per Kind node to %s (%d node(s))\n", quota, clusterName, len(nodes))
+	return nil
+}
+
+// clusterHasLiveNode reports whether kind's provider can see at least one
+// running node container for clusterName, via `kind get nodes` -- the same
+// node-listing path `kind load image-archive` itself relies on. Used to
+// distinguish a genuinely reusable cluster from a stale bookkeeping entry
+// left behind by a prior failed run (see caller for the full incident this
+// guards against).
+func clusterHasLiveNode(ctx context.Context, clusterName string) bool {
+	nodesCmd := exec.CommandContext(ctx, "kind", "get", "nodes", "--name", clusterName)
+	nodesCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	output, err := nodesCmd.CombinedOutput()
+	return err == nil && hasLiveNodeInOutput(string(output))
+}
+
+// podmanContainerExists reports whether a podman container matching
+// namePrefix* still exists, in any state (running, exited, created).
+func podmanContainerExists(ctx context.Context, namePrefix string) bool {
+	psCmd := exec.CommandContext(ctx, "podman", "ps", "-a", "--filter", "name="+namePrefix, "--format", "{{.Names}}")
+	output, err := psCmd.CombinedOutput()
+	return err == nil && strings.TrimSpace(string(output)) != ""
+}
+
+// purgeStaleKindCluster removes a stale kind cluster registration (bookkeeping
+// present per `kind get clusters`, but no live node per clusterHasLiveNode)
+// so the immediately-following `kind create cluster` doesn't fail with
+// "node(s) already exist for a cluster with the name". `kind delete cluster`
+// alone was observed to return before the underlying podman node container
+// was actually gone (helios08 fleet E2E triage, PR #2327/#2326): the very
+// next `kind create cluster` call raced it and lost. This force-removes the
+// node container directly, then polls briefly for it to disappear from
+// `podman ps -a` before returning, instead of trusting `kind delete
+// cluster`'s own exit as proof of completion.
+func purgeStaleKindCluster(ctx context.Context, clusterName string, writer io.Writer) error {
+	deleteCmd := exec.CommandContext(ctx, "kind", "delete", "cluster", "--name", clusterName)
+	deleteCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	deleteCmd.Stdout = writer
+	deleteCmd.Stderr = writer
+	_ = deleteCmd.Run()
+
+	rmCmd := exec.CommandContext(ctx, "podman", "rm", "-f", clusterName+"-control-plane")
+	_ = rmCmd.Run() // best-effort: node may not exist under this exact name/at all
+
+	const (
+		pollInterval = 2 * time.Second
+		pollTimeout  = 20 * time.Second
+	)
+	deadline := time.Now().Add(pollTimeout)
+	for time.Now().Before(deadline) {
+		if !podmanContainerExists(ctx, clusterName) {
+			return nil
+		}
+		time.Sleep(pollInterval)
+	}
+	if podmanContainerExists(ctx, clusterName) {
+		return fmt.Errorf("podman container for cluster %s still present %v after delete", clusterName, pollTimeout)
+	}
+	return nil
+}
+
+// retryTransientKindRuntimeError runs runOnce (a `kind create cluster`
+// invocation) up to kindCreateClusterMaxAttempts times, retrying only when
+// runOnce fails AND its captured output matches a known-transient
+// container-runtime error (see isTransientKindRuntimeError). Any other
+// failure (bad config, missing binary, etc.) returns immediately on the first
+// attempt, since retrying would just reproduce the same error.
+func retryTransientKindRuntimeError(writer io.Writer, runOnce func() (output string, err error)) error {
+	const label = "kind create cluster"
+	var lastErr error
+	for attempt := 1; attempt <= kindCreateClusterMaxAttempts; attempt++ {
+		output, err := runOnce()
+		if err == nil {
+			if attempt > 1 {
+				_, _ = fmt.Fprintf(writer, "   ✅ %s succeeded on attempt %d/%d\n", label, attempt, kindCreateClusterMaxAttempts)
+			}
+			return nil
+		}
+		lastErr = err
+		if attempt >= kindCreateClusterMaxAttempts || !isTransientKindRuntimeError(output) {
+			return lastErr
+		}
+		backoff := time.Duration(attempt) * 5 * time.Second
+		_, _ = fmt.Fprintf(writer, "   ⚠️  %s hit a transient container-runtime error (attempt %d/%d), retrying in %v: %v\n",
+			label, attempt, kindCreateClusterMaxAttempts, backoff, err)
+		time.Sleep(backoff)
+	}
+	return lastErr
+}
+
+// CreateKindClusterWithExtraMounts creates a Kind cluster with dynamically added extraMounts
+//
+// This is the AUTHORITATIVE shared helper for all E2E services that need custom mounts.
+//
+// Parameters:
+//   - clusterName: Name of the Kind cluster (e.g., "notification-e2e")
+//   - kubeconfigPath: Path where kubeconfig will be written
+//   - baseConfigPath: Path to base Kind YAML config (relative to workspace root)
+//   - extraMounts: Slice of additional mounts to add to control-plane node
+//   - writer: Output writer for logging
+//
+// Example:
+//
+//	mounts := []infrastructure.ExtraMount{
+//	    {HostPath: "/Users/me/.kubernaut/e2e-notifications", ContainerPath: "/tmp/e2e-notifications", ReadOnly: false},
+//	    {HostPath: "./coverdata", ContainerPath: "/coverdata", ReadOnly: false},
+//	}
+//	err := infrastructure.CreateKindClusterWithExtraMounts(ctx, "notification-e2e", kubeconfig, "test/infrastructure/kind-notification-config.yaml", mounts, writer)
+//
+// Benefits over service-specific implementations:
+//   - ✅ Single source of truth for Kind cluster creation with mounts
+//   - ✅ Consistent YAML manipulation logic
+//   - ✅ Reusable across Notification, Gateway, WorkflowExecution, etc.
+//   - ✅ Easier to maintain and test
+//
+// CreateKindClusterWithExtraMountsAndPortMappings adds test-owned NodePort
+// mappings to a temporary copy of the base config before creating the Kind
+// node. Kind cannot publish a new container port after the node exists.
+func CreateKindClusterWithExtraMountsAndPortMappings(
+	ctx context.Context,
+	clusterName string,
+	kubeconfigPath string,
+	baseConfigPath string,
+	extraMounts []ExtraMount,
+	portMappings []KindPortMapping,
+	writer io.Writer,
+) error {
+	if len(portMappings) == 0 {
+		return CreateKindClusterWithExtraMounts(ctx, clusterName, kubeconfigPath, baseConfigPath, extraMounts, writer)
+	}
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find workspace root for Kind port mappings: %w", err)
+	}
+	basePath := filepath.Join(workspaceRoot, baseConfigPath)
+	configData, err := os.ReadFile(basePath)
+	if err != nil {
+		return fmt.Errorf("read Kind config for port mappings: %w", err)
+	}
+	hostPortOffset, err := DemoHostPortOffset()
+	if err != nil {
+		return fmt.Errorf("resolve demo host-port offset: %w", err)
+	}
+	offsetConfig, err := offsetKindHostPorts(string(configData), hostPortOffset)
+	if err != nil {
+		return fmt.Errorf("offset Kind host ports: %w", err)
+	}
+	mappedConfig, err := appendKindPortMappings(offsetConfig, portMappings)
+	if err != nil {
+		return fmt.Errorf("append Kind port mappings: %w", err)
+	}
+	tmpConfig, err := os.CreateTemp(workspaceRoot, ".kind-operator-ports-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create temporary Kind config: %w", err)
+	}
+	tmpName := filepath.Base(tmpConfig.Name())
+	defer func() { _ = os.Remove(tmpConfig.Name()) }()
+	if _, err := tmpConfig.WriteString(mappedConfig); err != nil {
+		_ = tmpConfig.Close()
+		return fmt.Errorf("write temporary Kind config: %w", err)
+	}
+	if err := tmpConfig.Close(); err != nil {
+		return fmt.Errorf("close temporary Kind config: %w", err)
+	}
+	return CreateKindClusterWithExtraMounts(ctx, clusterName, kubeconfigPath, tmpName, extraMounts, writer)
+}
+
+func CreateKindClusterWithExtraMounts(ctx context.Context,
+	clusterName string,
+	kubeconfigPath string,
+	baseConfigPath string,
+	extraMounts []ExtraMount,
+	writer io.Writer,
+) error {
+	// 0. Validate Kind version (minimum version required for E2E tests)
+	if err := validateKindVersion(ctx, writer); err != nil {
+		return err
+	}
+
+	// 0b. Reuse existing cluster if present (idempotent retry support).
+	// When --flake-attempts or CI retry re-runs the suite, the cluster from
+	// the failed attempt is still alive. Reuse it so cascade failures remain
+	// visible — cleaning up would mask correlations between tests.
+	checkCmd := exec.CommandContext(ctx, "kind", "get", "clusters")
+	checkOutput, _ := checkCmd.CombinedOutput()
+	if strings.Contains(string(checkOutput), clusterName) {
+		if reused, err := reuseOrPurgeKindCluster(ctx, clusterName, kubeconfigPath, writer); reused || err != nil {
+			return err
+		}
+	}
+
+	// 1. Find workspace root
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find workspace root: %w", err)
+	}
+
+	// 2. Read base Kind config
+	fullConfigPath := filepath.Join(workspaceRoot, baseConfigPath)
+	configData, err := os.ReadFile(fullConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read Kind config %s: %w", fullConfigPath, err)
+	}
+
+	// 3. Generate extraMounts YAML
+	extraMountsYAML := generateExtraMountsYAML(extraMounts)
+
+	// 4. Insert extraMounts into config (before kubeadmConfigPatches)
+	configStr := string(configData)
+	var updatedConfig string
+
+	// Try to insert before kubeadmConfigPatches (most common insertion point)
+	if strings.Contains(configStr, "  kubeadmConfigPatches:") {
+		updatedConfig = strings.Replace(configStr, "  kubeadmConfigPatches:", extraMountsYAML+"\n  kubeadmConfigPatches:", 1)
+	} else {
+		// Fallback: Insert after control-plane node definition (before next role or end)
+		// This handles configs without kubeadmConfigPatches
+		updatedConfig = insertExtraMountsAfterControlPlane(configStr, extraMountsYAML)
+	}
+
+	// 5. Write temporary config file
+	tmpConfig, err := os.CreateTemp("", fmt.Sprintf("kind-%s-*.yaml", clusterName))
+	if err != nil {
+		return fmt.Errorf("failed to create temp config: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpConfig.Name()) }()
+
+	if _, err := tmpConfig.WriteString(updatedConfig); err != nil {
+		return fmt.Errorf("failed to write temp config: %w", err)
+	}
+	if err := tmpConfig.Close(); err != nil {
+		return fmt.Errorf("failed to close temp config: %w", err)
+	}
+
+	// 6. Log mount information
+	_, _ = fmt.Fprintf(writer, "   📦 Kind cluster with %d extraMount(s):\n", len(extraMounts))
+	for _, mount := range extraMounts {
+		readOnlyStr := ""
+		if mount.ReadOnly {
+			readOnlyStr = " (read-only)"
+		}
+		_, _ = fmt.Fprintf(writer, "      %s → %s%s\n", mount.HostPath, mount.ContainerPath, readOnlyStr)
+	}
+
+	// 7. Create Kind cluster (Issue #1769: retry on transient runtime errors)
+	err = retryTransientKindRuntimeError(writer, func() (string, error) {
+		// #2327/#2326: clear any lingering node registration from a prior
+		// attempt (this call's own earlier retry, or an untorn-down failed
+		// run) before every create attempt, not just the first. See
+		// purgeStaleKindCluster and the "node(s) already exist" pattern
+		// above for why a single purge before the loop isn't enough.
+		_ = purgeStaleKindCluster(ctx, clusterName, writer)
+
+		var captured strings.Builder
+		cmd := exec.CommandContext(ctx, "kind", "create", "cluster",
+			"--name", clusterName,
+			"--config", tmpConfig.Name(),
+			"--kubeconfig", kubeconfigPath)
+		cmd.Stdout = io.MultiWriter(writer, &captured)
+		cmd.Stderr = io.MultiWriter(writer, &captured)
+		runErr := cmd.Run()
+		return captured.String(), runErr
+	})
+	if err != nil {
+		return fmt.Errorf("kind create cluster failed: %w", err)
+	}
+	if err := applyOptionalKindNodeCPUQuota(ctx, clusterName, writer); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func reuseOrPurgeKindCluster(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) (bool, error) {
+	if clusterHasLiveNode(ctx, clusterName) {
+		_, _ = fmt.Fprintf(writer, "  ♻️  Cluster %s already exists, reusing (retry-safe)\n", clusterName)
+		if err := applyOptionalKindNodeCPUQuota(ctx, clusterName, writer); err != nil {
+			return true, err
+		}
+		return true, exportKubeconfigIfNeeded(ctx, clusterName, kubeconfigPath, false, writer)
+	}
+	_, _ = fmt.Fprintf(writer, "  ⚠️  Cluster %s is registered but has no live node (stale from a prior run) — deleting and recreating\n", clusterName)
+	if err := purgeStaleKindCluster(ctx, clusterName, writer); err != nil {
+		_, _ = fmt.Fprintf(writer, "  ⚠️  Cleanup of stale cluster %s was incomplete: %v\n", clusterName, err)
+	}
+	return false, nil
+}
+
+// generateExtraMountsYAML converts ExtraMount slice to YAML format
+func generateExtraMountsYAML(mounts []ExtraMount) string {
+	if len(mounts) == 0 {
+		return ""
+	}
+
+	var yaml strings.Builder
+	yaml.WriteString("  extraMounts:")
+
+	for _, mount := range mounts {
+		yaml.WriteString(fmt.Sprintf("\n  - hostPath: %s", mount.HostPath))
+		yaml.WriteString(fmt.Sprintf("\n    containerPath: %s", mount.ContainerPath))
+		yaml.WriteString(fmt.Sprintf("\n    readOnly: %t", mount.ReadOnly))
+	}
+
+	return yaml.String()
+}
+
+// insertExtraMountsAfterControlPlane inserts extraMounts after control-plane role definition
+// This is a fallback for configs without kubeadmConfigPatches
+func insertExtraMountsAfterControlPlane(config, extraMountsYAML string) string {
+	lines := strings.Split(config, "\n")
+	var result []string
+	inserted := false
+
+	for i, line := range lines {
+		result = append(result, line)
+
+		// Look for "- role: control-plane" followed by next major section or end
+		if !inserted && strings.Contains(line, "- role: control-plane") {
+			// Find next role or end of nodes section
+			for j := i + 1; j < len(lines); j++ {
+				nextLine := lines[j]
+				// Insert before next role or if we hit end of indented content
+				if strings.HasPrefix(nextLine, "- role:") || (strings.TrimSpace(nextLine) != "" && !strings.HasPrefix(nextLine, "  ")) {
+					// Insert extraMounts before this line
+					mountLines := strings.Split(extraMountsYAML, "\n")
+					result = append(result, mountLines...)
+					inserted = true
+					break
+				}
+			}
+
+			// If we reached end without finding next role, append to end
+			if !inserted {
+				mountLines := strings.Split(extraMountsYAML, "\n")
+				result = append(result, mountLines...)
+				inserted = true
+			}
+		}
+	}
+
+	return strings.Join(result, "\n")
+}
+
+// CreateHostDirectoryIfNeeded creates a directory on the host if it doesn't exist
+// This is useful for extraMounts that require pre-existing directories
+func CreateHostDirectoryIfNeeded(path string, perm os.FileMode, writer io.Writer) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		_, _ = fmt.Fprintf(writer, "   📁 Creating directory: %s\n", path)
+		if err := os.MkdirAll(path, perm); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", path, err)
+		}
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ✅ Directory already exists: %s\n", path)
+	}
+	return nil
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PHASE 1 REFACTORING: Unified Kind Cluster Creation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// KindClusterOptions configures Kind cluster creation behavior
+type KindClusterOptions struct {
+	// ClusterName is the name of the Kind cluster (e.g., "gateway-e2e")
+	ClusterName string
+
+	// KubeconfigPath is where the kubeconfig will be written
+	KubeconfigPath string
+
+	// ConfigPath is the path to the Kind config YAML (relative to workspace root)
+	// Example: "test/infrastructure/kind-gateway-config.yaml"
+	ConfigPath string
+
+	// WaitTimeout is the duration to wait for cluster readiness (default: "60s")
+	WaitTimeout string
+
+	// ReuseExisting skips creation if cluster already exists
+	ReuseExisting bool
+
+	// DeleteExisting deletes existing cluster before creating new one
+	DeleteExisting bool
+
+	// CleanupOrphanedContainers removes leftover Podman containers (useful on macOS)
+	CleanupOrphanedContainers bool
+
+	// UsePodman sets KIND_EXPERIMENTAL_PROVIDER=podman
+	UsePodman bool
+
+	// ProjectRootAsWorkingDir sets working directory to project root (for ./coverdata resolution)
+	ProjectRootAsWorkingDir bool
+
+	// HostPortOffset shifts only extraPortMappings host ports in ConfigPath.
+	// NodePorts and in-cluster service ports remain unchanged.
+	HostPortOffset int
+
+	// ExtraWorkerNodes appends this many `role: worker` node entries to the
+	// Kind config's `nodes:` list at creation time, pinned to the same node
+	// image as the config's existing control-plane node (Issue #2333: some
+	// E2E demo scenarios taint/drain/pressure-test a worker node distinct
+	// from the control plane). Zero (default) preserves the config's
+	// existing node topology unchanged. Kind can't add nodes to an
+	// already-running cluster, so this has no effect when ReuseExisting
+	// short-circuits cluster creation below.
+	ExtraWorkerNodes int
+}
+
+// CreateKindClusterWithConfig creates a Kind cluster with the specified configuration
+//
+// This is the SINGLE AUTHORITATIVE function for all E2E test Kind cluster creation.
+// It consolidates patterns from 8+ duplicate functions across the codebase.
+//
+// Benefits:
+//   - ✅ Single source of truth for cluster creation
+//   - ✅ Consistent error handling across all E2E tests
+//   - ✅ Easier to add features (e.g., coverage support, Podman cleanup)
+//   - ✅ Reduces code by ~500 lines across the codebase
+//
+// Example Usage:
+//
+//	opts := infrastructure.KindClusterOptions{
+//	    ClusterName:    "gateway-e2e",
+//	    KubeconfigPath: "/tmp/gateway-kubeconfig",
+//	    ConfigPath:     "test/infrastructure/kind-gateway-config.yaml",
+//	    WaitTimeout:    "5m",
+//	    DeleteExisting: true,
+//	    UsePodman:      true,
+//	    ProjectRootAsWorkingDir: true,
+//	}
+//	err := infrastructure.CreateKindClusterWithConfig(ctx, opts, writer)
+func CreateKindClusterWithConfig(ctx context.Context, opts KindClusterOptions, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "🔧 Creating Kind cluster: %s\n", opts.ClusterName)
+
+	// 0. Validate Kind version (minimum version required for E2E tests)
+	if err := validateKindVersion(ctx, writer); err != nil {
+		return err
+	}
+
+	if reused, err := handleExistingKindCluster(ctx, opts, writer); reused || err != nil {
+		return err
+	}
+
+	// 2. Clean up orphaned Podman containers (macOS fix)
+	if opts.CleanupOrphanedContainers {
+		_, _ = fmt.Fprintln(writer, "  🧹 Cleaning up any leftover Podman containers...")
+		// Only control-plane node (single-node clusters for resource efficiency)
+		cleanupCmd := exec.CommandContext(ctx, "podman", "rm", "-f", opts.ClusterName+"-control-plane")
+		_ = cleanupCmd.Run() // Ignore errors - container may not exist
+	}
+
+	// 3. Resolve config path relative to workspace root
+	workspaceRoot, err := findWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find workspace root: %w", err)
+	}
+	absoluteConfigPath := filepath.Join(workspaceRoot, opts.ConfigPath)
+	if _, err := os.Stat(absoluteConfigPath); os.IsNotExist(err) {
+		return fmt.Errorf("kind config file not found: %s", absoluteConfigPath)
+	}
+
+	_, _ = fmt.Fprintf(writer, "  📋 Using Kind config: %s\n", absoluteConfigPath)
+
+	// 3b. Apply an optional host-port offset before adding worker nodes. The
+	// offset is useful when another user owns a cluster using the default port
+	// block on the same host.
+	kindConfigPath, cleanupConfig, err := prepareKindClusterConfig(absoluteConfigPath, opts, writer)
+	if err != nil {
+		return err
+	}
+	defer cleanupConfig()
+
+	// 4. Ensure kubeconfig directory exists
+	kubeconfigDir := filepath.Dir(opts.KubeconfigPath)
+	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
+		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
+	}
+
+	// 5. Remove any leftover kubeconfig lock file
+	lockFile := opts.KubeconfigPath + ".lock"
+	_ = os.Remove(lockFile) // Ignore errors - file may not exist
+
+	// 6. Build Kind create command
+	waitTimeout := opts.WaitTimeout
+	if waitTimeout == "" {
+		waitTimeout = "60s"
+	}
+
+	err = createKindClusterWithOptions(ctx, opts, workspaceRoot, kindConfigPath, waitTimeout, writer)
+	if err != nil {
+		return fmt.Errorf("kind create cluster failed: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "  ✅ Kind cluster created successfully")
+	if err := applyOptionalKindNodeCPUQuota(ctx, opts.ClusterName, writer); err != nil {
+		return err
+	}
+
+	// 10. Ensure /coverdata is world-writable inside Kind node (DD-TEST-007)
+	// Defense-in-depth: even if the host directory is 0777, DirectoryOrCreate may
+	// create a root-owned 0755 directory inside the Kind node. This ensures the
+	// container user (UID 1001) can always write coverage data.
+	if os.Getenv("E2E_COVERAGE") == trueFixture {
+		ensureCoverdataWritableInKindNode(ctx, opts.ClusterName, writer)
+	}
+
+	// 11. Export kubeconfig explicitly (kind create --kubeconfig doesn't always work reliably)
+	return exportKubeconfigIfNeeded(ctx, opts.ClusterName, opts.KubeconfigPath, opts.UsePodman, writer)
+}
+
+func handleExistingKindCluster(ctx context.Context, opts KindClusterOptions, writer io.Writer) (bool, error) {
+	checkCmd := exec.CommandContext(ctx, "kind", "get", "clusters")
+	if opts.UsePodman {
+		checkCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	}
+	checkOutput, _ := checkCmd.CombinedOutput()
+	if !strings.Contains(string(checkOutput), opts.ClusterName) {
+		return false, nil
+	}
+	if opts.ReuseExisting {
+		_, _ = fmt.Fprintf(writer, "  ℹ️  Cluster %s already exists, reusing...\n", opts.ClusterName)
+		if err := applyOptionalKindNodeCPUQuota(ctx, opts.ClusterName, writer); err != nil {
+			return true, err
+		}
+		return true, exportKubeconfigIfNeeded(ctx, opts.ClusterName, opts.KubeconfigPath, opts.UsePodman, writer)
+	}
+	if !opts.DeleteExisting {
+		return false, nil
+	}
+	_, _ = fmt.Fprintf(writer, "  ⚠️  Cluster already exists, deleting...\n")
+	delCmd := exec.CommandContext(ctx, "kind", "delete", "cluster", "--name", opts.ClusterName)
+	if opts.UsePodman {
+		delCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	}
+	if output, err := delCmd.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(writer, "  ⚠️  Failed to delete existing cluster: %s\n", output)
+	}
+	return false, nil
+}
+
+func prepareKindClusterConfig(absoluteConfigPath string, opts KindClusterOptions, writer io.Writer) (string, func(), error) {
+	kindConfigPath := absoluteConfigPath
+	var cleanupPaths []string
+	cleanup := func() {
+		for _, path := range cleanupPaths {
+			_ = os.Remove(path)
+		}
+	}
+	if opts.HostPortOffset != 0 {
+		configBytes, err := os.ReadFile(kindConfigPath)
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to read kind config %s: %w", kindConfigPath, err)
+		}
+		configWithOffset, err := offsetKindHostPorts(string(configBytes), opts.HostPortOffset)
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to offset host ports in kind config: %w", err)
+		}
+		tmpConfig, err := os.CreateTemp("", fmt.Sprintf("kind-%s-ports-*.yaml", opts.ClusterName))
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to create temporary kind config with host-port offset: %w", err)
+		}
+		cleanupPaths = append(cleanupPaths, tmpConfig.Name())
+		if _, err := tmpConfig.WriteString(configWithOffset); err != nil {
+			_ = tmpConfig.Close()
+			return "", cleanup, fmt.Errorf("failed to write temporary kind config with host-port offset: %w", err)
+		}
+		if err := tmpConfig.Close(); err != nil {
+			return "", cleanup, fmt.Errorf("failed to close temporary kind config with host-port offset: %w", err)
+		}
+		kindConfigPath = tmpConfig.Name()
+		_, _ = fmt.Fprintf(writer, "  🔀 Applied host-port offset +%d\n", opts.HostPortOffset)
+	}
+	if opts.ExtraWorkerNodes > 0 {
+		configBytes, err := os.ReadFile(absoluteConfigPath)
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to read kind config %s: %w", absoluteConfigPath, err)
+		}
+		configWithWorkers, err := appendWorkerNodesToKindConfig(string(configBytes), opts.ExtraWorkerNodes)
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to append %d worker node(s) to kind config: %w", opts.ExtraWorkerNodes, err)
+		}
+		tmpConfig, err := os.CreateTemp("", fmt.Sprintf("kind-%s-*.yaml", opts.ClusterName))
+		if err != nil {
+			return "", cleanup, fmt.Errorf("failed to create temp config with worker nodes: %w", err)
+		}
+		cleanupPaths = append(cleanupPaths, tmpConfig.Name())
+		if _, err := tmpConfig.WriteString(configWithWorkers); err != nil {
+			_ = tmpConfig.Close()
+			return "", cleanup, fmt.Errorf("failed to write temp config with worker nodes: %w", err)
+		}
+		if err := tmpConfig.Close(); err != nil {
+			return "", cleanup, fmt.Errorf("failed to close temp config with worker nodes: %w", err)
+		}
+		kindConfigPath = tmpConfig.Name()
+		_, _ = fmt.Fprintf(writer, "  ➕ Added %d extra worker node(s) to spoke config\n", opts.ExtraWorkerNodes)
+	}
+	return kindConfigPath, cleanup, nil
+}
+
+func createKindClusterWithOptions(ctx context.Context, opts KindClusterOptions, workspaceRoot, kindConfigPath, waitTimeout string, writer io.Writer) error {
+	return retryTransientKindRuntimeError(writer, func() (string, error) {
+		var captured strings.Builder
+		cmd := exec.CommandContext(ctx, "kind", "create", "cluster", "--name", opts.ClusterName, "--config", kindConfigPath, "--kubeconfig", opts.KubeconfigPath, "--wait", waitTimeout)
+		cmd.Stdout = io.MultiWriter(writer, &captured)
+		cmd.Stderr = io.MultiWriter(writer, &captured)
+		if opts.ProjectRootAsWorkingDir {
+			cmd.Dir = workspaceRoot
+		}
+		if opts.UsePodman {
+			cmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+		}
+		return captured.String(), cmd.Run()
+	})
+}
+
+// exportKubeconfigIfNeeded exports the kubeconfig for a Kind cluster
+// This is a workaround for unreliable --kubeconfig flag behavior
+//
+// usePodman must mirror the KindClusterOptions.UsePodman passed to the
+// preceding "kind create cluster" call (step 9 above): kind has no
+// persistent state recording which provider a cluster was created under,
+// so "kind get kubeconfig" re-derives it from KIND_EXPERIMENTAL_PROVIDER on
+// every invocation and silently defaults to the Docker provider when unset.
+// Without this, the lookup fails with "could not locate any control plane
+// nodes" whenever the ambient process environment doesn't already export
+// KIND_EXPERIMENTAL_PROVIDER=podman itself -- which every CI workflow does
+// at the job level (masking the gap there), but a local `make
+// test-e2e-<service>` invocation does not.
+func exportKubeconfigIfNeeded(ctx context.Context, clusterName, kubeconfigPath string, usePodman bool, writer io.Writer) error {
+	kubeconfigCmd := exec.CommandContext(ctx, "kind", "get", "kubeconfig", "--name", clusterName)
+	if usePodman {
+		kubeconfigCmd.Env = append(os.Environ(), "KIND_EXPERIMENTAL_PROVIDER=podman")
+	}
+	kubeconfigOutput, err := kubeconfigCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+
+	// Write kubeconfig to file
+	if err := os.WriteFile(kubeconfigPath, kubeconfigOutput, 0600); err != nil {
+		return fmt.Errorf("failed to write kubeconfig: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(writer, "  ✅ Kubeconfig exported to %s\n", kubeconfigPath)
+	return nil
+}
+
+// ensureCoverdataWritableInKindNode ensures /coverdata inside the Kind node is
+// world-writable (0777) so that any container user (e.g. UID 1001) can write
+// coverage data. This is a defense-in-depth measure: if the hostPath volume's
+// DirectoryOrCreate creates a root-owned directory, the container user would
+// be unable to write without this fix.
+func ensureCoverdataWritableInKindNode(ctx context.Context, clusterName string, writer io.Writer) {
+	nodeName := clusterName + "-control-plane"
+
+	// Try both runtimes (podman for local, docker for CI)
+	for _, runtime := range []string{"podman", "docker"} {
+		cmd := exec.CommandContext(ctx, runtime, "exec", nodeName,
+			"sh", "-c", "mkdir -p /coverdata && chmod 777 /coverdata")
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			_, _ = fmt.Fprintf(writer, "  ✅ /coverdata set to 0777 inside Kind node via %s\n", runtime)
+			return
+		}
+		_ = output // Suppress unused variable
+	}
+	_, _ = fmt.Fprintln(writer, "  ⚠️  Could not chmod /coverdata inside Kind node (non-fatal)")
+}

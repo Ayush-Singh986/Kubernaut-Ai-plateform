@@ -1,0 +1,376 @@
+package launcher
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	"github.com/a2aproject/a2a-go/a2a"
+	"github.com/a2aproject/a2a-go/a2asrv"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/server/adka2a"
+	adksession "google.golang.org/adk/v2/session"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+)
+
+// A2AConfig holds the configuration for the A2A JSON-RPC handler.
+type A2AConfig struct {
+	Agent          agent.Agent
+	SessionService adksession.Service
+	AppName        string
+	Logger         logr.Logger
+	Auditor        audit.Emitter
+	BridgeMetrics  BridgeMetrics
+
+	// SessionPhaseUpdater enables disconnect detection (BR-SESS-003).
+	// When set, StreamingExecutor transitions materialized sessions to
+	// Disconnected on client SSE disconnect.
+	SessionPhaseUpdater SessionPhaseUpdater
+
+	// BeforeExecute is called before each A2A execution with the request context.
+	// The context already contains the UserIdentity from auth middleware.
+	BeforeExecute func(ctx context.Context) (context.Context, error)
+
+	// SessionInterceptor enables multi-turn session continuity (BR-SESS-020).
+	// When non-nil, it is registered as an a2asrv.CallInterceptor to override
+	// ContextID and set stable User identity on incoming A2A messages.
+	SessionInterceptor *SessionInterceptor
+
+	// LLMSemaphore limits global LLM concurrency (SC-5 Denial of Service Protection).
+	// When non-nil, Execute acquires a slot before invoking the agent and releases on return.
+	LLMSemaphore ConcurrencyLimiter
+
+	// PresentationRecoveryTerminalizer escalates bounded presentation failure
+	// through KA's existing complete_no_action escalation contract.
+	PresentationRecoveryTerminalizer func(context.Context, string) error
+}
+
+func (c A2AConfig) validate() error { //nolint:gocritic // hugeParam: value copy intentional for validation
+	if c.Agent == nil {
+		return fmt.Errorf("agent is required")
+	}
+	if c.SessionService == nil {
+		return fmt.Errorf("session service is required")
+	}
+	if c.AppName == "" {
+		return fmt.Errorf("app name is required")
+	}
+	return nil
+}
+
+func (c A2AConfig) logger() logr.Logger { //nolint:gocritic // hugeParam: value copy intentional
+	if c.Logger.GetSink() != nil {
+		return c.Logger
+	}
+	return logr.Discard()
+}
+
+// NewA2AHandler creates an http.Handler that serves the A2A JSON-RPC protocol.
+// It wraps the ADK executor in the a2a-go JSON-RPC transport layer.
+// The handler respects context cancellation for graceful shutdown.
+func NewA2AHandler(cfg A2AConfig) (http.Handler, error) { //nolint:gocritic // hugeParam: called once at startup
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid A2A config: %w", err)
+	}
+
+	log := cfg.logger().WithValues("component", "a2a-launcher")
+
+	runnerCfg := runner.Config{
+		AppName:           cfg.AppName,
+		Agent:             cfg.Agent,
+		SessionService:    cfg.SessionService,
+		AutoCreateSession: true,
+	}
+	execCfg := adka2a.ExecutorConfig{
+		// RunnerProvider (not the plain RunnerConfig) wraps the real ADK
+		// runner in a reinvokingRunner, moving BR-SESS-013's reinvocation
+		// decision inside runner.Runner.Run's own iterator (issue #1776).
+		RunnerProvider:        newReinvokingRunnerProvider(runnerCfg, log, cfg.Auditor, cfg.PresentationRecoveryTerminalizer),
+		BeforeExecuteCallback: buildBeforeExecuteCallback(cfg.BeforeExecute, cfg.Auditor),
+		AfterExecuteCallback:  buildAfterExecuteCallback(log, cfg.Auditor),
+		GenAIPartConverter:    buildStreamingPartConverter(),
+		OutputMode:            adka2a.OutputArtifactPerEvent,
+	}
+
+	inner := adka2a.NewExecutor(execCfg)
+	var seOpts []StreamingExecutorOption
+	if cfg.LLMSemaphore != nil {
+		seOpts = append(seOpts, WithLLMSemaphore(cfg.LLMSemaphore))
+	}
+	executor := NewStreamingExecutor(inner, log, cfg.BridgeMetrics, cfg.SessionPhaseUpdater, seOpts...)
+
+	var handlerOpts []a2asrv.RequestHandlerOption
+	if cfg.SessionInterceptor != nil {
+		handlerOpts = append(handlerOpts, a2asrv.WithCallInterceptor(cfg.SessionInterceptor))
+		log.Info("session interceptor wired for multi-turn continuity")
+	}
+	reqHandler := a2asrv.NewHandler(executor, handlerOpts...)
+	httpHandler := a2asrv.NewJSONRPCHandler(reqHandler,
+		a2asrv.WithKeepAlive(1*time.Second),
+	)
+
+	// Wrap the handler to inject the SSE disconnect context before a2a-go
+	// detaches it with context.WithoutCancel. Context values survive the
+	// detachment, allowing StreamingExecutor to detect client disconnects.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(WithSSEDisconnectCtx(r.Context()))
+		httpHandler.ServeHTTP(w, r)
+	}), nil
+}
+
+// buildBeforeExecuteCallback wraps the user-supplied callback and emits an
+// audit event when an A2A task starts (AU-2 compliance).
+// It also injects CreateContext so the decorator can enrich session creation.
+func buildBeforeExecuteCallback(userCb func(ctx context.Context) (context.Context, error), auditor audit.Emitter) adka2a.BeforeExecuteCallback {
+	return func(ctx context.Context, reqCtx *a2asrv.RequestContext) (context.Context, error) {
+		user := auth.UserIdentityFromContext(ctx)
+		username := ""
+		if user != nil {
+			username = user.Username
+		}
+
+		if auditor != nil {
+			ids := a2aAuditIdentityFromRequest(reqCtx)
+			detail := map[string]string{"method": resolveA2AMethod(ctx)}
+			if ids.TaskID != "" {
+				detail["task_id"] = ids.TaskID
+			}
+			if ids.SessionID != "" {
+				detail["session_id"] = ids.SessionID
+			}
+			auditor.Emit(ctx, &audit.Event{
+				Type:          audit.EventA2ATaskStarted,
+				CorrelationID: ids.CorrelationID,
+				RequestID:     ids.RequestID,
+				UserID:        username,
+				Detail:        detail,
+			})
+
+			triageDetail := map[string]string{
+				"persona": resolvePersona(user),
+			}
+			if ids.TaskID != "" {
+				triageDetail["task_id"] = ids.TaskID
+			}
+			if ids.SessionID != "" {
+				triageDetail["session_id"] = ids.SessionID
+			}
+			auditor.Emit(ctx, &audit.Event{
+				Type:          audit.EventTriageStarted,
+				CorrelationID: ids.CorrelationID,
+				RequestID:     ids.RequestID,
+				UserID:        username,
+				Detail:        triageDetail,
+			})
+		}
+
+		// Inject session creation context for the ServiceDecorator.
+		// The decorator reads this to build CreateConfig with task/user metadata.
+		// SessionID = ContextID because ADK maps A2A ContextID to ADK session ID
+		// (see adka2a.Executor.prepareSession). The callback for kubernaut_remediate
+		// reads SessionID to drive deferred CRD materialization (G6).
+		if reqCtx != nil {
+			sc := &session.CreateContext{
+				TaskID:    string(reqCtx.TaskID),
+				SessionID: reqCtx.ContextID,
+			}
+			ctx = session.WithCreateContext(ctx, sc)
+		}
+
+		if userCb != nil {
+			return userCb(ctx)
+		}
+		return ctx, nil
+	}
+}
+
+// buildAfterExecuteCallback logs task completion with structured context for
+// SRE observability and emits audit events (AU-2 compliance).
+// Issue #1189 AC 12: enriches EventA2ATaskCompleted/Failed with rr_name and
+// rr_namespace if kubernaut_remediate populated the shared CreateContext during the task.
+func buildAfterExecuteCallback(log logr.Logger, auditor audit.Emitter) adka2a.AfterExecuteCallback {
+	return func(ctx adka2a.ExecutorContext, finalEvent *a2a.TaskStatusUpdateEvent, err error) error {
+		user := auth.UserIdentityFromContext(ctx)
+		username := ""
+		if user != nil {
+			username = user.Username
+		}
+
+		taskID := ""
+		if finalEvent != nil {
+			taskID = string(finalEvent.TaskID)
+		}
+		ids := a2aAuditIdentityFromContext(ctx, taskID)
+
+		if err != nil {
+			log.Error(nil, "a2a task execution failed",
+				"error", security.RedactError(err),
+				"user", username,
+				"task_id", taskID,
+			)
+			if auditor != nil {
+				detail := map[string]string{
+					"task_id":    ids.TaskID,
+					"session_id": ids.SessionID,
+					"error":      security.RedactError(err),
+				}
+				enrichRRDetail(ctx, detail)
+				auditor.Emit(ctx, &audit.Event{
+					Type:          audit.EventA2ATaskFailed,
+					CorrelationID: ids.CorrelationID,
+					RequestID:     ids.RequestID,
+					UserID:        username,
+					ErrorDetails: sharedaudit.NewErrorDetails(
+						"apifrontend", "ERR_UPSTREAM_FAILURE", security.RedactError(err), true,
+					),
+					Detail: detail,
+				})
+			}
+			// Return nil — the framework has already produced the TaskStateFailed
+			// status event. Returning an error here would prevent it from being
+			// written to the client queue (ARCH-3 verification).
+			return nil
+		} else if auditor != nil {
+			detail := map[string]string{
+				"task_id":    ids.TaskID,
+				"session_id": ids.SessionID,
+			}
+			enrichRRDetail(ctx, detail)
+			auditor.Emit(ctx, &audit.Event{
+				Type:          audit.EventA2ATaskCompleted,
+				CorrelationID: ids.CorrelationID,
+				RequestID:     ids.RequestID,
+				UserID:        username,
+				Detail:        detail,
+			})
+
+			triageOutcome := "no_issue_found"
+			if detail["rr_name"] != "" {
+				triageOutcome = "rr_created"
+			}
+			auditor.Emit(ctx, &audit.Event{
+				Type:          audit.EventTriageCompleted,
+				CorrelationID: ids.CorrelationID,
+				RequestID:     ids.RequestID,
+				UserID:        username,
+				Detail: map[string]string{
+					"task_id":        ids.TaskID,
+					"session_id":     ids.SessionID,
+					"triage_outcome": triageOutcome,
+				},
+			})
+		}
+		return nil
+	}
+}
+
+type a2aAuditIdentity struct {
+	CorrelationID string
+	RequestID     string
+	SessionID     string
+	TaskID        string
+}
+
+func a2aAuditIdentityFromRequest(reqCtx *a2asrv.RequestContext) a2aAuditIdentity {
+	if reqCtx == nil {
+		return a2aAuditIdentity{}
+	}
+	identity := a2aAuditIdentity{
+		CorrelationID: reqCtx.ContextID,
+		RequestID:     string(reqCtx.TaskID),
+		SessionID:     reqCtx.ContextID,
+		TaskID:        string(reqCtx.TaskID),
+	}
+	if identity.CorrelationID == "" {
+		identity.CorrelationID = identity.RequestID
+	}
+	return identity
+}
+
+func a2aAuditIdentityFromContext(ctx context.Context, taskID string) a2aAuditIdentity {
+	identity := a2aAuditIdentity{
+		CorrelationID: taskID,
+		RequestID:     taskID,
+		TaskID:        taskID,
+	}
+	if sc := session.CreateContextFromContext(ctx); sc != nil {
+		if sc.TaskID != "" {
+			identity.RequestID = sc.TaskID
+			identity.TaskID = sc.TaskID
+		}
+		identity.SessionID = sc.SessionID
+		if identity.SessionID != "" {
+			identity.CorrelationID = identity.SessionID
+		}
+	}
+	return identity
+}
+
+// enrichRRDetail adds rr_name and rr_namespace to the detail map if the
+// shared CreateContext was populated by the AfterToolCallback during the task.
+func enrichRRDetail(ctx context.Context, detail map[string]string) {
+	sc := session.CreateContextFromContext(ctx)
+	if sc != nil && sc.RRName != "" {
+		detail["rr_name"] = sc.RRName
+		detail["rr_namespace"] = sc.RRNamespace
+	}
+}
+
+// personaSRE is the default/fallback persona used when the user has no
+// group membership matching a more specific persona (or is unauthenticated).
+const personaSRE = "sre"
+
+// a2aMethodMessageSend is the A2A JSON-RPC method string for the default/
+// fallback and non-streaming send-message call paths.
+const a2aMethodMessageSend = "message/send"
+
+// resolvePersona maps the authenticated user's group membership to the
+// OpenAPI persona enum used in triage audit events.
+func resolvePersona(user *auth.UserIdentity) string {
+	if user == nil {
+		return personaSRE
+	}
+	for _, g := range user.Groups {
+		switch g {
+		case personaSRE:
+			return personaSRE
+		case "ai-orchestrator":
+			return "orchestrator"
+		case "cicd":
+			return "cicd"
+		case "observability":
+			return "dashboard"
+		case "l3-audit":
+			return "audit"
+		case "remediation-approver":
+			return "approver"
+		}
+	}
+	return personaSRE
+}
+
+// resolveA2AMethod maps the a2asrv CallContext method name to the corresponding
+// A2A JSON-RPC method string for audit events (AU-2/AU-3 compliance).
+func resolveA2AMethod(ctx context.Context) string {
+	callCtx, ok := a2asrv.CallContextFrom(ctx)
+	if !ok {
+		return a2aMethodMessageSend
+	}
+	switch callCtx.Method() {
+	case "OnSendMessageStream":
+		return "message/stream"
+	case "OnSendMessage":
+		return a2aMethodMessageSend
+	default:
+		return a2aMethodMessageSend
+	}
+}

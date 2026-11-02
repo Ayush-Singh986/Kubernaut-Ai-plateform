@@ -1,0 +1,48 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: discovery-test-v1
+spec:
+  # Discovery Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: DataStorage E2E — 04_workflow_discovery_test.go (DD-HAPI-017)
+  version: "1.0.0"
+  description:
+    what: "Test workflow for three-step discovery E2E validation"
+    whenToUse: "For E2E testing of ListAvailableActions, ListWorkflows, GetWorkflow"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "DataStorage service running with action_type_taxonomy seeded"
+  
+  actionType: ScaleReplicas
+  
+  labels:
+    severity: [critical]
+    environment: [production, staging, test]
+    component: [v1/Pod]
+    priority: P0
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace containing the affected pod"
+    - name: REPLICA_COUNT
+      type: integer
+      required: false
+      description: "Target replica count"
+      default: 3

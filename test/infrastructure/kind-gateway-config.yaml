@@ -1,0 +1,81 @@
+# Kind cluster configuration for Gateway E2E tests
+# Reference: DD-TEST-001 Port Allocation Strategy
+#
+# Port Allocation (from DD-TEST-001):
+#   Gateway API Host Port: 8080 (maps to NodePort 30080)
+#   Gateway Health Host Port: 28080 (maps to NodePort 30180) -- Issue #753
+#   Gateway Metrics Host Port: 9090 (maps to NodePort 30090)
+#   Data Storage Host Port: 18091 (maps to NodePort 30081)
+#
+# Dependencies:
+#   - PostgreSQL (in-cluster) - Data Storage persistence
+#   - Redis (in-cluster) - Data Storage caching
+#   - Data Storage (port 18091) - Audit events
+#   - Gateway (port 8080) - Signal ingestion
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  # DD-TEST-007: Mount coverage directory on control-plane node
+  # Gateway pods run on control-plane due to nodeSelector
+  extraMounts:
+  - hostPath: ./coverdata
+    containerPath: /coverdata
+    readOnly: false
+  # Expose Gateway and Data Storage NodePorts to host machine
+  # This eliminates kubectl port-forward instability
+  extraPortMappings:
+  # Gateway service ports
+  - containerPort: 30080  # Gateway NodePort in cluster
+    hostPort: 8080        # Port on host machine (localhost:8080)
+    protocol: TCP
+  - containerPort: 30180  # Gateway Health NodePort (Issue #753)
+    hostPort: 28080       # Port on host machine (localhost:28080)
+    protocol: TCP
+  - containerPort: 30090  # Gateway Metrics NodePort
+    hostPort: 9090        # Port on host machine (localhost:9090/metrics)
+    protocol: TCP
+  # Data Storage dependency (for audit events - BR-GATEWAY-190)
+  - containerPort: 30081  # Data Storage NodePort in cluster
+    hostPort: 18091       # Port on host machine (localhost:18091)
+    protocol: TCP         # Note: 18091 avoids conflicts with Gateway metrics (9090)
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 28091       # Port on host machine (localhost:28091)
+    protocol: TCP
+  # Dedicated "gateway-resilience" throwaway instance (#1985 DataStorage
+  # resilience E2E, test/e2e/gateway/39_datastorage_resilience_test.go) --
+  # distinct from the shared Gateway's own 30080/30180 above.
+  - containerPort: 30185  # GatewayResilienceAPINodePort
+    hostPort: 28185       # GatewayResilienceAPIHostPort
+    protocol: TCP
+  - containerPort: 30183  # GatewayResilienceHealthNodePort
+    hostPort: 28183       # GatewayResilienceHealthHostPort
+    protocol: TCP
+  # Dedicated, isolated DataStorage instance backing gateway-resilience
+  # (#1985 follow-up, 2026-08-16): infrastructure.ResilienceDSNodePortAPI
+  # (datastorage_isolated_instance.go), host-mapped so
+  # triggerGatewayResilienceSignalAndVerifyAudit can query its audit trail
+  # by correlation_id after recovery.
+  - containerPort: 30082  # ResilienceDSNodePortAPI
+    hostPort: 28193       # GatewayResilienceDataStorageAPIHostPort
+    protocol: TCP
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Increase API server rate limits for parallel integration testing
+        # Default max-requests-inflight: 400
+        # Default max-mutating-requests-inflight: 200
+        # With 4 parallel test processes × 100 concurrent requests = 400 QPS
+        # These limits provide 2x headroom for test stability
+        max-requests-inflight: "800"
+        max-mutating-requests-inflight: "400"
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        # Default kube-api-qps: 20, kube-api-burst: 30
+        # Higher limits prevent CRD creation delays during parallel testing
+        kube-api-qps: "100"
+        kube-api-burst: "200"

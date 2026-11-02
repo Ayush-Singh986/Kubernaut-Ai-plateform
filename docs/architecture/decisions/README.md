@@ -1,0 +1,195 @@
+# Architecture Decision Records (ADRs)
+
+**Purpose**: This directory contains all significant architectural decisions made for the Kubernaut project.
+
+**Format**: Each ADR follows the naming convention `NNN-short-title.md` where NNN is a zero-padded sequential number.
+
+---
+
+## 📋 ADR Index
+
+### **Core Architecture Decisions**
+
+|| # | Title | Status | Date | Impact |
+||---|-------|--------|------|--------|
+|| 001 | [CRD API Group Rationale](./001-crd-api-group-rationale.md) | ✅ Accepted | 2025 | Why `remediation.kubernaut.io` API group |
+|| 002 | [E2E GitOps Strategy](./002-e2e-gitops-strategy.md) | ✅ Accepted | 2025 | E2E testing approach for GitOps |
+|| 003 | [GitOps Priority Order](./003-gitops-priority-order.md) | ✅ Accepted | 2025 | Implementation priority for GitOps features |
+|| 004 | [Metrics Authentication](./004-metrics-authentication.md) | ✅ Accepted | 2025 | Authentication strategy for metrics endpoints |
+|| 005 | [Owner Reference Architecture](./005-owner-reference-architecture.md) | ✅ Accepted | 2025 | CRD lifecycle and ownership patterns |
+|| 006 | [Effectiveness Monitor V1 Inclusion](./006-effectiveness-monitor-v1-inclusion.md) | ⚠️ SUPERSEDED by DD-017 | 2025-10 | Moving Effectiveness Monitor from V2 to V1 → REVERSED |
+|| 027 | [Multi-Architecture Build Strategy](./ADR-027-multi-architecture-build-strategy.md) | ✅ Accepted | 2025-10-20 | All services built for amd64 + arm64 by default |
+|| 032 | [Data Access Layer Isolation](./ADR-032-data-access-layer-isolation.md) | ✅ Accepted | 2025-10-31 | All services access DB via Data Storage Service REST API |
+|| 034 | [Unified Audit Table Design](./ADR-034-unified-audit-table-design.md) | ✅ Approved | 2025-11-08 | Event sourcing pattern with JSONB for audit traces |
+|| 035 | [Asynchronous Buffered Audit Ingestion](./ADR-038-async-buffered-audit-ingestion.md) | ✅ Approved | 2025-11-08 | Async buffered writes for zero latency impact |
+|| 047 | [Policy Engine Selection](./ADR-047-policy-engine-selection.md) | 🔄 Proposed | 2025-12-05 | Rego vs CEL vs 6 alternatives for policy evaluation |
+|| 048 | [Rate Limiting Proxy Delegation](./ADR-048-rate-limiting-proxy-delegation.md) | ✅ Approved | 2025-12-07 | Delegate rate limiting to Nginx Ingress/HAProxy Router |
+| 073 | [OpenTelemetry Distributed Tracing Adoption](./ADR-073-opentelemetry-distributed-tracing-adoption.md) | ✅ Accepted | 2026-08-11 | GAP-14/#1519: OTel for GW/DS/KA, BYO-collector + log-sink, no cross-service span-link annotations (correlation_id remains authoritative) |
+
+### **Business Requirement (BR) Migration Decisions**
+
+|| # | Title | Service | Status | Impact |
+||---|-------|---------|--------|--------|
+|| 007 | [Gateway BR Legacy Mapping](./007-gateway-br-legacy-mapping.md) | Gateway Service | ✅ Accepted | BR standardization for gateway |
+|| 008 | [Gateway BR Standardization](./008-gateway-br-standardization.md) | Gateway Service | ✅ Accepted | BR format migration strategy |
+|| 011 | [Remediation Processor BR Migration](./011-remediationprocessor-br-migration.md) | Remediation Processor | ✅ Accepted | BR standardization for processor |
+|| 012 | [Kubernetes Executor BR Migration](./012-kubernetesexecutor-br-migration.md) | ~~Kubernetes Executor~~ (DEPRECATED - ADR-025) | ✅ Accepted | BR standardization for executor |
+|| 013 | [Remediation Orchestrator BR Migration](./013-remediationorchestrator-br-migration.md) | Remediation Orchestrator | ✅ Accepted | BR standardization for orchestrator |
+
+### **Design Decisions (DD-PREFIX)**
+
+#### **Project-Wide Standards**
+
+|| ID | Title | Scope | Status | Date | Impact |
+||---|-------|-------|--------|------|--------|
+|| DD-001 | [Recovery Context Enrichment](./DD-001-recovery-context-enrichment.md) | RemediationProcessing / AIAnalysis | ✅ Approved | 2024-10-08 | Temporal consistency, fresh context for AI recovery |
+|| DD-002 | [Per-Step Validation Framework](./DD-002-per-step-validation-framework.md) | WorkflowExecution / ~~KubernetesExecutor~~ (DEPRECATED - ADR-025) | ✅ Approved | 2025-10-14 | 15-20% effectiveness improvement, cascade failure prevention |
+|| DD-003 | [Forced Recommendation Manual Override](./DD-003-forced-recommendation-manual-override.md) | RemediationOrchestrator | ✅ Approved for V2 | 2025-10-20 | Operator autonomy, complete audit trail (V2 feature) |
+|| DD-004 | [RFC 7807 Error Response Standard](./DD-004-RFC7807-ERROR-RESPONSES.md) | All HTTP Services | ✅ Approved | 2025-10-30 | Consistent error handling across all services |
+|| DD-005 | [Observability Standards](./DD-005-OBSERVABILITY-STANDARDS.md) | All Services | ✅ Approved | 2025-10-31 | Metrics, logging, tracing standards |
+|| DD-AUDIT-001 | [Audit Responsibility Pattern](./DD-AUDIT-001-audit-responsibility-pattern.md) | All Services | ✅ Approved | 2025-11-02 | Distributed audit pattern (services write their own traces) |
+|| DD-AUDIT-002 | [Audit Shared Library Design](./DD-AUDIT-002-audit-shared-library-design.md) | All Services | ✅ Approved | 2025-11-08 | Shared library (`pkg/audit/`) for async buffered writes |
+|| DD-AUDIT-003 | [Service Audit Trace Requirements](./DD-AUDIT-003-service-audit-trace-requirements.md) | All Services | ✅ Approved | 2025-11-08 | Defines which 8 of 11 services must generate audit traces |
+|| DD-AUDIT-004 | [Structured Types for Audit Event Payloads](./DD-AUDIT-004-structured-types-for-audit-event-payloads.md) | All Services | ✅ Approved | 2025-12-16 | Type-safe audit event data (eliminates `map[string]interface{}`) |
+| DD-OTEL-001 | [OpenTelemetry Tracing Design](./DD-OTEL-001-opentelemetry-tracing-design.md) | Gateway, DataStorage, Kubernaut Agent | ✅ Approved | 2026-08-11 | `otelhttp` inbound/outbound spans, BYO-collector + log-sink exporter, GAP-14/#1519 |
+
+#### **Service-Specific Decisions**
+
+|| ID | Title | Service/Component | Status | Date | Impact |
+||---|-------|-------------------|--------|------|--------|
+|| DD-CONTEXT-001 | [Cache Stampede Prevention](./DD-CONTEXT-001-cache-stampede-prevention.md) | Context API | ✅ Approved | 2025-10-20 | 90% DB query reduction, single-flight deduplication |
+|| DD-CONTEXT-002 | [Cache Size Limit Configuration](./DD-CONTEXT-002-cache-size-limit-configuration.md) | Context API | ✅ Approved | 2025-10-20 | OOM prevention, configurable limits |
+|| DD-CONTEXT-003 | [Context Enrichment Placement](./DD-CONTEXT-003-Context-Enrichment-Placement.md) | Context API / KA | ✅ Approved | 2025-10-22 | LLM-driven tool call pattern, 36% token cost reduction |
+|| DD-CONTEXT-004 | [BR-AI-002 Ownership](./DD-CONTEXT-004-BR-AI-002-Ownership.md) | AIAnalysis / Context API | ✅ Approved | 2025-10-22 | Keep BR-AI-002 in AIAnalysis (revised scope) |
+|| DD-AF-014 | [Business-Outcome Completion Coordinator](./DD-AF-014-business-outcome-completion-coordinator.md) | API Frontend / A2A | ✅ Accepted | 2026-09-05 | Separate business-lifecycle completion from ADK turn completion; preserve consent while recovering required decision artifacts |
+|| DD-AF-015 | [Session-Scoped In-Process Event Router](./DD-AF-015-session-scoped-event-router.md) | API Frontend / A2A | ✅ Approved | 2026-09-13 | Replace last-writer-wins event relay with explicit per-session subscribers; no replay or cross-replica delivery |
+|| DD-AF-016 | [Explicit Alert-Rule Severity Source for AF Remediation Requests](./DD-AF-016-explicit-alert-severity-source.md) | API Frontend / SignalProcessing | ✅ Accepted | 2026-09-27 | Remove Tier 2.5 LLM severity inference; preserve explicit raw alert/rule values and fail closed on missing or ambiguous evidence |
+|| DD-016 | [Dynamic Toolset V2.0 Deferral](./DD-016-dynamic-toolset-v2-deferral.md) | Dynamic Toolset | ✅ Approved | 2025-11-21 | Deferred to V2.0 (redundant with KA Prometheus discovery) |
+|| DD-017 | [Effectiveness Monitor V1.1 Deferral](./DD-017-effectiveness-monitor-v1.1-deferral.md) | Effectiveness Monitor | ✅ Approved | 2025-12-01 | Level 1 in V1.0, Level 2 in V1.1 (DD-017 v2.0 partial reinstatement) |
+|| DD-EFFECTIVENESS-001 | [Hybrid Automated + AI Analysis](./DD-EFFECTIVENESS-001-Hybrid-Automated-AI-Analysis.md) | Effectiveness Monitor | ✅ Level 1 V1.0 / Level 2 V1.1 | 2025-10-16 | 85-90% effectiveness, 11x ROI (DD-017) |
+|| DD-EFFECTIVENESS-002 | [Restart Recovery Idempotency](./DD-EFFECTIVENESS-002-Restart-Recovery-Idempotency.md) | Effectiveness Monitor | ✅ V1.0 (applies to Level 1) | 2025-10-16 | Idempotent restart recovery (DD-017) |
+|| DD-EFFECTIVENESS-003 | [RemediationRequest Watch Strategy](./DD-EFFECTIVENESS-003-RemediationRequest-Watch-Strategy.md) | Effectiveness Monitor | ✅ V1.0 (applies to Level 1) | 2025-10-16 | 92% confidence, future-proof design (DD-017) |
+|| DD-GATEWAY-004 | [Redis Memory Optimization](./DD-GATEWAY-004-redis-memory-optimization.md) | Gateway Service | ✅ Approved | 2025-10-24 | 93% memory reduction, lightweight metadata |
+|| DD-GATEWAY-005 | [Redis Cleanup on CRD Deletion](./DD-GATEWAY-005-redis-cleanup-on-crd-deletion.md) | Gateway Service | ✅ Approved | 2025-10-27 | No cleanup needed (TTL-based expiration) |
+|| DD-GATEWAY-006 | [Authentication Strategy](./DD-GATEWAY-006-authentication-strategy.md) | Gateway Service | ✅ Approved | 2025-10-27 | Network-level security, no OAuth2 |
+|| DD-GATEWAY-007 | [Fallback Namespace Strategy](./DD-GATEWAY-007-fallback-namespace-strategy.md) | Gateway Service | ✅ Approved | 2025-10-31 | kubernaut-system fallback for cluster-scoped signals |
+|| DD-GATEWAY-019 | [Signal Fingerprint/Deduplication Consolidation — Triage & Recommendation](./DD-GATEWAY-019-signal-dedup-consolidation-triage.md) | Gateway / ApiFrontend / AuthWebhook | 🔄 Proposed | 2026-08-22 | Rejects moving dedup logic into AuthWebhook (availability blast-radius, conflicts with DD-GATEWAY-011); recommends shared in-process package for GW+AF, closing an undocumented GW↔AF concurrent-create race |
+|| DD-KA-016 | [Remediation History Context](./DD-KA-016-remediation-history-context.md) | Kubernaut Agent (KA) / DataStorage / Remediation Orchestrator | ✅ Approved | 2026-10-07 (v1.7) | Complete target-scoped recursive pre/post spec-hash chain traversal with fail-closed resource guards and sanitized qualitative history guidance (#2490) |
+| DD-KA-007 | [Cumulative Investigation Accounting](./DD-KA-007-cumulative-investigation-accounting.md) | KA / AF / AgentSession | ✅ Approved | 2026-09-09 | Per-RR scopes for turns/tool-calls/tokens across all legs; server-computed console reporting (#2387); deprecates #435 §3 for counts |
+|| DD-KA-017 | [Three-Step Workflow Discovery Integration](./DD-KA-017-three-step-workflow-discovery-integration.md) | Kubernaut Agent (KA) | ✅ Approved | 2026-02-05 | Replace search_workflow_catalog with three-step discovery tools (incident + recovery). Implements DD-WORKFLOW-016 protocol; discovery ownership later moved to KA per DD-WORKFLOW-019. |
+|| DD-WORKFLOW-016 | [Action-Type Workflow Catalog Indexing](./DD-WORKFLOW-016-action-type-workflow-indexing.md) | Workflow Catalog / KA / DS | ✅ Approved | 2026-02-05 | Replace signal_type with action_type as primary catalog matching key (DD-WORKFLOW-001 v2.6) |
+|| DD-WORKFLOW-017 | [Workflow Lifecycle Component Interactions](./DD-WORKFLOW-017-workflow-lifecycle-component-interactions.md) | DS / KA / RO / WE | ✅ Approved | 2026-02-05 | End-to-end workflow lifecycle (creation, discovery, execution, disable/enable). Supersedes DD-WORKFLOW-005, DD-WORKFLOW-007. |
+#### **Authentication & Authorization Decisions**
+
+|| ID | Title | Service/Component | Status | Date | Impact |
+||---|-------|-------------------|--------|------|--------|
+|| DD-AUTH-001 | [Shared Authentication Webhook](./DD-AUTH-001-shared-authentication-webhook.md) | All Services | ✅ Approved | 2026-01 | Shared auth webhook design |
+|| DD-AUTH-003 | [Externalized Authorization via Sidecar](./DD-AUTH-003-externalized-authorization-sidecar.md) | All HTTP Services | ✅ Approved | 2026-01-06 | Zero-trust sidecar auth pattern |
+|| DD-AUTH-004 | [OpenShift OAuth-Proxy Legal Hold](./DD-AUTH-004-openshift-oauth-proxy-legal-hold.md) | DataStorage | ✅ Approved | 2026-01 | OCP-specific oauth-proxy |
+|| DD-AUTH-005 | [DataStorage Client Authentication Pattern](./DD-AUTH-005-datastorage-client-authentication-pattern.md) | All Services | ✅ Approved | 2026-01-07 | Transport-layer auth injection for DS clients |
+|| DD-AUTH-008 | [Secret Management: Kustomize → Helm](./DD-AUTH-008-secret-management-kustomize-helm.md) | All Services | ✅ Approved | 2026-01 | Secret lifecycle in Helm charts |
+|| DD-AUTH-009 | [OAuth2-Proxy Workflow Attribution](./DD-AUTH-009-oauth2-proxy-workflow-attribution-implementation.md) | WorkflowExecution | ✅ Approved | 2026-01 | User identity for SOC2 attribution |
+|| DD-AUTH-010 | [E2E Real Authentication Mandate](./DD-AUTH-010-e2e-real-authentication-mandate.md) | All Services | ✅ Approved | 2026-01 | Real K8s auth in E2E tests |
+|| DD-AUTH-014 | [Middleware-Based SAR Authentication](./DD-AUTH-014-middleware-based-sar-authentication.md) | DataStorage, Gateway, KA | ✅ Approved | 2026-01-31 | Interface-driven SAR/TokenReview middleware |
+|| DD-AUTH-015 | [Outbound LLM Authentication Transport](./DD-AUTH-015-outbound-llm-authentication-transport.md) | Kubernaut Agent | ✅ Approved | 2026-04-06 | Composable transport chain for LLM auth: custom headers + OAuth2 client credentials |
+
+#### **Platform / Helm Chart Decisions**
+
+| ID | Title | Scope | Status | Date | Impact |
+|---|-------|-------|--------|------|--------|
+| DD-PLATFORM-001 | [cert-manager Inter-Service mTLS Auto-Provisioning](./DD-PLATFORM-001-cert-manager-interservice-mtls.md) | Helm chart (all services) | ✅ Approved | 2026-07-07 | Dedicated internal CA closes SC-8 gap for cert-manager mode |
+| DD-PLATFORM-002 | [Fix ArgoCD PostSync/Health Deadlock for post-install Hook Jobs](./DD-PLATFORM-002-argocd-postsync-health-deadlock.md) | Helm chart (db-migration, interservice-ca-sync) | ✅ Approved | 2026-07-07 | argocd.argoproj.io/hook: Sync override breaks PostSync/health circular dependency |
+| DD-PLATFORM-003 | [Infra-First ArgoCD Sync Wave (Phased Deployment)](./DD-PLATFORM-003-argocd-infra-first-sync-wave.md) | Helm chart (PostgreSQL, Valkey, DataStorage, certs, hook Jobs) | ✅ Approved | 2026-07-07 | sync-wave "-1" for infra/certs/DataStorage reduces CI contention and closes TLS-cert mount race |
+| DD-PLATFORM-004 | [Anti-Affinity and PDB Enabled by Default](./DD-PLATFORM-004-chart-default-hardening.md) | Helm chart (all services) | ✅ Approved | 2026-07-08 | Soft anti-affinity + PDB (maxUnavailable: 1) on by default, matching Kubernaut Operator parity |
+| DD-PLATFORM-011 | [Helm Policy ConfigMap Ownership Boundary](./DD-PLATFORM-011-helm-policy-configmap-ownership-boundary.md) | Helm chart (AIAnalysis and SignalProcessing policy ConfigMaps) | ✅ Approved | 2026-09-28 | Reserved chart-owned identities; distinct external ConfigMap names prevent unsafe Helm pruning |
+
+**Note**: DD-* prefix is used for detailed design decisions with comprehensive alternatives analysis, implementation strategy, and validation plans. ADR-* prefix is used for architectural records.
+
+---
+
+## 📝 DD Numbering Principles
+
+### Chronological Order Based on Decision Date
+
+DD numbers are assigned based on **when the decision was made** (decision date), not when the file was created or migrated.
+
+**Key Principles**:
+- Older decisions keep lower numbers when conflicts arise
+- Decision date is found in the file header (`**Date**: YYYY-MM-DD`)
+- Sequential numbering within each service prefix (DD-CONTEXT-001, DD-CONTEXT-002, etc.)
+
+**Example**: DD-CONTEXT-001 (Cache Stampede, 2025-10-20) comes before DD-CONTEXT-003 (Context Enrichment, 2025-10-22) because the decision was made 2 days earlier, even though both files were migrated on 2025-10-31.
+
+### Renumbering History
+
+During the 2025-10-31 migration, some DD files were renumbered to maintain chronological order:
+
+| Original ID | Decision | Date | New ID | Reason |
+|---|---|---|---|---|
+| DD-CONTEXT-001 | Context Enrichment Placement | 2025-10-22 | DD-CONTEXT-003 | DESIGN_DECISIONS.md files (2025-10-20) were older |
+| DD-CONTEXT-002 | BR-AI-002 Ownership | 2025-10-22 | DD-CONTEXT-004 | DESIGN_DECISIONS.md files (2025-10-20) were older |
+
+**Result**: DD-CONTEXT-001 and DD-CONTEXT-002 now refer to Cache Stampede and Cache Size decisions (2025-10-20), maintaining chronological order.
+
+---
+
+## 📝 ADR Guidelines
+
+### **When to Create an ADR**
+
+Create an ADR for decisions that:
+- ✅ Affect multiple services or the overall architecture
+- ✅ Have long-term implications (>6 months)
+- ✅ Involve trade-offs between alternatives
+- ✅ Set precedents for future decisions
+- ✅ Change existing architectural patterns
+
+### **ADR Template**
+
+```markdown
+# ADR-NNN: [Short Title]
+
+**Status**: [Proposed | Accepted | Deprecated | Superseded]
+**Date**: YYYY-MM-DD
+**Decision Makers**: [Names/Roles]
+**Impact**: [High | Medium | Low]
+
+## Context
+What is the issue we're facing?
+
+## Decision
+What is our decision?
+
+## Consequences
+What are the trade-offs and implications?
+
+## Alternatives Considered
+What other options did we evaluate?
+
+## Related Decisions
+- ADR-XXX: [Related decision]
+```
+
+### **ADR Status Values**
+
+- **Proposed**: Under discussion, not yet decided
+- **Accepted**: Decision made and implemented
+- **Deprecated**: No longer recommended, but not removed
+- **Superseded**: Replaced by a newer ADR (link to replacement)
+
+---
+
+## 🔗 Related Documentation
+
+- **Analysis**: Supporting analysis for architectural decisions → [../analysis/](../analysis/)
+  - Comprehensive alternative assessments
+  - Detailed technical comparisons
+  - Security and performance analysis
+- **Specifications**: Cross-service technical specifications → [../specifications/](../specifications/)
+- **References**: Visual diagrams and reference materials → [../references/](../references/)
+- **Service Docs**: Individual service specifications → [../../services/](../../services/)
+
+---
+
+**Maintained By**: Kubernaut Architecture Team
+**Last Updated**: April 6, 2026

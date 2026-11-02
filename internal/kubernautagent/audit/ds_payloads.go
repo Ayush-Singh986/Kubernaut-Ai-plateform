@@ -1,0 +1,707 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package audit
+
+import (
+	"github.com/go-faster/jx"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+)
+
+// buildConfigReloadedPayload builds the aiagent.config.reloaded payload
+// (GAP-11, Issue #2285). event.Data["component"] identifies the
+// hot-reloadable component (e.g. "ca_cert").
+func buildConfigReloadedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentConfigReloadedPayload{
+		EventType: ogenclient.AIAgentConfigReloadedPayloadEventTypeAiagentConfigReloaded,
+		Component: dataString(event.Data, "component"),
+	}
+	return ogenclient.NewAIAgentConfigReloadedPayloadAuditEventRequestEventData(payload)
+}
+
+// buildConfigRejectedPayload builds the aiagent.config.rejected payload
+// (GAP-11, Issue #2285). event.Data["component"]/["rejection_reason"]
+// identify the component and why the reload was rejected.
+func buildConfigRejectedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentConfigRejectedPayload{
+		EventType:       ogenclient.AIAgentConfigRejectedPayloadEventTypeAiagentConfigRejected,
+		Component:       dataString(event.Data, "component"),
+		RejectionReason: dataString(event.Data, "rejection_reason"),
+	}
+	return ogenclient.NewAIAgentConfigRejectedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildEnrichmentCompletedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentEnrichmentCompletedPayload{
+		EventType:                 ogenclient.AIAgentEnrichmentCompletedPayloadEventTypeAiagentEnrichmentCompleted,
+		EventID:                   dataString(event.Data, "event_id"),
+		IncidentID:                dataString(event.Data, "incident_id"),
+		RootOwnerKind:             dataString(event.Data, "root_owner_kind"),
+		RootOwnerName:             dataString(event.Data, "root_owner_name"),
+		OwnerChainLength:          dataInt(event.Data, "owner_chain_length"),
+		RemediationHistoryFetched: dataBool(event.Data, "remediation_history_fetched"),
+	}
+	if ns := dataString(event.Data, "root_owner_namespace"); ns != "" {
+		payload.RootOwnerNamespace.SetTo(ns)
+	}
+	if labels, ok := detectedLabelsFromEventData(event.Data, "detected_labels_summary"); ok {
+		payload.DetectedLabelsSummary.SetTo(labels)
+	}
+	if _, present := event.Data["failed_detections"]; present {
+		payload.FailedDetections.SetTo(dataStringSlice(event.Data, "failed_detections"))
+	}
+	setCompletedEnrichmentTelemetryFields(&payload, event)
+	return ogenclient.NewAIAgentEnrichmentCompletedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildEnrichmentFailedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentEnrichmentFailedPayload{
+		EventType:            ogenclient.AIAgentEnrichmentFailedPayloadEventTypeAiagentEnrichmentFailed,
+		EventID:              dataString(event.Data, "event_id"),
+		IncidentID:           dataString(event.Data, "incident_id"),
+		Reason:               dataString(event.Data, "reason"),
+		Detail:               dataString(event.Data, "detail"),
+		AffectedResourceKind: dataString(event.Data, "affected_resource_kind"),
+		AffectedResourceName: dataString(event.Data, "affected_resource_name"),
+	}
+	if ns := dataString(event.Data, "affected_resource_namespace"); ns != "" {
+		payload.AffectedResourceNamespace.SetTo(ns)
+	}
+	setFailedEnrichmentTelemetryFields(&payload, event)
+	return ogenclient.NewAIAgentEnrichmentFailedPayloadAuditEventRequestEventData(payload)
+}
+
+// enrichmentTelemetrySetters keeps the shared mapping logic independent of
+// ogen's distinct enum types for completed and failed payloads.
+type enrichmentTelemetrySetters struct {
+	clusterID           func(string)
+	source              func(string)
+	toolClass           func(string)
+	logicalTool         func(string)
+	attempt             func(int)
+	retryOutcome        func(string)
+	failureClass        func(string)
+	failureCode         func(string)
+	evidenceSource      func(string)
+	evidenceOutcome     func(string)
+	evidenceFailureCode func(string)
+}
+
+// setEnrichmentTelemetryFields maps the optional bounded recovery/evidence
+// fields shared by normal enrichment and MCP recovery observations. Raw
+// transport text and wire names are never accepted here.
+func setEnrichmentTelemetryFields(event *AuditEvent, setters enrichmentTelemetrySetters) {
+	if v := dataString(event.Data, "cluster_id"); v != "" {
+		setters.clusterID(v)
+	}
+	if v := dataString(event.Data, "source"); v != "" {
+		setters.source(v)
+	}
+	if v := dataString(event.Data, "tool_class"); v != "" {
+		setters.toolClass(v)
+	}
+	if v := dataString(event.Data, "logical_tool"); v != "" {
+		setters.logicalTool(v)
+	}
+	if v, ok := dataIntValue(event.Data, "attempt"); ok {
+		setters.attempt(v)
+	}
+	if v := dataString(event.Data, "retry_outcome"); v != "" {
+		setters.retryOutcome(v)
+	}
+	if v := dataString(event.Data, "failure_class"); v != "" {
+		setters.failureClass(v)
+	}
+	if v := dataString(event.Data, "failure_code"); v != "" {
+		setters.failureCode(v)
+	}
+	if v := dataString(event.Data, "evidence_source"); v != "" {
+		setters.evidenceSource(v)
+	}
+	if v := dataString(event.Data, "evidence_outcome"); v != "" {
+		setters.evidenceOutcome(v)
+	}
+	if v := dataString(event.Data, "evidence_failure_code"); v != "" {
+		setters.evidenceFailureCode(v)
+	}
+}
+
+//nolint:dupl // The generated completed/failed payloads intentionally expose distinct enum types.
+func setCompletedEnrichmentTelemetryFields(payload *ogenclient.AIAgentEnrichmentCompletedPayload, event *AuditEvent) {
+	setEnrichmentTelemetryFields(event, enrichmentTelemetrySetters{
+		clusterID:   payload.ClusterID.SetTo,
+		source:      payload.Source.SetTo,
+		toolClass:   func(v string) { payload.ToolClass.SetTo(ogenclient.AIAgentEnrichmentCompletedPayloadToolClass(v)) },
+		logicalTool: payload.LogicalTool.SetTo,
+		attempt:     payload.Attempt.SetTo,
+		retryOutcome: func(v string) {
+			payload.RetryOutcome.SetTo(ogenclient.AIAgentEnrichmentCompletedPayloadRetryOutcome(v))
+		},
+		failureClass: func(v string) {
+			payload.FailureClass.SetTo(ogenclient.AIAgentEnrichmentCompletedPayloadFailureClass(v))
+		},
+		failureCode: payload.FailureCode.SetTo,
+		evidenceSource: func(v string) {
+			payload.EvidenceSource.SetTo(ogenclient.AIAgentEnrichmentCompletedPayloadEvidenceSource(v))
+		},
+		evidenceOutcome: func(v string) {
+			payload.EvidenceOutcome.SetTo(ogenclient.AIAgentEnrichmentCompletedPayloadEvidenceOutcome(v))
+		},
+		evidenceFailureCode: payload.EvidenceFailureCode.SetTo,
+	})
+}
+
+//nolint:dupl // The generated completed/failed payloads intentionally expose distinct enum types.
+func setFailedEnrichmentTelemetryFields(payload *ogenclient.AIAgentEnrichmentFailedPayload, event *AuditEvent) {
+	setEnrichmentTelemetryFields(event, enrichmentTelemetrySetters{
+		clusterID:    payload.ClusterID.SetTo,
+		source:       payload.Source.SetTo,
+		toolClass:    func(v string) { payload.ToolClass.SetTo(ogenclient.AIAgentEnrichmentFailedPayloadToolClass(v)) },
+		logicalTool:  payload.LogicalTool.SetTo,
+		attempt:      payload.Attempt.SetTo,
+		retryOutcome: func(v string) { payload.RetryOutcome.SetTo(ogenclient.AIAgentEnrichmentFailedPayloadRetryOutcome(v)) },
+		failureClass: func(v string) { payload.FailureClass.SetTo(ogenclient.AIAgentEnrichmentFailedPayloadFailureClass(v)) },
+		failureCode:  payload.FailureCode.SetTo,
+		evidenceSource: func(v string) {
+			payload.EvidenceSource.SetTo(ogenclient.AIAgentEnrichmentFailedPayloadEvidenceSource(v))
+		},
+		evidenceOutcome: func(v string) {
+			payload.EvidenceOutcome.SetTo(ogenclient.AIAgentEnrichmentFailedPayloadEvidenceOutcome(v))
+		},
+		evidenceFailureCode: payload.EvidenceFailureCode.SetTo,
+	})
+}
+
+func buildLLMRequestPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.LLMRequestPayload{
+		EventType:     ogenclient.LLMRequestPayloadEventTypeAiagentLlmRequest,
+		EventID:       dataString(event.Data, "event_id"),
+		IncidentID:    event.CorrelationID,
+		Model:         dataString(event.Data, "model"),
+		PromptLength:  dataInt(event.Data, "prompt_length"),
+		PromptPreview: truncate(dataString(event.Data, "prompt_preview"), previewMaxLen),
+	}
+	if phase := dataString(event.Data, "phase"); phase != "" {
+		payload.Phase.SetTo(phase)
+	}
+	if _, present := event.Data["workflow_discovery_enrichment_labels_present"]; present {
+		workflowContext := ogenclient.WorkflowDiscoveryAuditContext{
+			EnrichmentLabelsPresent: dataBool(event.Data, "workflow_discovery_enrichment_labels_present"),
+			SignalLabelsPresent:     dataBool(event.Data, "workflow_discovery_signal_labels_present"),
+			PromptLabelsPresent:     dataBool(event.Data, "workflow_discovery_prompt_labels_present"),
+		}
+		if labels := dataStringMap(event.Data, "workflow_discovery_detected_labels"); len(labels) > 0 {
+			workflowContext.DetectedLabels.SetTo(detectedLabelsFromStringMap(labels))
+		}
+		payload.WorkflowDiscoveryContext.SetTo(workflowContext)
+	}
+	if tools := dataStringSlice(event.Data, "toolsets_enabled"); len(tools) > 0 {
+		payload.ToolsetsEnabled = tools
+	}
+	// #2141 (BR-AI-2120/BR-AI-1044, FedRAMP AU-3): only present on
+	// sameKindValidationGate/apiVersionValidationGate retry audit events --
+	// ordinary llm.request events never set these Data keys, so the
+	// optional fields stay unset rather than persisting empty strings.
+	if v := dataString(event.Data, "retry_outcome"); v != "" {
+		payload.RetryOutcome.SetTo(v)
+	}
+	if v := dataString(event.Data, "ambiguous_kind"); v != "" {
+		payload.AmbiguousKind.SetTo(v)
+	}
+	if v := dataString(event.Data, "conflicting_groups"); v != "" {
+		payload.ConflictingGroups.SetTo(v)
+	}
+	return ogenclient.NewLLMRequestPayloadAuditEventRequestEventData(payload)
+}
+
+func buildLLMResponsePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.LLMResponsePayload{
+		EventType:       ogenclient.LLMResponsePayloadEventTypeAiagentLlmResponse,
+		EventID:         dataString(event.Data, "event_id"),
+		IncidentID:      event.CorrelationID,
+		HasAnalysis:     dataBool(event.Data, "has_analysis"),
+		AnalysisLength:  dataInt(event.Data, "analysis_length"),
+		AnalysisPreview: truncate(dataString(event.Data, "analysis_preview"), previewMaxLen),
+	}
+	if full := dataString(event.Data, "analysis_full"); full != "" {
+		payload.AnalysisFull.SetTo(full)
+	}
+	if tokens := dataInt(event.Data, "total_tokens"); tokens > 0 {
+		payload.TokensUsed.SetTo(tokens)
+	}
+	if tc := dataInt(event.Data, "tool_call_count"); tc > 0 {
+		payload.ToolCallCount.SetTo(tc)
+	}
+	if _, hasReasoning := event.Data["reasoning_text"]; hasReasoning {
+		payload.ReasoningText, payload.ReasoningRedacted = reasoningPayloadFields(
+			dataString(event.Data, "reasoning_text"), dataBool(event.Data, "reasoning_redacted"))
+	}
+	return ogenclient.NewLLMResponsePayloadAuditEventRequestEventData(payload)
+}
+
+func buildLLMToolCallPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.LLMToolCallPayload{
+		EventType:     ogenclient.LLMToolCallPayloadEventTypeAiagentLlmToolCall,
+		EventID:       dataString(event.Data, "event_id"),
+		IncidentID:    event.CorrelationID,
+		ToolCallIndex: dataInt(event.Data, "tool_call_index"),
+		ToolName:      dataString(event.Data, "tool_name"),
+	}
+	if args := dataString(event.Data, "tool_arguments"); args != "" {
+		payload.ToolArguments.SetTo(toJxRawMap(args))
+	}
+	payload.ToolResult = toJxRaw(dataString(event.Data, "tool_result"))
+	if len(payload.ToolResult) == 0 {
+		payload.ToolResult = jx.Raw(`""`)
+	}
+	if preview := dataString(event.Data, "tool_result_preview"); preview != "" {
+		payload.ToolResultPreview.SetTo(truncate(preview, previewMaxLen))
+	}
+	if phase := dataString(event.Data, "phase"); phase != "" {
+		payload.Phase.SetTo(phase)
+	}
+	if details, ok := event.Data["error_details"].(*sharedaudit.ErrorDetails); ok && details != nil {
+		payload.ErrorDetails = sharedaudit.ToOgenOptErrorDetails(details)
+	}
+	return ogenclient.NewLLMToolCallPayloadAuditEventRequestEventData(payload)
+}
+
+func buildValidationAttemptPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.WorkflowValidationPayload{
+		EventType:   ogenclient.WorkflowValidationPayloadEventTypeAiagentWorkflowValidationAttempt,
+		EventID:     dataString(event.Data, "event_id"),
+		IncidentID:  event.CorrelationID,
+		Attempt:     dataInt(event.Data, "attempt"),
+		MaxAttempts: dataInt(event.Data, "max_attempts"),
+		IsValid:     dataBool(event.Data, "is_valid"),
+	}
+	if errs, ok := event.Data["errors"].([]string); ok {
+		payload.Errors = errs
+	}
+	if wfID := dataString(event.Data, "workflow_id"); wfID != "" {
+		payload.WorkflowID.SetTo(wfID)
+	}
+	if dataBool(event.Data, "is_final_attempt") {
+		payload.IsFinalAttempt.SetTo(true)
+	}
+	return ogenclient.NewWorkflowValidationPayloadAuditEventRequestEventData(payload)
+}
+
+func buildResponseCompletePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentResponsePayload{
+		EventType:  ogenclient.AIAgentResponsePayloadEventTypeAiagentResponseComplete,
+		EventID:    dataString(event.Data, "event_id"),
+		IncidentID: event.CorrelationID,
+	}
+	if rd := dataString(event.Data, "response_data"); rd != "" {
+		payload.ResponseData = toIncidentResponseData(rd, event.CorrelationID)
+	}
+	if pt := dataInt(event.Data, "total_prompt_tokens"); pt > 0 {
+		payload.TotalPromptTokens.SetTo(pt)
+	}
+	if ct := dataInt(event.Data, "total_completion_tokens"); ct > 0 {
+		payload.TotalCompletionTokens.SetTo(ct)
+	}
+	return ogenclient.NewAIAgentResponsePayloadAuditEventRequestEventData(payload)
+}
+
+func buildRCACompletePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentRCACompletePayload{
+		EventType:  ogenclient.AIAgentRCACompletePayloadEventTypeAiagentRcaComplete,
+		EventID:    dataString(event.Data, "event_id"),
+		IncidentID: event.CorrelationID,
+	}
+	if rd := dataString(event.Data, "response_data"); rd != "" {
+		payload.ResponseData = toIncidentResponseData(rd, event.CorrelationID)
+	}
+	if pt := dataInt(event.Data, "total_prompt_tokens"); pt > 0 {
+		payload.TotalPromptTokens.SetTo(pt)
+	}
+	if ct := dataInt(event.Data, "total_completion_tokens"); ct > 0 {
+		payload.TotalCompletionTokens.SetTo(ct)
+	}
+	return ogenclient.NewAIAgentRCACompletePayloadAuditEventRequestEventData(payload)
+}
+
+func buildResponseFailedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentResponseFailedPayload{
+		EventType:    ogenclient.AIAgentResponseFailedPayloadEventTypeAiagentResponseFailed,
+		EventID:      dataString(event.Data, "event_id"),
+		IncidentID:   event.CorrelationID,
+		ErrorMessage: dataString(event.Data, "error_message"),
+		Phase:        dataString(event.Data, "phase"),
+	}
+	if details, ok := event.Data["error_details"].(*sharedaudit.ErrorDetails); ok && details != nil {
+		if converted, ok := sharedaudit.ToOgenOptErrorDetails(details).Get(); ok {
+			payload.ErrorDetails = converted
+		}
+	}
+	if dur := dataFloat64(event.Data, "duration_seconds"); dur > 0 {
+		payload.DurationSeconds.SetTo(float32(dur))
+	}
+	return ogenclient.NewAIAgentResponseFailedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionStartedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionStartedPayload{
+		EventType: ogenclient.AIAgentSessionStartedPayloadEventTypeAiagentSessionStarted,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	if v := dataString(event.Data, "incident_id"); v != "" {
+		payload.IncidentID.SetTo(v)
+	}
+	if v := dataString(event.Data, "signal_name"); v != "" {
+		payload.SignalName.SetTo(v)
+	}
+	if v := dataString(event.Data, "severity"); v != "" {
+		payload.Severity.SetTo(v)
+	}
+	if v := dataString(event.Data, "created_by"); v != "" {
+		payload.CreatedBy.SetTo(v)
+	}
+	return ogenclient.NewAIAgentSessionStartedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionCompletedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionCompletedPayload{
+		EventType: ogenclient.AIAgentSessionCompletedPayloadEventTypeAiagentSessionCompleted,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	return ogenclient.NewAIAgentSessionCompletedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionFailedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionFailedPayload{
+		EventType: ogenclient.AIAgentSessionFailedPayloadEventTypeAiagentSessionFailed,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	if v := dataString(event.Data, "error"); v != "" {
+		payload.Error.SetTo(v)
+	}
+	return ogenclient.NewAIAgentSessionFailedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionCancelledPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionCancelledPayload{
+		EventType: ogenclient.AIAgentSessionCancelledPayloadEventTypeAiagentSessionCancelled,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	return ogenclient.NewAIAgentSessionCancelledPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionObservedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionObservedPayload{
+		EventType: ogenclient.AIAgentSessionObservedPayloadEventTypeAiagentSessionObserved,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	if v := dataString(event.Data, "observer_user"); v != "" {
+		payload.ObserverUser.SetTo(v)
+	}
+	if v := dataString(event.Data, "session_owner"); v != "" {
+		payload.SessionOwner.SetTo(v)
+	}
+	return ogenclient.NewAIAgentSessionObservedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionAccessDeniedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionAccessDeniedPayload{
+		EventType:      ogenclient.AIAgentSessionAccessDeniedPayloadEventTypeAiagentSessionAccessDenied,
+		EventID:        dataString(event.Data, "event_id"),
+		SessionID:      event.SessionID,
+		Endpoint:       dataString(event.Data, "endpoint"),
+		RequestingUser: dataString(event.Data, "requesting_user"),
+	}
+	if v := dataString(event.Data, "session_owner"); v != "" {
+		payload.SessionOwner.SetTo(v)
+	}
+	return ogenclient.NewAIAgentSessionAccessDeniedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildInvestigationCancelledPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentInvestigationCancelledPayload{
+		EventType:       ogenclient.AIAgentInvestigationCancelledPayloadEventTypeAiagentInvestigationCancelled,
+		EventID:         dataString(event.Data, "event_id"),
+		CancelledPhase:  dataString(event.Data, "cancelled_phase"),
+		CancelledAtTurn: dataInt(event.Data, "cancelled_at_turn"),
+	}
+	if event.SessionID != "" {
+		payload.SessionID.SetTo(event.SessionID)
+	}
+	if pt := dataInt(event.Data, "total_prompt_tokens"); pt > 0 {
+		payload.TotalPromptTokens.SetTo(pt)
+	}
+	if ct := dataInt(event.Data, "total_completion_tokens"); ct > 0 {
+		payload.TotalCompletionTokens.SetTo(ct)
+	}
+	if tt := dataInt(event.Data, "total_tokens"); tt > 0 {
+		payload.TotalTokens.SetTo(tt)
+	}
+	if v := dataString(event.Data, "accumulated_messages"); v != "" {
+		payload.AccumulatedMessages.SetTo(v)
+	}
+	return ogenclient.NewAIAgentInvestigationCancelledPayloadAuditEventRequestEventData(payload)
+}
+
+func buildAlignmentStepPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentAlignmentStepPayload{
+		EventType:   ogenclient.AIAgentAlignmentStepPayloadEventTypeAiagentAlignmentStep,
+		EventID:     dataString(event.Data, "event_id"),
+		StepIndex:   dataInt(event.Data, "step_index"),
+		StepKind:    dataString(event.Data, "step_kind"),
+		Explanation: dataString(event.Data, "explanation"),
+	}
+	if v := dataString(event.Data, "tool"); v != "" {
+		payload.Tool.SetTo(v)
+	}
+	return ogenclient.NewAIAgentAlignmentStepPayloadAuditEventRequestEventData(payload)
+}
+
+func buildAlignmentVerdictPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentAlignmentVerdictPayload{
+		EventType: ogenclient.AIAgentAlignmentVerdictPayloadEventTypeAiagentAlignmentVerdict,
+		EventID:   dataString(event.Data, "event_id"),
+		Result:    dataString(event.Data, "result"),
+		Flagged:   dataInt(event.Data, "flagged"),
+		Total:     dataInt(event.Data, "total"),
+	}
+	if v := dataString(event.Data, "summary"); v != "" {
+		payload.Summary.SetTo(v)
+	}
+	if pt := dataInt(event.Data, "shadow_prompt_tokens"); pt > 0 {
+		payload.ShadowPromptTokens.SetTo(pt)
+	}
+	if ct := dataInt(event.Data, "shadow_completion_tokens"); ct > 0 {
+		payload.ShadowCompletionTokens.SetTo(ct)
+	}
+	if tt := dataInt(event.Data, "shadow_total_tokens"); tt > 0 {
+		payload.ShadowTotalTokens.SetTo(tt)
+	}
+	return ogenclient.NewAIAgentAlignmentVerdictPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionSuspendedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionSuspendedPayload{
+		EventType: ogenclient.AIAgentSessionSuspendedPayloadEventTypeAiagentSessionSuspended,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	return ogenclient.NewAIAgentSessionSuspendedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSessionResumedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentSessionResumedPayload{
+		EventType: ogenclient.AIAgentSessionResumedPayloadEventTypeAiagentSessionResumed,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	return ogenclient.NewAIAgentSessionResumedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildInteractiveStartedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentInteractiveStartedPayload{
+		EventType: ogenclient.AIAgentInteractiveStartedPayloadEventTypeAiagentInteractiveStarted,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	return ogenclient.NewAIAgentInteractiveStartedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildInteractiveCompletedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentInteractiveCompletedPayload{
+		EventType: ogenclient.AIAgentInteractiveCompletedPayloadEventTypeAiagentInteractiveCompleted,
+		EventID:   dataString(event.Data, "event_id"),
+		SessionID: event.SessionID,
+	}
+	if reason, ok := event.Data["reason"].(string); ok {
+		payload.Reason.SetTo(reason)
+	}
+	return ogenclient.NewAIAgentInteractiveCompletedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildInteractiveK8sCallPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentInteractiveK8sCallPayload{
+		EventType:  ogenclient.AIAgentInteractiveK8sCallPayloadEventTypeAiagentInteractiveK8sCall,
+		EventID:    dataString(event.Data, "event_id"),
+		SessionID:  event.SessionID,
+		ActingUser: event.ActingUser,
+		Resource:   dataString(event.Data, "resource"),
+		Verb:       dataString(event.Data, "verb"),
+	}
+	if ns := dataString(event.Data, "namespace"); ns != "" {
+		payload.Namespace.SetTo(ns)
+	}
+	if name := dataString(event.Data, "resource_name"); name != "" {
+		payload.ResourceName.SetTo(name)
+	}
+	if code := dataInt(event.Data, "http_status_code"); code > 0 {
+		payload.HTTPStatusCode.SetTo(code)
+	}
+	if cid := event.CorrelationID; cid != "" {
+		payload.CorrelationID.SetTo(cid)
+	}
+	return ogenclient.NewAIAgentInteractiveK8sCallPayloadAuditEventRequestEventData(payload)
+}
+
+func buildSecretAccessedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	verb := ogenclient.AIAgentSecretAccessedPayloadVerbGet
+	if dataString(event.Data, "verb") == "list" {
+		verb = ogenclient.AIAgentSecretAccessedPayloadVerbList
+	}
+	payload := ogenclient.AIAgentSecretAccessedPayload{
+		EventType: ogenclient.AIAgentSecretAccessedPayloadEventTypeAiagentSecretAccessed,
+		EventID:   dataString(event.Data, "event_id"),
+		Verb:      verb,
+	}
+	if ns := dataString(event.Data, "namespace"); ns != "" {
+		payload.Namespace.SetTo(ns)
+	}
+	if name := dataString(event.Data, "secret_name"); name != "" {
+		payload.SecretName.SetTo(name)
+	}
+	if toolName := dataString(event.Data, "tool_name"); toolName != "" {
+		payload.ToolName.SetTo(toolName)
+	}
+	if detail := dataString(event.Data, "outcome_detail"); detail != "" {
+		payload.OutcomeDetail.SetTo(detail)
+	}
+	return ogenclient.NewAIAgentSecretAccessedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildShadowLLMRequestPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.ShadowLLMRequestPayload{
+		EventType:    ogenclient.ShadowLLMRequestPayloadEventTypeAiagentShadowLlmRequest,
+		EventID:      dataString(event.Data, "event_id"),
+		IncidentID:   event.CorrelationID,
+		StepIndex:    dataInt(event.Data, "step_index"),
+		StepKind:     dataString(event.Data, "step_kind"),
+		PromptLength: dataInt(event.Data, "prompt_length"),
+	}
+	return ogenclient.NewShadowLLMRequestPayloadAuditEventRequestEventData(payload)
+}
+
+func buildShadowLLMResponsePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.ShadowLLMResponsePayload{
+		EventType:        ogenclient.ShadowLLMResponsePayloadEventTypeAiagentShadowLlmResponse,
+		EventID:          dataString(event.Data, "event_id"),
+		IncidentID:       event.CorrelationID,
+		StepIndex:        dataInt(event.Data, "step_index"),
+		StepKind:         dataString(event.Data, "step_kind"),
+		PromptTokens:     dataInt(event.Data, "prompt_tokens"),
+		CompletionTokens: dataInt(event.Data, "completion_tokens"),
+		TotalTokens:      dataInt(event.Data, "total_tokens"),
+	}
+	if attempt := dataInt(event.Data, "attempt"); attempt > 0 {
+		payload.Attempt.SetTo(attempt)
+	}
+	if er := dataString(event.Data, "evaluation_result"); er != "" {
+		payload.EvaluationResult.SetTo(ogenclient.ShadowLLMResponsePayloadEvaluationResult(er))
+	}
+	return ogenclient.NewShadowLLMResponsePayloadAuditEventRequestEventData(payload)
+}
+
+func buildRateLimitDeniedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentRatelimitDeniedPayload{
+		EventType: ogenclient.AIAgentRatelimitDeniedPayloadEventTypeAiagentRatelimitDenied,
+		EventID:   dataString(event.Data, "event_id"),
+	}
+	if v := dataString(event.Data, "source_ip"); v != "" {
+		payload.SourceIP.SetTo(v)
+	}
+	if v := dataString(event.Data, "path"); v != "" {
+		payload.Path.SetTo(v)
+	}
+	if v := dataString(event.Data, "method"); v != "" {
+		payload.Method.SetTo(v)
+	}
+	return ogenclient.NewAIAgentRatelimitDeniedPayloadAuditEventRequestEventData(payload)
+}
+
+func buildAuthFailurePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentAuthFailurePayload{
+		EventType: ogenclient.AIAgentAuthFailurePayloadEventTypeAiagentAuthFailure,
+		EventID:   dataString(event.Data, "event_id"),
+	}
+	if v := dataString(event.Data, "source_ip"); v != "" {
+		payload.SourceIP.SetTo(v)
+	}
+	if v := dataString(event.Data, "path"); v != "" {
+		payload.Path.SetTo(v)
+	}
+	if v := dataString(event.Data, "method"); v != "" {
+		payload.Method.SetTo(v)
+	}
+	if v := dataString(event.Data, "reason"); v != "" {
+		payload.Reason.SetTo(v)
+	}
+	return ogenclient.NewAIAgentAuthFailurePayloadAuditEventRequestEventData(payload)
+}
+
+func buildAuthDeniedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentAuthDeniedPayload{
+		EventType: ogenclient.AIAgentAuthDeniedPayloadEventTypeAiagentAuthDenied,
+		EventID:   dataString(event.Data, "event_id"),
+	}
+	if v := dataString(event.Data, "source_ip"); v != "" {
+		payload.SourceIP.SetTo(v)
+	}
+	if v := dataString(event.Data, "path"); v != "" {
+		payload.Path.SetTo(v)
+	}
+	if v := dataString(event.Data, "method"); v != "" {
+		payload.Method.SetTo(v)
+	}
+	if v := dataString(event.Data, "reason"); v != "" {
+		payload.Reason.SetTo(v)
+	}
+	return ogenclient.NewAIAgentAuthDeniedPayloadAuditEventRequestEventData(payload)
+}
+
+// buildFleetOverlayFailedPayload builds the payload for
+// aiagent.fleet.overlay_failed (DD-FLEET-005, Issue #1732, amended #2312):
+// emitted when a fleet-target investigation's FleetOverlayResolver.Overlay
+// call itself fails (e.g. MCP gateway/kube-mcp-server unreachable). ClusterID
+// and ErrorMessage are both required on this payload (see
+// prescopeFleetOverlay's emitFleetOverlayFailedAudit, which always sets
+// both), unlike most builders above whose fields are individually optional.
+func buildFleetOverlayFailedPayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentFleetOverlayFailedPayload{
+		EventType:    ogenclient.AIAgentFleetOverlayFailedPayloadEventTypeAiagentFleetOverlayFailed,
+		ClusterID:    dataString(event.Data, "cluster_id"),
+		ErrorMessage: dataString(event.Data, "error_message"),
+	}
+	return ogenclient.NewAIAgentFleetOverlayFailedPayloadAuditEventRequestEventData(payload)
+}
+
+// buildFleetOverlayUnavailablePayload builds the payload for
+// aiagent.fleet.overlay_unavailable (Issue #1768 follow-up, amended #2312):
+// emitted when a fleet-target investigation reaches prescopeFleetOverlay on a
+// kubernaut-agent instance with no FleetOverlayResolver configured at all.
+// ClusterID and Reason are both required, mirroring
+// emitFleetOverlayUnavailableAudit which always sets both.
+func buildFleetOverlayUnavailablePayload(event *AuditEvent) ogenclient.AuditEventRequestEventData {
+	payload := ogenclient.AIAgentFleetOverlayUnavailablePayload{
+		EventType: ogenclient.AIAgentFleetOverlayUnavailablePayloadEventTypeAiagentFleetOverlayUnavailable,
+		ClusterID: dataString(event.Data, "cluster_id"),
+		Reason:    dataString(event.Data, "reason"),
+	}
+	return ogenclient.NewAIAgentFleetOverlayUnavailablePayloadAuditEventRequestEventData(payload)
+}

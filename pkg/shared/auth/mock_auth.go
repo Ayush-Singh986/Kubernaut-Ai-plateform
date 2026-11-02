@@ -1,0 +1,229 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"sync"
+)
+
+// MockAuthenticator is a test double implementation of Authenticator.
+//
+// This mock is intended for integration tests where we want to validate authentication
+// flow without making real Kubernetes API calls. The mock allows tests to control
+// which tokens are valid and which users they map to.
+//
+// Authority: DD-AUTH-014
+//
+// Security Note: This mock is ONLY for testing purposes.
+// Production code (cmd/) always uses K8sAuthenticator with real Kubernetes APIs.
+//
+// Example usage in integration tests:
+//
+//	authenticator := &auth.MockAuthenticator{
+//	    ValidUsers: map[string]string{
+//	        "test-token-authorized": "system:serviceaccount:test:authorized-sa",
+//	        "test-token-readonly":   "system:serviceaccount:test:readonly-sa",
+//	    },
+//	}
+//
+//	// Test with valid token
+//	user, err := authenticator.ValidateToken(ctx, "test-token-authorized")
+//	// Returns: "system:serviceaccount:test:authorized-sa", nil
+//
+//	// Test with invalid token
+//	user, err := authenticator.ValidateToken(ctx, "invalid-token")
+//	// Returns: "", error
+type MockAuthenticator struct {
+	mu sync.Mutex
+
+	// ValidUsers maps tokens to user identities.
+	// Key: token string
+	// Value: user identity (e.g., "system:serviceaccount:namespace:sa-name")
+	ValidUsers map[string]string
+
+	// ValidUsersFull maps tokens to full UserInfo (username + groups).
+	// Takes precedence over ValidUsers when set.
+	ValidUsersFull map[string]UserInfo
+
+	// ErrorToReturn allows tests to simulate TokenReview API failures.
+	// If set, ValidateToken will return this error instead of checking ValidUsers.
+	ErrorToReturn error
+
+	// CallCount tracks how many times ValidateToken was called.
+	// Useful for verifying caching behavior. Use GetCallCount() for
+	// concurrent-safe reads.
+	CallCount int
+}
+
+// ValidateToken implements the Authenticator interface for testing.
+func (a *MockAuthenticator) ValidateToken(_ context.Context, token string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.CallCount++
+
+	if a.ErrorToReturn != nil {
+		return "", a.ErrorToReturn
+	}
+
+	user, ok := a.ValidUsers[token]
+	if !ok {
+		return "", fmt.Errorf("%w: token not in valid users map", ErrTokenInvalid)
+	}
+
+	return user, nil
+}
+
+// ValidateTokenFull implements the Authenticator interface for testing with full UserInfo.
+func (a *MockAuthenticator) ValidateTokenFull(_ context.Context, token string) (UserInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.CallCount++
+
+	if a.ErrorToReturn != nil {
+		return UserInfo{}, a.ErrorToReturn
+	}
+
+	if a.ValidUsersFull != nil {
+		info, ok := a.ValidUsersFull[token]
+		if ok {
+			return info, nil
+		}
+	}
+
+	user, ok := a.ValidUsers[token]
+	if !ok {
+		return UserInfo{}, fmt.Errorf("%w: token not in valid users map", ErrTokenInvalid)
+	}
+
+	return UserInfo{Username: user, Groups: []string{}}, nil
+}
+
+// GetCallCount returns the call count in a concurrent-safe manner.
+func (a *MockAuthenticator) GetCallCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.CallCount
+}
+
+// MockAuthorizer is a test double implementation of Authorizer.
+//
+// This mock is intended for integration tests where we want to validate authorization
+// flow without making real Kubernetes SAR API calls. The mock allows tests to control
+// which users are allowed access.
+//
+// Authority: DD-AUTH-014
+//
+// Security Note: This mock is ONLY for testing purposes.
+// Production code (cmd/) always uses K8sAuthorizer with real Kubernetes APIs.
+//
+// Example usage in integration tests:
+//
+//	authorizer := &auth.MockAuthorizer{
+//	    AllowedUsers: map[string]bool{
+//	        "system:serviceaccount:test:authorized-sa": true,
+//	        "system:serviceaccount:test:readonly-sa":   false,
+//	    },
+//	}
+//
+//	// Test with authorized user
+//	allowed, err := authorizer.CheckAccess(
+//	    ctx,
+//	    "system:serviceaccount:test:authorized-sa",
+//	    "kubernaut-system",
+//	    "services",
+//	    "data-storage-service",
+//	    "create",
+//	)
+//	// Returns: true, nil
+//
+//	// Test with unauthorized user
+//	allowed, err := authorizer.CheckAccess(
+//	    ctx,
+//	    "system:serviceaccount:test:readonly-sa",
+//	    "kubernaut-system",
+//	    "services",
+//	    "data-storage-service",
+//	    "create",
+//	)
+//	// Returns: false, nil
+type MockAuthorizer struct {
+	mu sync.Mutex
+
+	// AllowedUsers maps user identities to authorization decisions.
+	AllowedUsers map[string]bool
+
+	// PerResourceDecisions allows fine-grained control for tests that need
+	// different authorization results based on the resource being accessed.
+	// Key: "namespace/resource/resourceName/verb"
+	// If set, takes precedence over AllowedUsers.
+	PerResourceDecisions map[string]map[string]bool
+
+	// PerGroupResourceDecisions allows fine-grained control for group-specific
+	// authorization (e.g., CRDs in the "kubernaut.ai" API group).
+	// Key: "apiGroup/namespace/resource/resourceName/verb"
+	// If set, takes precedence over PerResourceDecisions and AllowedUsers.
+	PerGroupResourceDecisions map[string]map[string]bool
+
+	// ErrorToReturn allows tests to simulate SAR API failures.
+	ErrorToReturn error
+
+	// CallCount tracks how many times CheckAccess/CheckAccessWithGroup was called.
+	// Use GetCallCount() for concurrent-safe reads.
+	CallCount int
+}
+
+// CheckAccess implements the Authorizer interface for testing.
+// Delegates to CheckAccessWithGroup with an empty API group.
+func (a *MockAuthorizer) CheckAccess(ctx context.Context, user, namespace, resource, resourceName, verb string) (bool, error) {
+	return a.CheckAccessWithGroup(ctx, user, namespace, "", resource, resourceName, verb)
+}
+
+// CheckAccessWithGroup implements the Authorizer interface for testing with API group support.
+func (a *MockAuthorizer) CheckAccessWithGroup(_ context.Context, user, namespace, apiGroup, resource, resourceName, verb string) (bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.CallCount++
+
+	if a.ErrorToReturn != nil {
+		return false, a.ErrorToReturn
+	}
+
+	if a.PerGroupResourceDecisions != nil {
+		key := fmt.Sprintf("%s/%s/%s/%s/%s", apiGroup, namespace, resource, resourceName, verb)
+		if decisions, ok := a.PerGroupResourceDecisions[key]; ok {
+			allowed, exists := decisions[user]
+			if exists {
+				return allowed, nil
+			}
+		}
+	}
+
+	if a.PerResourceDecisions != nil {
+		key := fmt.Sprintf("%s/%s/%s/%s", namespace, resource, resourceName, verb)
+		if decisions, ok := a.PerResourceDecisions[key]; ok {
+			allowed, exists := decisions[user]
+			if exists {
+				return allowed, nil
+			}
+		}
+	}
+
+	if a.AllowedUsers != nil {
+		allowed, exists := a.AllowedUsers[user]
+		if exists {
+			return allowed, nil
+		}
+	}
+
+	return false, nil
+}
+
+// GetCallCount returns the call count in a concurrent-safe manner.
+func (a *MockAuthorizer) GetCallCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.CallCount
+}

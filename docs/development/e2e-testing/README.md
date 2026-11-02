@@ -1,0 +1,592 @@
+# Kubernaut E2E Testing Infrastructure
+
+This directory contains configurations and guides for Kubernaut's end-to-end testing infrastructure, primarily using **Kind (Kubernetes in Docker)** for lightweight, fast testing.
+
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Two corrections
+> while verifying this doc. (1) **HolmesGPT** was rewritten in Go and renamed **Kubernaut Agent (KA)** in v1.3
+> (issue [#433](https://github.com/jordigilh/kubernaut/issues/433)); references below are renamed accordingly.
+> (2) Several commands referenced below do not exist in the current repo — there is no bare `make test-e2e`,
+> `setup-test-e2e`, or `cleanup-test-e2e` target, no `run-e2e-tests.sh`/`run-use-case-N.sh` scripts, and no
+> `deploy/holmesgpt-deployment.yaml`. The actual current E2E entry points are per-service Makefile targets, e.g.
+> `make test-e2e-kubernautagent`, `make test-e2e-fullpipeline`, `make test-e2e-fleet` (see `Makefile` for the full
+> list via `grep '^test-e2e' Makefile`). The Kind/hybrid/bare-metal narrative below is preserved as historical
+> context and has not been otherwise re-verified against current source.
+
+## 🎯 **Primary Testing Platform: Kind**
+
+**Recommended Platform:** Kind (Kubernetes in Docker)
+**Setup Time:** < 2 minutes
+**Resource Requirements:** 8GB RAM, 4 vCPU, 20GB disk
+**Compatibility:** Works on any Docker-capable machine (Linux, macOS, Windows)
+
+## 📁 Directory Contents
+
+### 🚀 **Quick Start** (Recommended)
+Use the Makefile commands for instant Kind-based testing:
+```bash
+make test-e2e  # Complete E2E test suite with Kind cluster
+```
+
+### 📖 **Optional Alternative Platforms** (Not Required)
+- **`KCLI_BAREMETAL_INSTALLATION_GUIDE.md`** - KCLI virtual cluster guide (optional)
+- **`OCP_BAREMETAL_INSTALLATION_GUIDE.md`** - Bare-metal guide (optional, not required for development)
+
+### ⚙️ **Configuration Files**
+- **`kcli-baremetal-params.yml`** - **Main configuration** - optimized for your host
+- **`install-config-baremetal-4.18.yaml`** - Traditional installer config
+
+### 🔧 **Automation Scripts** (All executable)
+- **`deploy-kcli-cluster.sh`** - **Complete automated deployment**
+- **`validate-baremetal-setup.sh`** - Pre-deployment validation for RHEL 9.7
+- **`setup-storage.sh`** - Automated storage configuration
+
+### 💾 **Storage Configuration**
+- **`storage/local-storage-operator.yaml`** - Local Storage Operator config
+- **`storage/odf-operator.yaml`** - persistent storage config
+
+## 🚀 **Quick Start with Kind**
+
+### **Standard E2E Testing (Recommended)**
+
+```bash
+# Run complete E2E test suite (includes Kind cluster setup + teardown)
+make test-e2e
+
+# Or manual cluster management:
+make setup-test-e2e     # Create Kind cluster
+make test-e2e           # Run E2E tests
+make cleanup-test-e2e   # Remove Kind cluster
+```
+
+### **Manual Kind Cluster Setup**
+
+```bash
+# Create a Kind cluster manually
+kind create cluster --name kubernaut-e2e --config kind-config.yaml
+
+# Deploy Kubernaut
+kubectl apply -f deploy/
+
+# Run E2E tests
+go test ./test/e2e/... -v
+
+# Cleanup
+kind delete cluster --name kubernaut-e2e
+```
+
+## 📚 **Optional Advanced Testing Platforms**
+
+For specialized testing scenarios (not required for standard development):
+
+### **KCLI Virtual Clusters**
+See [KCLI_BAREMETAL_INSTALLATION_GUIDE.md](KCLI_BAREMETAL_INSTALLATION_GUIDE.md) for virtual cluster deployments on bare metal.
+
+# Run E2E tests
+./run-e2e-tests.sh all
+
+# Cleanup when done
+./cleanup-e2e-environment.sh
+```
+
+### **Option 3: Root User Deployment on RHEL 9.7 (Recommended for Production Testing)**
+
+#### **Complete E2E Environment as Root**
+```bash
+# Navigate to e2e testing directory
+cd docs/development/e2e-testing/
+
+# Ensure scripts are executable
+sudo ./make-scripts-executable.sh
+
+# Validate RHEL 9.7 system as root
+sudo ./validate-baremetal-setup-root.sh kcli-baremetal-params-root.yml
+
+# Deploy complete E2E testing environment as root
+# Optimized for RHEL 9.7 with proper permissions and paths
+sudo ./setup-complete-e2e-environment-root.sh
+
+# Validate environment as root
+sudo ./validate-complete-e2e-environment.sh --detailed
+
+# Run tests as root
+sudo ./run-e2e-tests-root.sh basic
+
+# Cleanup when done
+sudo ./cleanup-e2e-environment-root.sh
+```
+
+### **Option 4: Hybrid Architecture (Recommended for Enterprise)**
+
+#### **Deploy Hybrid: Remote Cluster + Local AI/Tests**
+
+**Architecture Overview:**
+- 🖥️ **Kubernetes Cluster**: Remote host (helios08)
+- 🤖 **Kubernaut Agent (KA) Container** (formerly "HolmesGPT Container"): Custom REST API container (localhost:8090 or in-cluster)
+- 🔧 **Kubernaut**: Local machine (manages remote cluster)
+- 🧪 **Tests**: Local machine
+- 📊 **Vector DB**: Local machine (PostgreSQL)
+
+**Network Topology:**
+- Local machine → Remote cluster ✅
+- Local machine → Kubernaut Agent (KA) Container ✅
+- Remote cluster → Kubernaut Agent (KA) ⚙️ (configurable: local or in-cluster deployment)
+
+```bash
+# Navigate to e2e testing directory
+cd docs/development/e2e-testing/
+
+# 1. Deploy ONLY Kubernetes cluster on remote host
+make deploy-cluster-remote-only
+
+# 2. Setup local Kubernaut to connect to remote cluster
+make setup-local-hybrid
+
+# 3. Deploy Kubernaut Agent (KA) container (formerly "HolmesGPT container")
+# Option A: Local deployment
+docker run -d -p 8090:8090 kubernaut/kubernaut-agent:latest
+
+# Option B: In-cluster deployment
+# NOTE: deploy/holmesgpt-deployment.yaml does not exist in the current repo; use the Helm chart instead
+# (charts/kubernaut/templates/kubernaut-agent/kubernaut-agent.yaml)
+oc apply -f deploy/holmesgpt-deployment.yaml
+
+# 4. Validate hybrid network topology
+make validate-hybrid-topology
+
+# 5. Check hybrid deployment status
+make status-hybrid
+
+# 6. Run E2E tests in hybrid mode
+make test-e2e-hybrid
+
+# 7. SSH to remote cluster for management
+make ssh-remote-cluster
+
+# 8. Cleanup hybrid environment
+make cleanup-hybrid
+```
+
+### **Option 5: Legacy Remote Host Deployment (Complete Remote)**
+
+#### **Deploy Complete Environment on Remote Host (helios08)**
+```bash
+# Navigate to e2e testing directory
+cd docs/development/e2e-testing/
+
+# Configure and validate remote host connection
+make configure-e2e-remote
+
+# Validate remote host readiness
+make validate-e2e-remote
+
+# Deploy complete E2E environment on remote host
+make setup-e2e-remote
+
+# Check environment status
+make status-e2e-remote
+
+# Run tests on remote host
+make test-e2e-remote
+
+# View deployment logs
+make logs-e2e-remote
+
+# SSH to remote host for manual management
+make ssh-e2e-remote
+
+# Cleanup remote environment
+make cleanup-e2e-remote
+```
+
+#### **Custom Remote Host Configuration**
+```bash
+# Configure different remote host
+./configure-remote-host.sh myhost.kubernaut.io admin
+
+# Or skip connection test
+TEST_CONNECTION=false ./configure-remote-host.sh 192.168.122.100
+
+# Update Makefile variables manually if needed
+# Edit REMOTE_HOST and REMOTE_USER in Makefile
+```
+
+## 📊 **Resource Allocation (Conservative for Testing)**
+
+### **Your RHEL 9.7 Host**
+- **Available:** Intel Xeon Gold 5218R (40 threads), 256GB RAM, 3TB disk
+- **VM Usage:** ~84GB RAM, 24 vCPUs, ~500GB storage
+- **Headroom:** **172+ GB RAM, 16+ CPU threads, 2.5+ TB disk free**
+
+### **Virtual Kubernetes Cluster**
+| Component | Count | Per VM | Total |
+|-----------|-------|---------|--------|
+| **Masters** | 3 | 16GB RAM, 4 vCPU, 80GB | 48GB, 12 vCPU, 240GB |
+| **Workers** | 3 | 12GB RAM, 4 vCPU, 80GB | 36GB, 12 vCPU, 240GB |
+| **Bootstrap** | 1 | 16GB RAM, 4 vCPU, 80GB | Temporary during install |
+| **Storage** | - | Virtual disks | ~600GB for ODF |
+
+**Peak Usage During Install:** ~100GB RAM, 28 vCPUs, 600GB disk
+**Steady State:** ~84GB RAM, 24 vCPUs, 500GB disk
+
+## 💾 **Automated Storage Setup**
+
+### **Storage Operators Installed Automatically**
+1. **Local Storage Operator (LSO)** - Manages virtual storage devices
+2. **persistent storage (ODF)** - Enterprise Ceph storage (200GB/worker)
+
+### **5 Storage Classes Created Automatically**
+1. **`ocs-storagecluster-ceph-rbd`** (default) - High-performance block storage
+2. **`ocs-storagecluster-cephfs`** - Shared filesystem (ReadWriteMany)
+3. **`ocs-storagecluster-ceph-rgw`** - S3-compatible object storage
+4. **`local-block`** - Local block devices for high I/O
+5. **`local-filesystem`** - Local filesystem storage
+
+### **Ready to Use Immediately**
+```bash
+# Create a PVC using default storage
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+EOF
+```
+
+## ⏱️ **Installation Timeline**
+
+| Phase | Duration | Description | Status |
+|-------|----------|-------------|---------|
+| Validation | 2 min | RHEL 9.7 host checks | ✅ Automated |
+| Bootstrap | 10 min | Bootstrap VM creation | ✅ Automated |
+| Masters | 20 min | Control plane (3 VMs) | ✅ Automated |
+| Workers | 15 min | Worker nodes (3 VMs) | ✅ Automated |
+| Finalization | 10 min | Cluster initialization | ✅ Automated |
+| **Storage Setup** | **15-20 min** | **LSO + ODF deployment** | ✅ **Automated** |
+| **Total** | **~80 min** | **Complete production-ready cluster** | 🎉 **Ready!** |
+
+## 🎯 **Key Features**
+
+### ✨ **Complete Automation**
+- **No Manual Steps:** Everything automated except pull secret and SSH key
+- **Resource Optimization:** Conservative allocation for stable testing
+- **Storage Ready:** 5 storage classes configured automatically
+- **Health Monitoring:** Built-in validation and verification
+
+### 🛡️ **Production-Grade Storage**
+- **High Availability:** 3-replica Ceph cluster with automatic failover
+- **Backup & Recovery:** Snapshot and clone capabilities
+- **Performance:** Optimized for test workloads on single host
+- **Monitoring:** Integrated storage metrics and alerting
+
+### 🔧 **RHEL 9.7 Optimized**
+- **KVM Acceleration:** Uses host CPU features for better performance
+- **Memory Efficiency:** Conservative allocation with ample headroom
+- **Storage Efficiency:** Virtual disk allocation optimized for testing
+- **Network Optimization:** Internal virtual networking for performance
+
+## 🎛️ **Configuration Customization**
+
+The default configuration is ready to use, but you can customize in `kcli-baremetal-params.yml`:
+
+```yaml
+# Only change these if needed:
+cluster: ocp418-baremetal          # Cluster name
+domain: kubernaut.io                # Your domain
+pull_secret: '~/.pull-secret.txt'  # Your pull secret path
+ssh_key: '~/.ssh/id_rsa.pub'      # Your SSH key path
+
+# Network (defaults are fine for testing)
+api_ip: 192.168.122.100
+ingress_ip: 192.168.122.101
+cidr: 192.168.122.0/24
+
+# Storage (optimized for testing)
+storage_operators: true            # Keep enabled for automated storage
+odf_size: "200Gi"                 # Reasonable size for testing
+
+# Resources (optimized for your host - don't increase)
+ctlplane_memory: 16384               # 16GB per ctlplane
+worker_memory: 12288               # 12GB per worker
+```
+
+## 📋 **Prerequisites (Simple!)**
+
+### **What You Have** ✅
+- RHEL 9.7 host with libvirtd
+- Intel Xeon Gold 5218R, 256GB RAM, 3TB storage
+- Internet access
+
+### **What You Need** (2 items)
+1. **Red Hat Pull Secret** - Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret)
+2. **SSH Key Pair** - Generate with `ssh-keygen -t rsa -b 4096`
+
+### **What Gets Installed Automatically**
+- KCLI (if not present)
+- Kubernetes 4.18 cluster (6 VMs)
+- Local Storage Operator
+- persistent storage
+- All required dependencies
+
+## 🆘 **Troubleshooting**
+
+### **Quick Debug Commands**
+```bash
+# Check cluster status
+kcli list cluster
+kcli info cluster ocp418-test
+
+# Check host resources
+free -h
+df -h /var/lib/libvirt/images
+virsh list --all
+
+# Check storage
+oc get storageclass
+oc get cephcluster -n openshift-storage
+oc get pv
+```
+
+### **Common Issues**
+1. **Insufficient resources:** The configuration is conservative, but if issues arise, check `free -m` and `df -h`
+2. **Storage not ready:** Wait 5-10 minutes after cluster is up for storage operators to initialize
+3. **Network issues:** Check libvirt networking with `virsh net-list --all`
+
+## 🎉 **What You Get**
+
+After successful deployment:
+
+✅ **Production-ready Kubernetes 4.18 cluster**
+✅ **5 storage classes with default configured**
+✅ **Enterprise Ceph storage with HA**
+✅ **Monitoring, logging, and alerting enabled**
+✅ **Web console access with admin credentials**
+✅ **Ready for application deployment**
+✅ **Backup and disaster recovery capabilities**
+✅ **All running on single RHEL 9.7 host efficiently**
+
+## 🧪 **Complete E2E Testing Environment Features**
+
+### **Comprehensive Testing Stack**
+The complete E2E environment includes everything needed for Kubernaut testing:
+
+#### **Core Infrastructure**
+- **Kubernetes 4.18 Cluster**: Virtual cluster with ODF storage
+- **AI Model Integration**: oss-gpt:20b at localhost:8080
+- **Vector Database**: PostgreSQL with pgvector for pattern storage
+- **Monitoring Stack**: Prometheus/Grafana for metrics and alerting
+
+### **🔐 Root User Deployment (RHEL 9.7 Optimized)**
+
+#### **Why Root Deployment?**
+- **Production-Grade**: Matches typical enterprise deployment patterns
+- **Full System Access**: Complete control over libvirt, networking, and storage
+- **RHEL 9.7 Optimized**: Tuned specifically for Red Hat Enterprise Linux 9.7
+- **Enterprise Security**: Proper permissions and ownership throughout
+
+#### **Root Deployment Features**
+- **Automated KCLI Installation**: Installs and configures KCLI for root user
+- **libvirt Configuration**: Proper setup of virtualization stack with root permissions
+- **Storage Optimization**: Dedicated /var/lib/libvirt/images storage management
+- **Network Management**: Full control over virtual networking and VIPs
+- **Security Compliance**: SELinux and firewall configuration handling
+
+### **🌐 Hybrid Architecture Deployment (Recommended Enterprise Pattern)**
+
+#### **Why Hybrid Architecture?**
+- **Security Isolation**: Cluster cannot reach local development resources
+- **Resource Optimization**: Heavy cluster workloads on dedicated hardware, AI/dev tools local
+- **Network Realism**: Tests realistic network latency and connectivity patterns
+- **Development Efficiency**: Fast local AI model access and test iteration
+- **Enterprise Security**: Production-like isolation between cluster and AI services
+
+#### **Hybrid Architecture Features**
+- **Remote Cluster Management**: Local Kubernaut manages remote Kubernetes cluster
+- **Local AI Integration**: Fast access to localhost:8080 AI model with no network latency
+- **Network Topology Validation**: Ensures proper isolation between components
+- **Kubeconfig Management**: Automatic retrieval and management of remote cluster access
+- **Hybrid Monitoring**: Combined local and remote metrics collection
+- **Security Testing**: Validates that cluster cannot access development machine resources
+
+### **🖥️ Legacy Remote Deployment (Complete Remote)**
+
+#### **Why Complete Remote Deployment?**
+- **Enterprise Infrastructure**: Deploy everything on dedicated bare metal servers
+- **Resource Isolation**: Complete separation from development machines
+- **Production Realism**: Test on actual enterprise hardware configurations
+- **Team Collaboration**: Shared testing environments accessible to multiple developers
+- **CI/CD Integration**: Automated deployment to remote test infrastructure
+
+#### **Complete Remote Features**
+- **SSH Key Authentication**: Secure passwordless deployment and management
+- **Automated File Transfer**: Intelligent copying of only required scripts and configurations
+- **Connection Validation**: Comprehensive SSH and host validation before deployment
+- **Remote Monitoring**: Real-time status checking and log viewing from local machine
+- **Error Handling**: Robust error detection and reporting for remote operations
+- **Resource Management**: Remote resource usage monitoring and optimization
+
+#### **Testing Frameworks**
+- **Chaos Engineering**: LitmusChaos for controlled failure injection
+- **Test Applications**: Pre-deployed apps for testing scenarios
+- **Business Validation**: Automated BR-XXX requirement validation
+- **Load Testing**: AI model stress testing capabilities
+
+#### **Automation & Scripts**
+- **One-Command Setup**: Complete environment in ~30 minutes
+- **Comprehensive Validation**: 50+ automated checks
+- **Test Execution**: Ready-to-run E2E test suites
+- **Auto-Cleanup**: Scheduled environment cleanup
+
+### **Available Test Suites**
+
+#### **Top 10 E2E Use Cases**
+1. **AI-Driven Pod Resource Exhaustion Recovery**
+2. **Multi-Node Failure with Workload Migration**
+3. **Kubernaut Agent (KA) Investigation Pipeline Under Load** (formerly "HolmesGPT Investigation Pipeline Under Load")
+4. **Network Partition Recovery with Service Mesh**
+5. **Storage Failure with Vector Database Persistence**
+6. **AI Model Timeout Cascade with Fallback Logic**
+7. **Cross-Namespace Resource Contention Resolution**
+8. **Prometheus Alertmanager Integration Storm**
+9. **Security Incident Response with Pod Quarantine**
+10. **End-to-End Disaster Recovery Validation**
+
+#### **Test Execution Commands**
+```bash
+# Run all test suites
+./run-e2e-tests.sh all
+
+# Run specific test categories
+./run-e2e-tests.sh use-cases    # Business use cases
+./run-e2e-tests.sh chaos        # Chaos engineering tests
+./run-e2e-tests.sh stress       # AI model stress tests
+
+# Run individual use cases
+./run-use-case-1.sh             # Resource exhaustion recovery
+./run-use-case-3.sh             # Kubernaut Agent (KA) investigation, formerly "HolmesGPT investigation"
+./run-use-case-9.sh             # Security incident response
+```
+
+### **Environment Management**
+
+#### **Setup Commands**
+```bash
+# Complete E2E environment setup
+./setup-complete-e2e-environment.sh
+
+# Validate environment health
+./validate-complete-e2e-environment.sh --detailed
+
+# Check specific components
+./validate-baremetal-setup.sh kcli-baremetal-params.yml
+```
+
+#### **Hybrid Setup Commands**
+```bash
+# Deploy Kubernetes cluster on remote host only
+make deploy-cluster-remote-only
+
+# Setup local Kubernaut to connect to remote cluster
+make setup-local-hybrid
+
+# Validate hybrid network topology
+make validate-hybrid-topology
+
+# Check hybrid environment status
+make status-hybrid
+```
+
+#### **Legacy Remote Setup Commands**
+```bash
+# Configure remote host connection
+make configure-e2e-remote
+
+# Complete E2E environment setup on remote host
+make setup-e2e-remote
+
+# Validate remote environment health
+make validate-e2e-remote
+
+# Check remote environment status
+make status-e2e-remote
+```
+
+#### **Cleanup Commands**
+```bash
+# Complete cleanup
+./cleanup-e2e-environment.sh
+
+# Preserve cluster but cleanup applications
+./cleanup-e2e-environment.sh --preserve-cluster
+
+# Preserve data for analysis
+./cleanup-e2e-environment.sh --preserve-data
+```
+
+#### **Hybrid Cleanup Commands**
+```bash
+# Complete hybrid cleanup (local + remote)
+make cleanup-hybrid
+
+# SSH to remote cluster for manual management
+make ssh-remote-cluster
+```
+
+#### **Legacy Remote Cleanup Commands**
+```bash
+# Complete remote cleanup
+make cleanup-e2e-remote
+
+# SSH to remote host for manual cleanup
+make ssh-e2e-remote
+```
+
+## 📚 **Next Steps**
+
+### **For Cluster-Only Deployment:**
+1. **Access web console:** Get URL with `oc get routes console -n openshift-console`
+2. **Deploy test applications:** Use any storage class for persistent volumes
+3. **Explore operators:** Check OperatorHub for additional capabilities
+4. **Monitor resources:** Use `htop` and `oc top nodes` to monitor usage
+5. **Scale if needed:** Add more workers with `kcli scale cluster`
+
+### **For Complete E2E Environment:**
+1. **Run validation:** `./validate-complete-e2e-environment.sh --detailed`
+2. **Execute test suites:** `./run-e2e-tests.sh all`
+3. **Monitor testing:** Check Grafana dashboards for metrics
+4. **Analyze results:** Review business requirement validation reports
+5. **Cleanup environment:** `./cleanup-e2e-environment.sh` when done
+
+### **For Hybrid E2E Deployment (Recommended):**
+1. **Deploy remote cluster:** `make deploy-cluster-remote-only` (Kubernetes on helios08)
+2. **Start local AI model:** Ensure oss-gpt:20b is running on localhost:8080
+3. **Setup local environment:** `make setup-local-hybrid` (local Kubernaut + Vector DB)
+4. **Validate topology:** `make validate-hybrid-topology` (network isolation tests)
+5. **Check status:** `make status-hybrid` (monitor all components)
+6. **Execute tests:** `make test-e2e-hybrid` (run hybrid test scenarios)
+7. **Manual access:** `make ssh-remote-cluster` (SSH to cluster for debugging)
+8. **Cleanup:** `make cleanup-hybrid` (cleanup both local and remote components)
+
+### **For Legacy Remote E2E Deployment:**
+1. **Configure remote host:** `make configure-e2e-remote` (validates SSH and host readiness)
+2. **Deploy environment:** `make setup-e2e-remote` (complete automated deployment)
+3. **Monitor deployment:** `make status-e2e-remote` (real-time status and resource usage)
+4. **Execute tests:** `make test-e2e-remote` (run test suites on remote host)
+5. **View logs:** `make logs-e2e-remote` (check deployment and test logs)
+6. **Manual access:** `make ssh-e2e-remote` (SSH to remote host for debugging)
+7. **Cleanup:** `make cleanup-e2e-remote` (complete remote environment cleanup)
+
+## 🔗 **Additional Resources**
+
+- **KCLI Documentation:** https://kcli.readthedocs.io/
+- **Kubernetes Documentation:** https://docs.openshift.com/container-platform/4.18/
+- **persistent storage:** https://access.redhat.com/products/red-hat-openshift-data-foundation
+- **Red Hat Support:** https://access.redhat.com/
+
+---
+
+**🚀 Ready to deploy? Start with `KCLI_QUICK_START.md` for the fastest path to a running cluster!**

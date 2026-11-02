@@ -1,0 +1,186 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package session
+
+// DD-AF-011 (#1899): Phase-Transition Consent Guard.
+//
+// These constants define the harness-enforced consent gate's session.State
+// backchannel: a structural signal for which interaction mode the LLM
+// declared on kubernaut_investigate, and which phase transitions the
+// harness has gated pending genuine user confirmation. They live in this
+// package (rather than pkg/apifrontend/agent, where the tool-filter and
+// phase-guard callbacks that read/write them are implemented) because
+// pkg/apifrontend/session/reinvoke.go's NeedsReinvocationCtx also needs
+// them, and both pkg/apifrontend/agent and pkg/apifrontend/launcher already
+// import this package -- avoiding an import cycle.
+const (
+	// StateKeyDriverActive records whether an interactive driver session
+	// (a successful kubernaut_investigate or kubernaut_reconnect) is active.
+	// Mirrors pkg/apifrontend/agent/phase_guard.go's pre-existing
+	// af_interactive_driver_active key.
+	StateKeyDriverActive = "af_interactive_driver_active"
+
+	// StateKeyActiveRRID records the RemediationRequest ID established by
+	// the active driver session. Mirrors phase_guard.go's pre-existing
+	// af_active_rr_id key.
+	StateKeyActiveRRID = "af_active_rr_id"
+
+	// StateKeyActiveSession records the KA investigation session associated
+	// with the active driver.
+	StateKeyActiveSession = "af_active_session_id"
+
+	// StateKeyInteractionMode records the interaction_mode declared on the
+	// most recent successful kubernaut_investigate call.
+	StateKeyInteractionMode = "af_interaction_mode"
+
+	// StateKeyPhase2Blocked is set true after a successful
+	// kubernaut_investigate when the declared (or defaulted) interaction
+	// mode requires waiting for genuine user confirmation before
+	// kubernaut_discover_workflows may run.
+	StateKeyPhase2Blocked = "af_phase2_blocked"
+
+	// StateKeyPhase3Blocked is set true after a successful
+	// kubernaut_discover_workflows when the declared interaction mode
+	// requires waiting for genuine user confirmation before
+	// kubernaut_select_workflow may run.
+	StateKeyPhase3Blocked = "af_phase3_blocked"
+
+	// StateKeyDiscoverWorkflowsSucceeded records whether
+	// kubernaut_discover_workflows has completed successfully at least
+	// once in the current driver session (#2098). phase_guard.go's
+	// before-callback reads this to reject a premature
+	// kubernaut_present_decision call in interaction modes that don't
+	// otherwise gate discover_workflows behind a human-confirmation
+	// checkpoint (StateKeyPhase2Blocked == false --
+	// full_remediation/full_remediation_autonomous). Reset to false on
+	// every fresh kubernaut_investigate (never kubernaut_reconnect,
+	// matching StateKeyPhase2Blocked/StateKeyInteractionMode's own
+	// investigate-only reset) so a second investigation in the same chat
+	// session can't inherit a stale "discovery already happened" flag
+	// from a prior RemediationRequest.
+	StateKeyDiscoverWorkflowsSucceeded = "af_discover_workflows_succeeded"
+
+	// StateKeyPresentationRequired marks the narrow recovery window after
+	// discovery when the model must emit the structured decision artifact.
+	StateKeyPresentationRequired = "af_presentation_required"
+
+	// StateKeyPresentationRecoveryCount bounds corrective presentation turns.
+	StateKeyPresentationRecoveryCount = "af_presentation_recovery_count"
+
+	// StateKeyDecisionArtifactStatus records whether the business outcome
+	// coordinator still owes a decision artifact for the current discovery.
+	StateKeyDecisionArtifactStatus = "af_decision_artifact_status"
+
+	// StateKeyGroundedRCAPayload stores a gob-safe canonical RCA payload for
+	// deterministic completion recovery. StateKeyGroundedRCA remains the typed
+	// value used by the agent grounding guard.
+	StateKeyGroundedRCAPayload = "af_grounded_rca_payload"
+
+	// StateKeyGroundedSummary stores the grounded narrative available when KA
+	// returns summary content without a non-provisional structured RCA.
+	StateKeyGroundedSummary = "af_grounded_summary"
+
+	// StateKeyGroundedSummaryProvisional distinguishes legacy severity-triage
+	// text from an authoritative investigation summary.
+	StateKeyGroundedSummaryProvisional = "af_grounded_summary_provisional"
+
+	// StateKeyDecisionRCAClassification stores the trusted severity and
+	// provisional provenance that the server projects into the final decision
+	// artifact. Unlike the EventBridge copy, this state survives the new bridge
+	// created for each subsequent streaming request.
+	StateKeyDecisionRCAClassification = "af_decision_rca_classification"
+
+	// DD-KA-2496: gob-safe allow-listed current selection context, written only
+	// from trusted KA responses and restored into each fresh EventBridge.
+	StateKeyDecisionSelectionContext = "af_decision_selection_context"
+
+	// StateKeyDiscoveryResult stores the successful canonical discovery result
+	// for completion recovery when ADK trims older events.
+	StateKeyDiscoveryResult = "af_discovery_result"
+
+	// StateKeyGroundedContentAvailable records whether the most recent
+	// kubernaut_investigate call produced real, groundable RCA content
+	// (#2047, main clone of #2023). phase_guard.go's harness-enforced
+	// grounding guard reads this immediately before kubernaut_present_decision
+	// executes: when false -- including the fail-safe default when this key
+	// was never set -- the model's summary/rca/options are overwritten with
+	// a fixed, honest "no data" payload instead of trusted as-is, preventing
+	// a fabricated narrative from ever reaching the audit trail.
+	// present_decision itself still runs afterward, so the AU-3
+	// structured-artifact mandate (#1408) is preserved; only a fabricated
+	// narrative is blocked, never the artifact.
+	StateKeyGroundedContentAvailable = "af_grounded_content_available"
+
+	// StateKeyGroundedRCA records a *tools.InvestigateRCA (severity,
+	// confidence, causal_chain, target, total_tool_calls, total_llm_turns)
+	// carried by the most recent kubernaut_investigate response, keyed
+	// unconditionally on every investigate call (present or nil) so a
+	// later call without a structured RCA correctly clears a stale value
+	// left by an earlier one -- mirroring
+	// StateKeyGroundedContentAvailable's own unconditional-overwrite
+	// semantics. present_decision's before-callback (enforceGroundingGuard,
+	// phase_guard.go) uses this to overwrite whatever the LLM transcribed
+	// into present_decision's own "rca" argument with KA's actual reported
+	// values, closing the risk of the model silently altering facts (e.g.
+	// severity, confidence, causal chain) while otherwise staying inside
+	// #2047's grounded/ungrounded gate (#2071, forward-port of
+	// release/v1.5's #2034). Deliberately holds only the structured facts,
+	// not the free-text summary -- that narrative field stays
+	// model-authored once grounded, since it may legitimately synthesize
+	// reasoning across a session that a pure pass-through would lose.
+	//
+	// #2071 (forward-port of release/v1.5's #2068): never populated with a
+	// Provisional RCA (InvestigateRCA.Provisional=true -- AF's own
+	// severity-triage guess synthesized before KA has genuinely
+	// investigated, not a value "carried by" KA's response the way this
+	// key's name implies). A Provisional-only investigate call is treated
+	// the same as one with no structured RCA at all.
+	StateKeyGroundedRCA = "af_grounded_rca"
+)
+
+// DecisionArtifactStatus values persisted in StateKeyDecisionArtifactStatus.
+const (
+	DecisionArtifactNotRequired = "not_required"
+	DecisionArtifactRequired    = "required"
+	DecisionArtifactEmitted     = "emitted"
+	DecisionArtifactRecovered   = "recovered"
+	DecisionArtifactFailed      = "failed"
+)
+
+// Interaction mode values for InteractionMode / StateKeyInteractionMode.
+//
+// InteractionModeInteractive is the fail-safe default (AC-6 least
+// privilege): every phase transition waits for genuine user confirmation.
+// Any unrecognized/invalid value provided by the LLM must resolve to this
+// mode, never to a more autonomous one (SI-10).
+const (
+	InteractionModeInteractive               = "interactive"
+	InteractionModeFullRemediation           = "full_remediation"
+	InteractionModeFullRemediationAutonomous = "full_remediation_autonomous"
+)
+
+// ValidInteractionMode reports whether mode is one of the recognized
+// InteractionMode* values. Callers must fail safe to
+// InteractionModeInteractive when this returns false.
+func ValidInteractionMode(mode string) bool {
+	switch mode {
+	case InteractionModeInteractive, InteractionModeFullRemediation, InteractionModeFullRemediationAutonomous:
+		return true
+	default:
+		return false
+	}
+}

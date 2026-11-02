@@ -1,0 +1,1372 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package routing
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+// ErrNotBlocked is returned by the Check* family below when no blocking
+// condition applies. Issue #1674: replaces the ambiguous (nil, nil) return
+// that forced callers to distinguish "not blocked" from "a real check
+// failure" by nil-checking the *BlockingCondition result instead of
+// checking err. Callers should use errors.Is(err, ErrNotBlocked).
+var ErrNotBlocked = errors.New("no blocking condition found")
+
+// ErrNoMatch is returned by the Find* family below when no matching
+// RemediationRequest or WorkflowExecution exists. Issue #1674: same
+// rationale as ErrNotBlocked. The Check* functions that call into the
+// Find* family below translate ErrNoMatch into their own ErrNotBlocked
+// contract (e.g. CheckDuplicateInProgress calling FindActiveRRForFingerprint).
+var ErrNoMatch = errors.New("no matching resource found")
+
+// BlockingConditionChecker defines the routing-decision checks that determine
+// whether a RemediationRequest should be blocked. Split out from Engine for
+// ISP (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0b) — these methods share one
+// concern (evaluate a blocking condition), separate from the config/backoff
+// accessors below.
+//
+// Issue #165: Split API separates pre-AA checks (fingerprint-based, no AI data)
+// from post-AA checks (all checks including resource-level with AI-resolved target).
+type BlockingConditionChecker interface {
+	CheckPreAnalysisConditions(ctx context.Context, rr *remediationv1.RemediationRequest) (*BlockingCondition, error)
+	CheckPostAnalysisConditions(ctx context.Context, rr *remediationv1.RemediationRequest, workflowID string, targetResource string, preRemediationSpecHash string, actionType string, executionClusterID string) (*BlockingCondition, error)
+	CheckResourceBusy(ctx context.Context, rr *remediationv1.RemediationRequest, targetResource string) (*BlockingCondition, error)
+	CheckUnmanagedResource(ctx context.Context, rr *remediationv1.RemediationRequest) *BlockingCondition
+}
+
+// EngineConfigProvider exposes the routing engine's configuration and derived
+// backoff calculations. Split out from Engine for ISP
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0b) — unlike the blocking-condition
+// checks above, these are plain accessors/utility math, not decision logic.
+type EngineConfigProvider interface {
+	Config() Config
+	CalculateExponentialBackoff(consecutiveFailures int32) time.Duration
+}
+
+// Engine composes the condition-checking and config/backoff role interfaces
+// for RoutingEngine's callers. Kept as a named union — rather than inlining
+// the two interfaces at call sites — so existing implementers/mocks (which
+// already implement every method) need no changes
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0b; see docs/architecture/audits for
+// rationale). Allows mocking in unit tests while using the real
+// implementation (RoutingEngine) in integration tests.
+type Engine interface {
+	BlockingConditionChecker
+	EngineConfigProvider
+}
+
+// RoutingEngine makes routing decisions for RemediationRequests.
+// It determines if an RR should proceed to workflow execution or be blocked.
+//
+// Reference: DD-RO-002 (Centralized Routing Responsibility)
+type RoutingEngine struct {
+	client       client.Client
+	apiReader    client.Reader // DD-STATUS-001: Cache-bypassed reader for fresh routing queries
+	namespace    string
+	config       Config
+	scopeChecker scope.ScopeChecker        // BR-SCOPE-010 + ADR-068: Mandatory scope validation (DI)
+	dsClient     RemediationHistoryQuerier // Issue #214: DataStorage client for ineffective chain detection
+}
+
+// Config holds configuration for routing decisions.
+type Config struct {
+	// ConsecutiveFailureThreshold is the number of consecutive failures
+	// before an RR is blocked. Default: 3 (from BR-ORCH-042)
+	ConsecutiveFailureThreshold int
+
+	// ConsecutiveFailureCooldown is the duration to block after hitting
+	// the consecutive failure threshold. Default: 1 hour (from BR-ORCH-042)
+	ConsecutiveFailureCooldown int64 // seconds
+
+	// RecentlyRemediatedCooldown is the duration to wait after a successful
+	// remediation before allowing another remediation on the same target+workflow.
+	// Default: 5 minutes (from DD-WE-001)
+	RecentlyRemediatedCooldown int64 // seconds
+
+	// ========================================
+	// EXPONENTIAL BACKOFF (DD-WE-004, V1.0)
+	// ========================================
+
+	// ExponentialBackoffBase is the base cooldown period for exponential backoff.
+	// Default: 60 seconds (1 minute)
+	// Formula: min(Base × 2^(failures-1), Max)
+	// Reference: DD-WE-004 lines 66-89
+	ExponentialBackoffBase int64 // seconds
+
+	// ExponentialBackoffMax is the maximum cooldown period for exponential backoff.
+	// Default: 600 seconds (10 minutes)
+	// Prevents exceeding RemediationRequest timeout (60 minutes)
+	// Reference: DD-WE-004 line 70
+	ExponentialBackoffMax int64 // seconds
+
+	// ExponentialBackoffMaxExponent caps the exponential calculation.
+	// Default: 4 (2^4 = 16x multiplier)
+	// Prevents overflow and aligns with MaxCooldown
+	// Reference: DD-WE-004 line 71
+	ExponentialBackoffMaxExponent int
+
+	// ========================================
+	// SCOPE VALIDATION BACKOFF (ADR-053, BR-SCOPE-010)
+	// ========================================
+
+	// ScopeBackoffBase is the initial backoff period for unmanaged resource blocking.
+	// Default: 5 seconds (per ADR-053 Decision #4)
+	ScopeBackoffBase int64 // seconds
+
+	// ScopeBackoffMax is the maximum backoff period for unmanaged resource blocking.
+	// Default: 300 seconds (5 minutes, per ADR-053 Decision #4)
+	ScopeBackoffMax int64 // seconds
+
+	// ========================================
+	// NO-ACTION-REQUIRED SUPPRESSION (Issue #314)
+	// ========================================
+
+	// NoActionRequiredDelayHours is the number of hours to suppress new RR
+	// creation after an RR completes with Outcome=NoActionRequired.
+	// The Gateway's ShouldDeduplicate respects NextAllowedExecution on terminal
+	// RRs, so setting this field prevents duplicate RR churn for signals whose
+	// underlying condition is unchanged by design.
+	// Default: 24 (hours). Issue #314.
+	NoActionRequiredDelayHours int
+
+	// ========================================
+	// INEFFECTIVE REMEDIATION CHAIN (Issue #214)
+	// ========================================
+
+	// IneffectiveChainThreshold is the number of consecutive ineffective remediations
+	// (hash chain match or spec_drift) required to trigger escalation.
+	// Default: 3
+	IneffectiveChainThreshold int
+
+	// RecurrenceCountThreshold is the total number of remediation entries within
+	// the time window required to trigger the safety-net escalation (Layer 3).
+	// Default: 5
+	RecurrenceCountThreshold int
+
+	// IneffectiveTimeWindow is the lookback window for both hash chain and safety net.
+	// Default: 4h
+	IneffectiveTimeWindow time.Duration
+
+	// ForwardChainThreshold is the number of forward-linked DS entries (same action type,
+	// failed EA) required to block the incoming RR as the Nth+1 attempt.
+	// Default: 2 (2 entries + incoming = block 3rd attempt). Issue #525.
+	ForwardChainThreshold int
+
+	// ForwardChainWindow is the time window for forward hash chain detection.
+	// Only entries within this window are considered for the forward chain.
+	// Default: 1h. Issue #525.
+	ForwardChainWindow time.Duration
+}
+
+// NewRoutingEngine creates a new RoutingEngine with the given client and config.
+// DD-STATUS-001: Accepts apiReader for cache-bypassed routing queries.
+// BR-SCOPE-010: scopeChecker is mandatory (panics on nil, same pattern as RetryObserver).
+// Issue #214: Optional dsClient for ineffective chain detection (nil = skip chain check).
+// ScopeChecker returns the scope.ScopeChecker the engine was constructed
+// with. Exposed so production wiring code (cmd/remediationorchestrator/
+// main.go) can reach the federated remote backend for Fleet readiness
+// probing (#1553) without duplicating scope-checker construction, mirroring
+// gateway.Server.ScopeChecker().
+func (re *RoutingEngine) ScopeChecker() scope.ScopeChecker {
+	return re.scopeChecker
+}
+
+func NewRoutingEngine(client client.Client, apiReader client.Reader, namespace string, config Config, scopeChecker scope.ScopeChecker, dsClient ...RemediationHistoryQuerier) *RoutingEngine {
+	if scopeChecker == nil {
+		panic("scopeChecker must not be nil — use mocks.AlwaysManagedScopeChecker{} in tests")
+	}
+	engine := &RoutingEngine{
+		client:       client,
+		apiReader:    apiReader,
+		namespace:    namespace,
+		config:       config,
+		scopeChecker: scopeChecker,
+	}
+	if len(dsClient) > 0 && dsClient[0] != nil {
+		engine.dsClient = dsClient[0]
+	}
+	return engine
+}
+
+// SetDSClient sets the DataStorage history querier on the routing engine.
+// Called after construction when the DS client is wired separately from the
+// routing engine (e.g., from main.go via reconciler.SetDSClient).
+func (r *RoutingEngine) SetDSClient(dsClient RemediationHistoryQuerier) {
+	r.dsClient = dsClient
+}
+
+// Config returns the routing engine's configuration.
+// Used by reconciler to access threshold values for exponential backoff integration.
+func (r *RoutingEngine) Config() Config {
+	return r.config
+}
+
+// CheckPreAnalysisConditions checks fingerprint-based blocking conditions
+// before AIAnalysis data is available (Pending phase).
+//
+// Issue #165: Split from CheckBlockingConditions to avoid passing sentinel
+// empty strings for workflowID and targetResource that aren't known yet.
+//
+// Checks (in priority order):
+// 1. UnmanagedResource (BR-SCOPE-010, ADR-053)
+// 2. ConsecutiveFailures (BR-ORCH-042)
+// 3. DuplicateInProgress (DD-RO-002-ADDENDUM)
+// 4. ExponentialBackoff (DD-WE-004)
+//
+// Reference: DD-RO-002-ADDENDUM (Blocked Phase Semantics)
+func (r *RoutingEngine) CheckPreAnalysisConditions(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) (*BlockingCondition, error) {
+	if blocked := r.CheckUnmanagedResource(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	if blocked := r.CheckConsecutiveFailures(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	blocked, err := r.CheckDuplicateInProgress(ctx, rr)
+	if err != nil && !errors.Is(err, ErrNotBlocked) {
+		return nil, fmt.Errorf("failed to check duplicate: %w", err)
+	}
+	if blocked != nil {
+		return blocked, nil
+	}
+
+	if blocked := r.CheckExponentialBackoff(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	// Issue #1674: every check passed -- ErrNotBlocked unambiguously means
+	// "no blocking condition found" (see doc comment above). All callers
+	// already guard with `if blocked != nil` before use (see
+	// reconcile_loop.go), and now use errors.Is(err, ErrNotBlocked) instead
+	// of a bare nil check on err.
+	return nil, ErrNotBlocked
+}
+
+// CheckPostAnalysisConditions checks all blocking conditions after AIAnalysis
+// has completed and the effective target resource is known.
+//
+// Issue #165: The caller resolves targetResource from AIAnalysis RCA
+// RemediationTarget (falling back to RR.Spec.TargetResource). This fixes
+// the bug where CheckResourceBusy/CheckRecentlyRemediated used the
+// Gateway-assigned target instead of the AI-identified root cause target.
+//
+// Parameters:
+//   - workflowID: from AIAnalysis.Status.SelectedWorkflow.WorkflowID
+//   - targetResource: AI-resolved target formatted as "namespace/kind/name" or "kind/name"
+//   - preRemediationSpecHash: hash of the target resource spec before remediation (Issue #214)
+//   - executionClusterID: effective workflow execution cluster, falling back to the RR origin cluster
+//
+// Checks (in priority order):
+// 1. UnmanagedResource (BR-SCOPE-010, ADR-053)
+// 2. ConsecutiveFailures (BR-ORCH-042)
+// 3. DuplicateInProgress (DD-RO-002-ADDENDUM)
+// 4. ResourceBusy (DD-RO-002) - uses targetResource param
+// 5. RecentlyRemediated (DD-RO-002 Check 4) - uses targetResource param
+// 6. ExponentialBackoff (DD-WE-004)
+// 7. IneffectiveRemediationChain (Issue #214) - LAST, fail-open
+//
+// Reference: DD-RO-002-ADDENDUM, DD-WE-001 (Resource Locking Safety)
+func (r *RoutingEngine) CheckPostAnalysisConditions(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+	workflowID string,
+	targetResource string,
+	preRemediationSpecHash string,
+	actionType string,
+	executionClusterID string,
+) (*BlockingCondition, error) {
+	if blocked := r.CheckUnmanagedResource(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	if blocked := r.CheckConsecutiveFailures(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	blocked, err := r.CheckDuplicateInProgress(ctx, rr)
+	if err != nil && !errors.Is(err, ErrNotBlocked) {
+		return nil, fmt.Errorf("failed to check duplicate: %w", err)
+	}
+	if blocked != nil {
+		return blocked, nil
+	}
+
+	blocked, err = r.CheckResourceBusy(ctx, rr, targetResource)
+	if err != nil && !errors.Is(err, ErrNotBlocked) {
+		return nil, fmt.Errorf("failed to check resource lock: %w", err)
+	}
+	if blocked != nil {
+		return blocked, nil
+	}
+
+	blocked, err = r.checkRecentlyRemediated(ctx, workflowID, targetResource, executionClusterID)
+	if err != nil && !errors.Is(err, ErrNotBlocked) {
+		return nil, fmt.Errorf("failed to check recent remediation: %w", err)
+	}
+	if blocked != nil {
+		return blocked, nil
+	}
+
+	if blocked := r.CheckExponentialBackoff(ctx, rr); blocked != nil {
+		return blocked, nil
+	}
+
+	// Issue #214: Ineffective remediation chain detection (LAST -- fail-open)
+	if preRemediationSpecHash != "" {
+		target := parseTargetResource(targetResource)
+		// Issue #1802: scope the DS history query to this RR's cluster (fleet
+		// deployments can have identically-named/namespaced resources across
+		// clusters). Empty ClusterID (release/v1.5, or main without fleet
+		// tracking configured) leaves the query unscoped.
+		target.ClusterID = rr.Spec.ClusterID
+		if chainBlocked := r.CheckIneffectiveRemediationChain(ctx, rr, target, preRemediationSpecHash, actionType); chainBlocked != nil {
+			return chainBlocked, nil
+		}
+	}
+
+	// Issue #1674: same ErrNotBlocked sentinel as CheckPreAnalysisConditions above.
+	return nil, ErrNotBlocked
+}
+
+// parseTargetResource parses a "namespace/kind/name" or "kind/name" string into TargetResource.
+func parseTargetResource(s string) TargetResource {
+	parts := strings.Split(s, "/")
+	switch len(parts) {
+	case 3:
+		return TargetResource{Namespace: parts[0], Kind: parts[1], Name: parts[2]}
+	case 2:
+		return TargetResource{Kind: parts[0], Name: parts[1]}
+	default:
+		return TargetResource{Name: s}
+	}
+}
+
+// CheckConsecutiveFailures checks if the RR is blocked due to consecutive failures.
+// Blocks when consecutive failures >= threshold.
+//
+// BlockReason: "ConsecutiveFailures"
+// RequeueAfter: ConsecutiveFailureCooldown (default 1 hour)
+//
+// Reference: BR-ORCH-042 (Consecutive Failure Blocking)
+//
+// IMPLEMENTATION NOTE: Queries history of RRs with same SignalFingerprint to count
+// consecutive failures. The incoming RR's ConsecutiveFailureCount is always 0 for new RRs.
+//
+// DESIGN LIMITATION (BR-ORCH-042.6, Issue #214): This function only counts RRs with
+// OverallPhase Failed/Blocked. Completed-but-ineffective remediations (resource reverts
+// to pre-remediation state) are NOT counted here. Instead, they are detected by
+// CheckIneffectiveRemediationChain via DataStorage audit traces (Option C: LLM-driven
+// escalation). See BR-ORCH-042.6 for the decision rationale.
+// fingerprintHistory queries and returns all RemediationRequests sharing rr's SignalFingerprint,
+// scoped to the incoming RR's target-resource namespace (multi-tenant isolation, #222, ADR-057),
+// sorted newest-first by creation timestamp.
+func (r *RoutingEngine) fingerprintHistory(ctx context.Context, logger logr.Logger, rr *remediationv1.RemediationRequest) ([]remediationv1.RemediationRequest, error) {
+	// BR-ORCH-042: Consecutive failure blocking MUST be namespace-scoped (multi-tenant isolation)
+	list := &remediationv1.RemediationRequestList{}
+	if err := r.client.List(ctx, list,
+		client.InNamespace(rr.Namespace), // MULTI-TENANT SAFETY: Isolate by namespace
+		client.MatchingFields{
+			"spec.signalFingerprint": rr.Spec.SignalFingerprint,
+		}); err != nil {
+		return nil, err
+	}
+
+	logger.Info("CheckConsecutiveFailures query results",
+		"incomingRR", rr.Name,
+		"fingerprint", rr.Spec.SignalFingerprint,
+		"queriedRRs", len(list.Items),
+		"threshold", r.config.ConsecutiveFailureThreshold)
+
+	// ADR-057: Post-filter by TargetResource.Namespace for multi-tenant isolation (#222).
+	// Since all CRDs live in ROControllerNamespace, client.InNamespace(rr.Namespace) no longer
+	// provides tenant isolation. We scope by workload namespace instead.
+	incomingTargetNS := rr.Spec.TargetResource.Namespace
+	filtered := make([]remediationv1.RemediationRequest, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].Spec.TargetResource.Namespace == incomingTargetNS {
+			filtered = append(filtered, list.Items[i])
+		}
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreationTimestamp.After(filtered[j].CreationTimestamp.Time)
+	})
+
+	for i, item := range filtered {
+		logger.Info("RR in history",
+			"index", i,
+			"name", item.Name,
+			"phase", item.Status.OverallPhase,
+			"createdAt", item.CreationTimestamp.Format("15:04:05"),
+			"isIncoming", item.UID == rr.UID)
+	}
+
+	return filtered, nil
+}
+
+// countConsecutiveFailures walks history (newest-first, excluding the incoming RR) counting
+// terminal failures until a genuine success breaks the chain. #1091 (BR-ORCH-042.6):
+// Completed+Inconclusive counts as a functional failure since EA confirmed the alert still fires.
+func countConsecutiveFailures(logger logr.Logger, history []remediationv1.RemediationRequest, incomingUID types.UID) int {
+	consecutiveFailures := 0
+	for i := range history {
+		item := &history[i]
+		if item.UID == incomingUID {
+			logger.Info("Skipping incoming RR", "name", item.Name)
+			continue
+		}
+
+		switch {
+		case item.Status.OverallPhase == remediationv1.PhaseFailed || item.Status.OverallPhase == remediationv1.PhaseBlocked:
+			consecutiveFailures++
+			logger.Info("Counted failed/blocked RR", "name", item.Name, "phase", item.Status.OverallPhase, "consecutiveFailures", consecutiveFailures)
+		case item.Status.OverallPhase == remediationv1.PhaseCompleted && item.Status.GetCompletionStatus().Outcome == "Inconclusive":
+			consecutiveFailures++
+			logger.Info("Counted Completed+Inconclusive RR as functional failure", "name", item.Name, "consecutiveFailures", consecutiveFailures)
+		case item.Status.OverallPhase == remediationv1.PhaseCompleted:
+			logger.Info("Found completed RR with successful outcome - breaking chain", "name", item.Name, "outcome", item.Status.GetCompletionStatus().Outcome, "consecutiveFailures", consecutiveFailures)
+			return consecutiveFailures
+		default:
+			// Ignore RRs in other phases (Pending, Processing, etc.) - they're not terminal yet
+			logger.Info("Ignoring non-terminal RR", "name", item.Name, "phase", item.Status.OverallPhase)
+		}
+	}
+	return consecutiveFailures
+}
+
+// CheckConsecutiveFailures blocks when consecutive failures >= threshold. See doc comment above.
+func (r *RoutingEngine) CheckConsecutiveFailures(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) *BlockingCondition {
+	logger := log.FromContext(ctx)
+
+	history, err := r.fingerprintHistory(ctx, logger, rr)
+	if err != nil {
+		// Log error but don't block on query failure
+		logger.Error(err, "Failed to query RRs by fingerprint", "fingerprint", rr.Spec.SignalFingerprint)
+		return nil
+	}
+
+	consecutiveFailures := countConsecutiveFailures(logger, history, rr.UID)
+
+	logger.Info("CheckConsecutiveFailures result",
+		"consecutiveFailures", consecutiveFailures,
+		"threshold", r.config.ConsecutiveFailureThreshold,
+		"willBlock", consecutiveFailures >= r.config.ConsecutiveFailureThreshold)
+
+	if consecutiveFailures < r.config.ConsecutiveFailureThreshold {
+		return nil // Not blocked
+	}
+
+	cooldownDuration := time.Duration(r.config.ConsecutiveFailureCooldown) * time.Second
+	blockedUntil := time.Now().Add(cooldownDuration)
+
+	return &BlockingCondition{
+		Blocked:      true,
+		Reason:       string(remediationv1.BlockReasonConsecutiveFailures),
+		Message:      fmt.Sprintf("%d consecutive failures. Cooldown expires: %s", consecutiveFailures, blockedUntil.Format(time.RFC3339)),
+		RequeueAfter: cooldownDuration,
+		BlockedUntil: &blockedUntil,
+	}
+}
+
+// CheckDuplicateInProgress checks if this RR is a duplicate of an active RR.
+// Finds active (non-terminal) RRs with the same SignalFingerprint.
+//
+// #209: Uses creationTimestamp as a deterministic tiebreaker — the oldest RR
+// is always the "original" and is never blocked as a duplicate. This prevents
+// circular deadlocks where both RRs block each other.
+//
+// BlockReason: "DuplicateInProgress"
+// RequeueAfter: 30 seconds (to check if original completes)
+//
+// Reference: DD-RO-002-ADDENDUM (Blocked Phase Semantics)
+func (r *RoutingEngine) CheckDuplicateInProgress(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) (*BlockingCondition, error) {
+	// Find active RR with same fingerprint (excluding self)
+	// ADR-057 (#222): Pass TargetResource.Namespace for multi-tenant isolation
+	originalRR, err := r.FindActiveRRForFingerprint(ctx, rr.Namespace, rr.Spec.SignalFingerprint, rr.Name, rr.Spec.TargetResource.Namespace)
+	if err != nil && !errors.Is(err, ErrNoMatch) {
+		return nil, fmt.Errorf("failed to check for duplicate: %w", err)
+	}
+
+	// Issue #1674: ErrNoMatch here means "not a duplicate" for this check's
+	// own contract, so it is translated to ErrNotBlocked. Caller
+	// (CheckPreAnalysisConditions / CheckPostAnalysisConditions) already
+	// guards with `if blocked != nil` before checking err.
+	if errors.Is(err, ErrNoMatch) {
+		return nil, ErrNotBlocked // Not a duplicate
+	}
+
+	// #209: Deterministic tiebreaker — the oldest RR is always the original.
+	// If the found RR was created AFTER us, we are the original and must not be blocked.
+	// This prevents circular deadlocks (A blocks B, B blocks A).
+	if !rr.CreationTimestamp.IsZero() && !originalRR.CreationTimestamp.IsZero() {
+		if originalRR.CreationTimestamp.After(rr.CreationTimestamp.Time) {
+			return nil, ErrNotBlocked // We are older → we are the original
+		}
+		// Same timestamp: use name as secondary tiebreaker (lexicographic)
+		if originalRR.CreationTimestamp.Time.Equal(rr.CreationTimestamp.Time) && originalRR.Name > rr.Name {
+			return nil, ErrNotBlocked // Same time, we sort first → we are the original
+		}
+	}
+
+	// This is a duplicate - block it
+	return &BlockingCondition{
+		Blocked:      true,
+		Reason:       string(remediationv1.BlockReasonDuplicateInProgress),
+		Message:      fmt.Sprintf("Duplicate of active remediation %s. Will inherit outcome when original completes.", originalRR.Name),
+		RequeueAfter: 30 * time.Second,
+		DuplicateOf:  originalRR.Name,
+	}, nil
+}
+
+// CheckResourceBusy checks if another WorkflowExecution is running on the same
+// target in the same target cluster. Blocks when an active WFE exists for the
+// same TargetResource and owning RemediationRequest.Spec.ClusterID.
+//
+// Issue #165: Accepts explicit targetResource parameter instead of reading
+// rr.Spec.TargetResource. The caller resolves the effective target from
+// AIAnalysis RCA RemediationTarget (falling back to RR.Spec.TargetResource).
+//
+// BlockReason: "ResourceBusy"
+// RequeueAfter: 30 seconds (to check if WFE completes)
+//
+// Reference: DD-RO-002 (Centralized Routing), DD-WE-001 (Resource Locking),
+// Issue #2396 (fleet target-cluster scoping)
+func (r *RoutingEngine) CheckResourceBusy(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+	targetResource string,
+) (*BlockingCondition, error) {
+	targetResourceStr := targetResource
+
+	// Find active WFE for the same target resource
+	activeWFE, err := r.FindActiveWFEForTarget(ctx, targetResourceStr, rr.Spec.ClusterID)
+	if err != nil && !errors.Is(err, ErrNoMatch) {
+		return nil, fmt.Errorf("failed to check resource lock: %w", err)
+	}
+
+	// Issue #1674: ErrNoMatch translated to this check's own ErrNotBlocked contract.
+	if errors.Is(err, ErrNoMatch) {
+		return nil, ErrNotBlocked // Resource not busy
+	}
+
+	// BR-ORCH-050: Skip WFE owned by the requesting RR (self-detection).
+	// When a reconcile retries after a partial failure, the RR's own WFE
+	// should not block itself.
+	for _, ownerRef := range activeWFE.GetOwnerReferences() {
+		if ownerRef.UID == rr.UID {
+			return nil, ErrNotBlocked // Our own WFE, not a conflict
+		}
+	}
+
+	// Resource is busy - block this RR
+	return &BlockingCondition{
+		Blocked:                   true,
+		Reason:                    string(remediationv1.BlockReasonResourceBusy),
+		Message:                   fmt.Sprintf("Another workflow (%s) is running on the same target resource. Waiting for completion.", activeWFE.Name),
+		RequeueAfter:              30 * time.Second,
+		BlockingWorkflowExecution: activeWFE.Name,
+	}, nil
+}
+
+// CheckRecentlyRemediated checks if the same workflow+target was recently executed.
+// Blocks when a completed WFE for the same target and workflow exists within cooldown.
+//
+// Issue #165: Accepts explicit targetResource parameter instead of reading
+// rr.Spec.TargetResource. The caller resolves the effective target from
+// AIAnalysis RCA RemediationTarget (falling back to RR.Spec.TargetResource).
+//
+// BlockReason: "RecentlyRemediated"
+// RequeueAfter: Remaining cooldown duration
+//
+// Parameters:
+//   - workflowID: from AIAnalysis.Status.SelectedWorkflow.WorkflowID
+//   - targetResource: AI-resolved target formatted as "namespace/kind/name" or "kind/name"
+//
+// Reference: DD-RO-002 Check 4 (Workflow Cooldown), DD-WE-001 (Cooldown Prevent Redundant Execution)
+func (r *RoutingEngine) CheckRecentlyRemediated(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+	workflowID string,
+	targetResource string,
+) (*BlockingCondition, error) {
+	return r.checkRecentlyRemediated(ctx, workflowID, targetResource, rr.Spec.ClusterID)
+}
+
+func (r *RoutingEngine) checkRecentlyRemediated(
+	ctx context.Context,
+	workflowID string,
+	targetResource string,
+	clusterID string,
+) (*BlockingCondition, error) {
+	targetResourceStr := targetResource
+
+	// DD-RO-002 Check 4: Workflow-specific cooldown
+	// Only block if the SAME workflow was recently executed on the same target.
+	// Different workflow on same target should NOT be blocked (different remediation approach).
+	recentWFE, err := r.FindRecentCompletedWFE(
+		ctx,
+		targetResourceStr,
+		workflowID, // Pass workflow ID for workflow-specific matching
+		clusterID,
+		r.config.RecentlyRemediatedCooldown,
+	)
+	if err != nil && !errors.Is(err, ErrNoMatch) {
+		return nil, fmt.Errorf("failed to check recent remediation: %w", err)
+	}
+
+	// Issue #1674: ErrNoMatch translated to this check's own ErrNotBlocked contract.
+	if errors.Is(err, ErrNoMatch) {
+		return nil, ErrNotBlocked // No recent remediation
+	}
+
+	// Calculate remaining cooldown
+	cooldownDuration := time.Duration(r.config.RecentlyRemediatedCooldown) * time.Second
+	timeSinceCompletion := time.Since(recentWFE.Status.CompletionTime.Time)
+	remainingCooldown := cooldownDuration - timeSinceCompletion
+	blockedUntil := time.Now().Add(remainingCooldown)
+
+	return &BlockingCondition{
+		Blocked:      true,
+		Reason:       string(remediationv1.BlockReasonRecentlyRemediated),
+		Message:      fmt.Sprintf("Target was remediated recently (%s). Cooldown expires: %s", recentWFE.Name, blockedUntil.Format(time.RFC3339)),
+		RequeueAfter: remainingCooldown,
+		BlockedUntil: &blockedUntil,
+	}, nil
+}
+
+// CheckExponentialBackoff checks if the RR is in an exponential backoff window.
+// Blocks when NextAllowedExecution is set and in the future.
+//
+// BlockReason: "ExponentialBackoff"
+// RequeueAfter: Time until NextAllowedExecution
+//
+// Reference: DD-WE-004 (Exponential Backoff Cooldown)
+// ========================================
+// EXPONENTIAL BACKOFF (DD-WE-004, V1.0)
+// 📋 Design Decision: DD-WE-004 | ✅ Approved Design | Confidence: 90%
+// See: docs/architecture/decisions/DD-WE-004-exponential-backoff-cooldown.md
+// ========================================
+//
+// CheckExponentialBackoff checks if the RR is blocked due to exponential backoff.
+// Blocks when NextAllowedExecution is set and in the future.
+//
+// BlockReason: "ExponentialBackoff"
+// RequeueAfter: time until NextAllowedExecution
+//
+// WHY DD-WE-004?
+// - ✅ Progressive retry delays (1m → 10m) prevent remediation storms
+// - ✅ Complements consecutive failure blocking with adaptive timing
+// - ✅ Reduces cluster load during persistent infrastructure issues
+//
+// Reference: DD-WE-004 (Exponential Backoff Cooldown)
+// ========================================
+func (r *RoutingEngine) CheckExponentialBackoff(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) *BlockingCondition {
+	logger := log.FromContext(ctx)
+
+	// No backoff configured
+	if rr.Status.GetRoutingStatus().NextAllowedExecution == nil {
+		return nil
+	}
+
+	now := time.Now()
+	nextAllowed := rr.Status.GetRoutingStatus().NextAllowedExecution.Time
+
+	// Backoff expired - can proceed
+	if nextAllowed.Before(now) || nextAllowed.Equal(now) {
+		logger.V(1).Info("Exponential backoff expired, allowing execution",
+			"nextAllowedExecution", nextAllowed,
+			"now", now)
+		return nil
+	}
+
+	// Backoff still active - block
+	requeueAfter := nextAllowed.Sub(now)
+	logger.Info("Blocking due to exponential backoff",
+		"nextAllowedExecution", nextAllowed.Format(time.RFC3339),
+		"requeueAfter", requeueAfter,
+		"consecutiveFailures", rr.Status.GetRoutingStatus().ConsecutiveFailureCount)
+
+	return &BlockingCondition{
+		Blocked:      true,
+		Reason:       string(remediationv1.BlockReasonExponentialBackoff),
+		Message:      fmt.Sprintf("Exponential backoff active. Next execution allowed at %s (in %s)", nextAllowed.Format(time.RFC3339), requeueAfter.Round(time.Second)),
+		RequeueAfter: requeueAfter,
+		BlockedUntil: &nextAllowed,
+	}
+}
+
+// CheckUnmanagedResource checks if the target resource is in Kubernaut's management scope.
+// Blocks when the resource or its namespace does not have the kubernaut.ai/managed=true label.
+//
+// This is Check #1 (highest priority) in the blocking pipeline. If a resource is unmanaged,
+// no other checks (consecutive failures, rate limits, etc.) are relevant.
+//
+// BlockReason: "UnmanagedResource"
+// RequeueAfter: Exponential backoff (5s initial, 5min max, 2x multiplier per ADR-053 Decision #4)
+//
+// Reference: BR-SCOPE-010 (RO Scope Blocking), ADR-053 (Resource Scope Management)
+func (r *RoutingEngine) CheckUnmanagedResource(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+) *BlockingCondition {
+	logger := log.FromContext(ctx)
+
+	clusterCtx := "local"
+	if rr.Spec.ClusterID != "" {
+		clusterCtx = rr.Spec.ClusterID
+	}
+
+	managed, err := r.checkScopeForResource(ctx, rr)
+	if err != nil {
+		logger.Error(err, "Scope validation failed — blocking RR (fail-closed)",
+			"cluster", clusterCtx,
+			"namespace", rr.Spec.TargetResource.Namespace,
+			"kind", rr.Spec.TargetResource.Kind,
+			"name", rr.Spec.TargetResource.Name)
+
+		retryCount := rr.Status.GetRoutingStatus().ConsecutiveFailureCount
+		backoffDuration := r.calculateScopeBackoff(retryCount)
+		blockedUntil := time.Now().Add(backoffDuration)
+		return &BlockingCondition{
+			Blocked: true,
+			Reason:  string(remediationv1.BlockReasonUnmanagedResource),
+			Message: fmt.Sprintf("Scope validation error for %s/%s/%s (cluster=%s): %v. "+
+				"Blocking until scope infrastructure recovers.",
+				rr.Spec.TargetResource.Namespace, rr.Spec.TargetResource.Kind,
+				rr.Spec.TargetResource.Name, clusterCtx, err),
+			RequeueAfter: backoffDuration,
+			BlockedUntil: &blockedUntil,
+		}
+	}
+
+	if managed {
+		return nil
+	}
+
+	retryCount := rr.Status.GetRoutingStatus().ConsecutiveFailureCount
+	backoffDuration := r.calculateScopeBackoff(retryCount)
+	blockedUntil := time.Now().Add(backoffDuration)
+
+	logger.Info("Blocking RR: target resource is not managed by Kubernaut",
+		"cluster", clusterCtx,
+		"targetNamespace", rr.Spec.TargetResource.Namespace,
+		"kind", rr.Spec.TargetResource.Kind,
+		"name", rr.Spec.TargetResource.Name,
+		"backoff", backoffDuration,
+		"blockedUntil", blockedUntil.Format(time.RFC3339))
+
+	return &BlockingCondition{
+		Blocked: true,
+		Reason:  string(remediationv1.BlockReasonUnmanagedResource),
+		Message: fmt.Sprintf("Resource %s/%s/%s (cluster=%s) not managed by Kubernaut. "+
+			"Add label kubernaut.ai/managed=true to namespace or resource.",
+			rr.Spec.TargetResource.Namespace, rr.Spec.TargetResource.Kind,
+			rr.Spec.TargetResource.Name, clusterCtx),
+		RequeueAfter: backoffDuration,
+		BlockedUntil: &blockedUntil,
+	}
+}
+
+// checkScopeForResource checks scope using the unified ScopeChecker (ADR-068).
+// ResourceIdentity.ClusterID routes internally: empty → local, non-empty → remote.
+func (r *RoutingEngine) checkScopeForResource(ctx context.Context, rr *remediationv1.RemediationRequest) (bool, error) {
+	return r.scopeChecker.IsManagedResource(ctx, scope.ResourceIdentity{
+		ClusterID: rr.Spec.ClusterID,
+		Kind:      rr.Spec.TargetResource.Kind,
+		Namespace: rr.Spec.TargetResource.Namespace,
+		Name:      rr.Spec.TargetResource.Name,
+	})
+}
+
+// calculateScopeBackoff computes the backoff duration for unmanaged resource blocking.
+// Uses the shared backoff library (DD-SHARED-001) with scope-specific config (ADR-053 Decision #4).
+//
+// Formula: min(Base × 2^(retryCount), Max) with ±10% jitter
+// Defaults: 5s initial, 5min max (configured via Config.ScopeBackoffBase/Max)
+func (r *RoutingEngine) calculateScopeBackoff(retryCount int32) time.Duration {
+	base := r.config.ScopeBackoffBase
+	if base <= 0 {
+		base = 5 // default: 5 seconds (ADR-053)
+	}
+	maxBackoff := r.config.ScopeBackoffMax
+	if maxBackoff <= 0 {
+		maxBackoff = 300 // default: 300 seconds = 5 minutes (ADR-053)
+	}
+
+	config := backoff.Config{
+		BasePeriod:    time.Duration(base) * time.Second,
+		MaxPeriod:     time.Duration(maxBackoff) * time.Second,
+		Multiplier:    2.0,
+		JitterPercent: 10,
+	}
+	return config.Calculate(retryCount)
+}
+
+// CalculateExponentialBackoff calculates the cooldown duration based on consecutive failures.
+//
+// Formula: Cooldown = min(Base × 2^(failures-1), Max)
+//
+// Examples (Base=1min, Max=10min):
+//   - 1 failure:  1min × 2^0 = 1min
+//   - 2 failures: 1min × 2^1 = 2min
+//   - 3 failures: 1min × 2^2 = 4min
+//   - 4 failures: 1min × 2^3 = 8min
+//   - 5+ failures: capped at 10min
+//
+// ========================================
+// EXPONENTIAL BACKOFF (DD-SHARED-001)
+// 📋 Design Decision: DD-SHARED-001 | ✅ Adopted Shared Library | Confidence: 100%
+// See: docs/architecture/decisions/DD-SHARED-001-shared-backoff-library.md
+// ========================================
+//
+// Uses shared exponential backoff library (pkg/shared/backoff) with ±10% jitter.
+//
+// WHY DD-SHARED-001?
+// - ✅ Single source of truth: Consistent formula across all services
+// - ✅ Battle-tested: 24 comprehensive unit tests, 100% passing
+// - ✅ Maintainable: Bug fixes in one place benefit all services
+// - ✅ Anti-thundering herd: Jitter prevents simultaneous retries in HA deployment (2+ replicas)
+//
+// WHY JITTER?
+// RO runs with 2+ replicas (leader election, HA). Without jitter, multiple RRs with
+// consecutive failures would retry simultaneously after cooldown, creating load spikes
+// on downstream services (AIAnalysis, WorkflowExecution). 10% jitter distributes
+// retries over time (~48s window for 8min backoff).
+//
+// Reference: DD-WE-004 (Exponential Backoff Cooldown), DD-SHARED-001 (Shared Backoff Library)
+// ========================================
+func (r *RoutingEngine) CalculateExponentialBackoff(consecutiveFailures int32) time.Duration {
+	if consecutiveFailures <= 0 {
+		return 0 // No failures, no backoff
+	}
+
+	// Use shared backoff library (DD-SHARED-001)
+	// Configuration for production HA deployment (2+ replicas with leader election)
+	config := backoff.Config{
+		BasePeriod:    time.Duration(r.config.ExponentialBackoffBase) * time.Second,
+		MaxPeriod:     time.Duration(r.config.ExponentialBackoffMax) * time.Second,
+		Multiplier:    2.0, // Standard exponential (power-of-2)
+		JitterPercent: 10,  // ±10% variance prevents thundering herd in HA deployment
+	}
+
+	// Note: MaxExponent capping is handled by MaxPeriod in shared library
+	// Jitter distributes retry attempts over time, preventing load spikes on downstream services
+	return config.Calculate(consecutiveFailures)
+}
+
+// FindActiveRRForFingerprint finds an active (non-terminal) RR with the given fingerprint.
+// Returns the first active RR found, or ErrNoMatch if none exist.
+// Excludes the RR with excludeName (to avoid self-matching).
+//
+// Uses field index on spec.signalFingerprint for O(1) lookup (configured in Day 1).
+//
+// Reference: BR-ORCH-042 (Fingerprint Field Index)
+// Multi-Tenant Isolation: Scoped to namespace parameter for tenant isolation (BR-ORCH-042)
+func (r *RoutingEngine) FindActiveRRForFingerprint(
+	ctx context.Context,
+	namespace string,
+	fingerprint string,
+	excludeName string,
+	targetNamespace string,
+) (*remediationv1.RemediationRequest, error) {
+	logger := log.FromContext(ctx)
+
+	// List all RRs with matching fingerprint using field index
+	// NOTE: Must use cached client for field index queries (indexes not available on APIReader)
+	// CRITICAL: Use namespace parameter (not r.namespace) for multi-tenant isolation
+	rrList := &remediationv1.RemediationRequestList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(namespace),
+		client.MatchingFields{"spec.signalFingerprint": fingerprint},
+	}
+
+	if err := r.client.List(ctx, rrList, listOpts...); err != nil {
+		return nil, fmt.Errorf("failed to list RemediationRequests by fingerprint: %w", err)
+	}
+
+	// Find first active (non-terminal) RR, excluding self
+	// DD-STATUS-001: Refetch each candidate with APIReader to get fresh status
+	for i := range rrList.Items {
+		rr := &rrList.Items[i]
+		if rr.Name == excludeName {
+			continue // Skip self
+		}
+		// ADR-057 (#222): Multi-tenant isolation — only consider RRs targeting the same workload namespace
+		if targetNamespace != "" && rr.Spec.TargetResource.Namespace != targetNamespace {
+			continue
+		}
+
+		// Refetch with APIReader to bypass cache and get fresh status
+		// This prevents false "DuplicateInProgress" blocks due to stale status in cache
+		freshRR := &remediationv1.RemediationRequest{}
+		if err := r.apiReader.Get(ctx, client.ObjectKeyFromObject(rr), freshRR); err != nil {
+			logger.Error(err, "Failed to refetch RR status", "rr", rr.Name)
+			// Fall back to cached status if refetch fails
+			freshRR = rr
+		}
+
+		if !IsTerminalPhase(freshRR.Status.OverallPhase) {
+			logger.V(1).Info("Found active RR with fingerprint",
+				"rr", freshRR.Name,
+				"fingerprint", fingerprint,
+				"phase", freshRR.Status.OverallPhase)
+			return freshRR, nil
+		}
+	}
+
+	// Issue #1674: ErrNoMatch is the canonical Find* "not found" sentinel
+	// (mirrors client.IgnoreNotFound patterns); callers use
+	// errors.Is(err, ErrNoMatch) before use.
+	return nil, ErrNoMatch // No active duplicate found
+}
+
+// FindActiveWFEForTarget finds an active WFE for the given target resource and
+// target cluster. The cluster is resolved from the owning RR rather than
+// WFE.Spec.ClusterID because that field can identify an execution-cluster
+// override instead of the cluster containing the target resource.
+// Returns the first running WFE found, or ErrNoMatch if none exist.
+//
+// Uses field index on spec.targetResource for O(1) lookup (configured in Day 1).
+//
+// Reference: DD-RO-002 (Target Resource Field Index)
+func (r *RoutingEngine) FindActiveWFEForTarget(
+	ctx context.Context,
+	targetResource string,
+	clusterID string,
+) (*workflowexecutionv1.WorkflowExecution, error) {
+	logger := log.FromContext(ctx)
+
+	// List all WFEs with matching target resource using field index
+	// NOTE: Must use cached client for field index queries (indexes not available on APIReader)
+	wfeList := &workflowexecutionv1.WorkflowExecutionList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(r.namespace),
+		client.MatchingFields{"spec.targetResource": targetResource},
+	}
+
+	if err := r.client.List(ctx, wfeList, listOpts...); err != nil {
+		return nil, fmt.Errorf("failed to list WorkflowExecutions by target: %w", err)
+	}
+
+	// Find first active (non-terminal) WFE
+	// DD-STATUS-001: Refetch each candidate with APIReader to get fresh status
+	for i := range wfeList.Items {
+		wfe := &wfeList.Items[i]
+
+		// Refetch with APIReader to bypass cache and get fresh status
+		// This prevents false "ResourceBusy" blocks due to stale status in cache
+		freshWFE := &workflowexecutionv1.WorkflowExecution{}
+		if err := r.apiReader.Get(ctx, client.ObjectKeyFromObject(wfe), freshWFE); err != nil {
+			logger.Error(err, "Failed to refetch WFE status", "wfe", wfe.Name)
+			// Fall back to cached status if refetch fails
+			freshWFE = wfe
+		}
+
+		// Check if phase is not terminal (Running, Pending, etc.)
+		// V1.0: Only Completed and Failed are terminal phases
+		if freshWFE.Status.Phase == workflowexecutionv1.PhaseCompleted ||
+			freshWFE.Status.Phase == workflowexecutionv1.PhaseFailed {
+			continue
+		}
+
+		// An active WFE without a resolvable owner remains a blocker. This
+		// fail-safe behavior prevents an orphaned execution from allowing a
+		// concurrent remediation against the same target.
+		ownerRef := freshWFE.Spec.RemediationRequestRef
+		if ownerRef.Name == "" {
+			logger.V(1).Info("Found active WFE for target",
+				"wfe", freshWFE.Name,
+				"target", targetResource,
+				"phase", freshWFE.Status.Phase)
+			return freshWFE, nil
+		}
+
+		ownerNamespace := ownerRef.Namespace
+		if ownerNamespace == "" {
+			ownerNamespace = freshWFE.Namespace
+		}
+
+		ownerRR := &remediationv1.RemediationRequest{}
+		if err := r.apiReader.Get(ctx, client.ObjectKey{
+			Namespace: ownerNamespace,
+			Name:      ownerRef.Name,
+		}, ownerRR); err != nil {
+			logger.Error(err, "Failed to resolve WFE owner for resource lock",
+				"wfe", freshWFE.Name, "ownerRR", ownerRef.Name)
+			logger.V(1).Info("Found active WFE for target",
+				"wfe", freshWFE.Name,
+				"target", targetResource,
+				"phase", freshWFE.Status.Phase)
+			return freshWFE, nil
+		}
+
+		if ownerRR.Spec.ClusterID != clusterID {
+			logger.V(1).Info("Skipping active WFE for different target cluster",
+				"wfe", freshWFE.Name,
+				"target", targetResource,
+				"targetCluster", clusterID,
+				"ownerCluster", ownerRR.Spec.ClusterID)
+			continue
+		}
+
+		logger.V(1).Info("Found active WFE for target",
+			"wfe", freshWFE.Name,
+			"target", targetResource,
+			"phase", freshWFE.Status.Phase)
+		return freshWFE, nil
+	}
+
+	// Issue #1674: same ErrNoMatch idiom as FindActiveRRForFingerprint above.
+	return nil, ErrNoMatch // No active WFE found
+}
+
+// FindRecentCompletedWFE finds the most recent completed WFE for the given
+// target resource and workflow ID, within the cooldown period.
+// Returns the WFE if found within cooldown, or ErrNoMatch if none exist or outside cooldown.
+//
+// Uses field index on spec.targetResource for O(1) lookup (configured in Day 1).
+//
+// Reference: DD-WE-001 (Recently Remediated Cooldown)
+func (r *RoutingEngine) FindRecentCompletedWFE(
+	ctx context.Context,
+	targetResource string,
+	workflowID string,
+	clusterID string,
+	cooldownDuration int64,
+) (*workflowexecutionv1.WorkflowExecution, error) {
+	logger := log.FromContext(ctx)
+	cooldown := time.Duration(cooldownDuration) * time.Second
+
+	// List all WFEs with matching target resource using field index
+	wfeList := &workflowexecutionv1.WorkflowExecutionList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(r.namespace),
+		client.MatchingFields{"spec.targetResource": targetResource},
+	}
+
+	if err := r.client.List(ctx, wfeList, listOpts...); err != nil {
+		return nil, fmt.Errorf("failed to list WorkflowExecutions for cooldown check: %w", err)
+	}
+
+	var mostRecentCompleted *workflowexecutionv1.WorkflowExecution
+	now := time.Now()
+
+	// Find most recent completed WFE matching workflow ID within cooldown
+	for i := range wfeList.Items {
+		wfe := &wfeList.Items[i]
+
+		// Filter: Only completed phase
+		if wfe.Status.Phase != workflowexecutionv1.PhaseCompleted {
+			continue
+		}
+
+		// Filter: Must have CompletionTime timestamp
+		if wfe.Status.CompletionTime == nil {
+			logger.V(1).Info("Skipping completed WFE with nil CompletionTime",
+				"wfe", wfe.Name)
+			continue
+		}
+
+		// Filter: Must match workflow ID (if specified)
+		if workflowID != "" && wfe.Spec.WorkflowRef.WorkflowID != workflowID {
+			continue
+		}
+
+		// Fleet target identity includes the execution/origin cluster. A
+		// completed hub WFE must not impose cooldown on the same-named target
+		// in a registered spoke (BR-FLEET-004, DD-KA-2496).
+		if wfe.Spec.ClusterID != clusterID {
+			continue
+		}
+
+		// Filter: Must be within cooldown period
+		timeSinceCompletion := now.Sub(wfe.Status.CompletionTime.Time)
+		if timeSinceCompletion >= cooldown {
+			continue // Outside cooldown window
+		}
+
+		// Track most recent
+		if mostRecentCompleted == nil ||
+			wfe.Status.CompletionTime.After(mostRecentCompleted.Status.CompletionTime.Time) {
+			mostRecentCompleted = wfe
+		}
+	}
+
+	// Issue #1674: same ErrNoMatch idiom as its Find* siblings above, even
+	// though the nilnil linter never flagged this site (mostRecentCompleted
+	// is a variable, not a literal nil) -- kept consistent for callers.
+	if mostRecentCompleted == nil {
+		return nil, ErrNoMatch
+	}
+
+	return mostRecentCompleted, nil
+}
+
+// CheckIneffectiveRemediationChain detects consecutive ineffective remediations
+// using DataStorage audit traces (Issue #214).
+//
+// Three-layer detection:
+//   - Layer 1+2: Walk Tier1.Chain backwards checking hash chain matches and spec_drift
+//   - Layer 3: Safety net -- count total entries within time window
+//
+// Fail-open: DS query errors are logged and nil is returned.
+// Returns: BlockingCondition with BlockReasonIneffectiveChain, or nil.
+// ineffectiveHistory fetches the DataStorage audit trace for target used by the three
+// detection layers in CheckIneffectiveRemediationChain. Fail-open: a nil dsClient or a
+// DS query error both yield (nil, nil) so the caller treats it as "no evidence, don't block".
+func (r *RoutingEngine) ineffectiveHistory(ctx context.Context, logger logr.Logger, target TargetResource, preRemediationSpecHash string) []ogenclient.RemediationHistoryEntry {
+	if r.dsClient == nil {
+		logger.V(1).Info("dsClient is nil, skipping ineffective chain detection")
+		return nil
+	}
+
+	entries, err := r.dsClient.GetRemediationHistory(ctx, target, preRemediationSpecHash, r.config.IneffectiveTimeWindow)
+	if err != nil {
+		logger.Error(err, "DataStorage query failed for ineffective chain detection (fail-open)")
+		return nil
+	}
+
+	logger.V(1).Info("Ineffective chain detection: DS query completed", "entryCount", len(entries))
+	return entries
+}
+
+// countRecentEntries implements Layer 3 (safety net): counts entries completed within
+// the configured ineffective-time-window, regardless of hash-chain continuity.
+func countRecentEntries(entries []ogenclient.RemediationHistoryEntry, window time.Duration) int {
+	windowCutoff := time.Now().Add(-window)
+	recentCount := 0
+	for i := range entries {
+		if entries[i].CompletedAt.After(windowCutoff) {
+			recentCount++
+		}
+	}
+	return recentCount
+}
+
+func (r *RoutingEngine) CheckIneffectiveRemediationChain(
+	ctx context.Context,
+	rr *remediationv1.RemediationRequest,
+	target TargetResource,
+	preRemediationSpecHash string,
+	actionType string,
+) *BlockingCondition {
+	logger := log.FromContext(ctx).WithValues(
+		"remediationRequest", rr.Name,
+		"target", target.String(),
+	)
+
+	entries := r.ineffectiveHistory(ctx, logger, target, preRemediationSpecHash)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Layer 1+2: Hash chain match + spec_drift detection
+	chainCount := r.countIneffectiveChain(entries, preRemediationSpecHash)
+	if chainCount >= r.config.IneffectiveChainThreshold {
+		logger.Info("Ineffective remediation chain detected (Layer 1+2)",
+			"chainCount", chainCount,
+			"threshold", r.config.IneffectiveChainThreshold)
+		return r.buildIneffectiveBlockCondition(chainCount, "hash chain match")
+	}
+
+	// Layer 1b: Forward hash chain -- spec changes each cycle but signal recurs (Issue #525)
+	forwardThreshold := r.config.ForwardChainThreshold
+	if forwardThreshold <= 0 {
+		forwardThreshold = 2
+	}
+	forwardCount := r.countForwardChain(entries, preRemediationSpecHash, actionType)
+	if forwardCount >= forwardThreshold {
+		logger.Info("Ineffective remediation chain detected (Layer 1b forward hash chain)",
+			"forwardCount", forwardCount,
+			"threshold", forwardThreshold,
+			"actionType", actionType)
+		return r.buildIneffectiveBlockCondition(forwardCount, "forward hash chain")
+	}
+
+	// Layer 3: Safety net -- count total entries within time window
+	recentCount := countRecentEntries(entries, r.config.IneffectiveTimeWindow)
+	if recentCount >= r.config.RecurrenceCountThreshold {
+		logger.Info("Ineffective remediation chain detected (Layer 3 safety net)",
+			"recentCount", recentCount,
+			"threshold", r.config.RecurrenceCountThreshold)
+		return r.buildIneffectiveBlockCondition(recentCount, "recurrence count safety net")
+	}
+
+	return nil
+}
+
+// countIneffectiveChain walks entries backwards counting consecutive ineffective remediations.
+// An entry is considered ineffective if:
+// - Its preRemediationSpecHash matches the current preHash (hash chain continuity), OR
+// - Its HashMatch is "preRemediation" (regression/spec_drift detected by EM)
+func (r *RoutingEngine) countIneffectiveChain(entries []ogenclient.RemediationHistoryEntry, currentPreHash string) int {
+	consecutiveIneffective := 0
+
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+
+		if isIneffectiveEntry(entry, currentPreHash) {
+			consecutiveIneffective++
+		} else {
+			break
+		}
+	}
+
+	return consecutiveIneffective
+}
+
+// countForwardChain detects a connected sequence of remediations where each cycle's
+// PostRemediationSpecHash feeds the next cycle's PreRemediationSpecHash (Issue #525).
+// This catches the "spec changed each time but signal recurred" pattern (e.g., memory
+// limits increasing from 64Mi -> 128Mi -> 256Mi -> 512Mi with OOMKill recurring).
+//
+// Five conditions must ALL be met for an entry to participate in the chain:
+//  1. Within ForwardChainWindow (default 1h)
+//  2. Same ActionType as the incoming RR
+//  3. SignalResolved == false (EA confirmed the remediation was ineffective)
+//  4. Hash link continuity (entry[i].PostHash == entry[i+1].PreHash)
+//  5. Last entry's PostHash == incoming RR's PreHash (proves causality)
+//
+// The function filters entries first, sorts a copy ascending, then walks backward
+// from the tail to find the longest connected chain.
+func (r *RoutingEngine) countForwardChain(entries []ogenclient.RemediationHistoryEntry, currentPreHash string, actionType string) int {
+	if len(entries) == 0 {
+		return 0
+	}
+
+	window := r.config.ForwardChainWindow
+	if window <= 0 {
+		window = 1 * time.Hour
+	}
+	cutoff := time.Now().Add(-window)
+
+	sorted := filterAndSortForwardChainCandidates(entries, cutoff, actionType)
+	if len(sorted) == 0 {
+		return 0
+	}
+
+	last := len(sorted) - 1
+	if !sorted[last].PostRemediationSpecHash.IsSet() || sorted[last].PostRemediationSpecHash.Value != currentPreHash {
+		return 0
+	}
+
+	return walkForwardChainLength(sorted)
+}
+
+// filterAndSortForwardChainCandidates returns entries within the window that
+// match actionType and were confirmed ineffective (SignalResolved == false),
+// sorted ascending by completion time.
+func filterAndSortForwardChainCandidates(entries []ogenclient.RemediationHistoryEntry, cutoff time.Time, actionType string) []ogenclient.RemediationHistoryEntry {
+	var filtered []ogenclient.RemediationHistoryEntry
+	for i := range entries {
+		e := entries[i]
+		if e.CompletedAt.Before(cutoff) {
+			continue
+		}
+		if !e.ActionType.IsSet() || e.ActionType.Value != actionType {
+			continue
+		}
+		if !e.SignalResolved.IsSet() || e.SignalResolved.Value {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	sorted := make([]ogenclient.RemediationHistoryEntry, len(filtered))
+	copy(sorted, filtered)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].CompletedAt.Before(sorted[j].CompletedAt)
+	})
+	return sorted
+}
+
+// walkForwardChainLength walks backward from the tail of a time-ascending,
+// pre-filtered entry slice, counting the connected hash chain where each
+// entry's PostRemediationSpecHash feeds the next entry's PreRemediationSpecHash.
+func walkForwardChainLength(sorted []ogenclient.RemediationHistoryEntry) int {
+	chainLen := 1
+	for i := len(sorted) - 1; i > 0; i-- {
+		prev := sorted[i-1]
+		curr := sorted[i]
+		if !prev.PostRemediationSpecHash.IsSet() || !curr.PreRemediationSpecHash.IsSet() {
+			break
+		}
+		if prev.PostRemediationSpecHash.Value != curr.PreRemediationSpecHash.Value {
+			break
+		}
+		chainLen++
+	}
+	return chainLen
+}
+
+func isIneffectiveEntry(entry ogenclient.RemediationHistoryEntry, compareHash string) bool {
+	// Check regression/spec_drift via HashMatch (Layer 2)
+	if entry.HashMatch.IsSet() && entry.HashMatch.Value == ogenclient.RemediationHistoryEntryHashMatchPreRemediation {
+		return true
+	}
+
+	// Check hash chain continuity (Layer 1): pre-hash of entry matches current pre-hash
+	if entry.PreRemediationSpecHash.IsSet() && entry.PreRemediationSpecHash.Value == compareHash {
+		return true
+	}
+
+	return false
+}
+
+func (r *RoutingEngine) buildIneffectiveBlockCondition(count int, detection string) *BlockingCondition {
+	return &BlockingCondition{
+		Blocked: true,
+		Reason:  string(remediationv1.BlockReasonIneffectiveChain),
+		Message: fmt.Sprintf(
+			"%d consecutive ineffective remediations detected (%s). Escalating to manual review.",
+			count, detection),
+		RequeueAfter: r.config.IneffectiveTimeWindow,
+	}
+}

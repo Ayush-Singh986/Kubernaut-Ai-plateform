@@ -1,0 +1,47 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: oomkill-increase-memory-v1
+spec:
+  # OOMKill Increase Memory Workflow Schema - Job Backend (BR-WORKFLOW-004)
+  # Used by: FullPipeline E2E (execution.engine: job)
+  version: "1.0.0"
+  description:
+    what: "Increases memory limits for pods experiencing OOMKill events"
+    whenToUse: "When pods are OOMKilled due to insufficient memory limits"
+    whenNotToUse: "When OOM is caused by a memory leak requiring code fix"
+    preconditions: "Pod is managed by a Deployment or StatefulSet"
+  
+  actionType: IncreaseMemoryLimits
+  
+  labels:
+    severity: [critical, high, warning]
+    environment: [production, staging, test]
+    component: ["*"]
+    priority: "*"
+    cluster: ["*"]
+  
+  execution:
+    engine: job
+    bundle: quay.io/kubernaut-cicd/test-workflows/oomkill-increase-memory-job:v1.0.0-exec@sha256:6343779228f380aa2ed8f1584b98f0bafb7f6063dbb8c0de1581a5fd5172a395
+    # DD-WE-005 v2.0: Pre-created SA with cross-namespace RBAC so remediate.sh
+    # can kubectl get/patch Deployments in any namespace.
+    serviceAccountName: workflow-job-executor
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected from root_owner)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected from root_owner)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected from root_owner)"
+    - name: MEMORY_LIMIT_NEW
+      type: string
+      required: true
+      description: "New memory limit to apply (e.g., 128Mi, 256Mi, 1Gi)"

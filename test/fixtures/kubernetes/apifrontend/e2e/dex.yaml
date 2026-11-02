@@ -1,0 +1,309 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+  namespace: kubernaut-system
+data:
+  config.yaml: |
+    issuer: https://dex:5556/dex
+
+    storage:
+      type: sqlite3
+      config:
+        file: /var/lib/dex/dex.db
+
+    web:
+      https: 0.0.0.0:5556
+      tlsCert: /etc/dex/tls/tls.crt
+      tlsKey: /etc/dex/tls/tls.key
+
+    oauth2:
+      skipApprovalScreen: true
+      passwordConnector: local
+      grantTypes:
+        - authorization_code
+        - password
+        - client_credentials
+        - refresh_token
+      responseTypes: ["code", "token", "id_token"]
+
+    staticClients:
+      - id: kubernaut-apifrontend
+        name: "Kubernaut API Frontend (E2E)"
+        secret: e2e-client-secret
+        redirectURIs:
+          - "http://localhost:18443/callback"
+      - id: kubernaut-fleet-read
+        name: "Kubernaut Fleet Read (E2E)"
+        secret: e2e-fleet-secret
+        grantTypes:
+          - client_credentials
+        clientCredentialsClaims:
+          groups:
+            - mcp-read
+      - id: kubernaut-fleet-write
+        name: "Kubernaut Fleet Write (E2E)"
+        secret: e2e-fleet-secret
+        grantTypes:
+          - client_credentials
+        clientCredentialsClaims:
+          groups:
+            - mcp-write
+            - mcp-read
+
+    enablePasswordDB: true
+    staticPasswords:
+      - email: "e2e-user@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "e2e-user"
+        userID: "e2e-user-001"
+        groups:
+          - "sre"
+      - email: "sre@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "sre-user"
+        userID: "e2e-user-sre"
+        groups:
+          - "sre"
+      - email: "structured-decision@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "structured-decision-user"
+        userID: "e2e-user-structured-decision"
+        groups:
+          - "sre"
+      # FullPipeline A2A specs use one isolated SRE persona per Ginkgo
+      # process so they can run concurrently without sharing APIF's per-user
+      # rate/session buckets or active-context registry.
+      - email: "fp-a2a-1@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-1"
+        userID: "e2e-user-fp-a2a-1"
+        groups:
+          - "sre"
+      - email: "fp-a2a-2@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-2"
+        userID: "e2e-user-fp-a2a-2"
+        groups:
+          - "sre"
+      - email: "fp-a2a-3@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-3"
+        userID: "e2e-user-fp-a2a-3"
+        groups:
+          - "sre"
+      - email: "fp-a2a-4@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-4"
+        userID: "e2e-user-fp-a2a-4"
+        groups:
+          - "sre"
+      - email: "fp-a2a-5@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-5"
+        userID: "e2e-user-fp-a2a-5"
+        groups:
+          - "sre"
+      - email: "fp-a2a-6@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-6"
+        userID: "e2e-user-fp-a2a-6"
+        groups:
+          - "sre"
+      - email: "fp-a2a-7@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-7"
+        userID: "e2e-user-fp-a2a-7"
+        groups:
+          - "sre"
+      - email: "fp-a2a-8@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-8"
+        userID: "e2e-user-fp-a2a-8"
+        groups:
+          - "sre"
+      - email: "fp-a2a-9@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-9"
+        userID: "e2e-user-fp-a2a-9"
+        groups:
+          - "sre"
+      - email: "fp-a2a-10@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-10"
+        userID: "e2e-user-fp-a2a-10"
+        groups:
+          - "sre"
+      - email: "fp-a2a-11@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-11"
+        userID: "e2e-user-fp-a2a-11"
+        groups:
+          - "sre"
+      - email: "fp-a2a-12@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-12"
+        userID: "e2e-user-fp-a2a-12"
+        groups:
+          - "sre"
+      - email: "fp-a2a-13@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-13"
+        userID: "e2e-user-fp-a2a-13"
+        groups:
+          - "sre"
+      - email: "fp-a2a-14@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-14"
+        userID: "e2e-user-fp-a2a-14"
+        groups:
+          - "sre"
+      - email: "fp-a2a-15@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-15"
+        userID: "e2e-user-fp-a2a-15"
+        groups:
+          - "sre"
+      - email: "fp-a2a-16@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "fp-a2a-16"
+        userID: "e2e-user-fp-a2a-16"
+        groups:
+          - "sre"
+      - email: "orchestrator@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "orchestrator-user"
+        userID: "e2e-user-orchestrator"
+        groups:
+          - "ai-orchestrator"
+      - email: "cicd@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "cicd-user"
+        userID: "e2e-user-cicd"
+        groups:
+          - "cicd"
+      - email: "observability@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "observability-user"
+        userID: "e2e-user-observability"
+        groups:
+          - "observability"
+      - email: "auditor@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "auditor-user"
+        userID: "e2e-user-auditor"
+        groups:
+          - "l3-audit"
+      - email: "approver@kubernaut.ai"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: "approver-user"
+        userID: "e2e-user-approver"
+        groups:
+          - "remediation-approver"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dex-data
+  namespace: kubernaut-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+  namespace: kubernaut-system
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: dex
+  ports:
+    - name: https
+      port: 5556
+      targetPort: 5556
+      nodePort: 30556
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/name: dex
+    app.kubernetes.io/component: identity
+    app.kubernetes.io/part-of: kubernaut
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dex
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dex
+        app.kubernetes.io/component: identity
+        app.kubernetes.io/part-of: kubernaut
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:latest
+          command: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - name: https
+              containerPort: 5556
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            httpGet:
+              path: /dex/healthz
+              port: 5556
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+            - name: tls-certs
+              mountPath: /etc/dex/tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: dex-data
+              mountPath: /var/lib/dex
+      volumes:
+        - name: config
+          configMap:
+            name: dex-config
+        - name: tls-certs
+          secret:
+            secretName: dex-tls
+        - name: tmp
+          emptyDir: {}
+        - name: dex-data
+          persistentVolumeClaim:
+            claimName: dex-data

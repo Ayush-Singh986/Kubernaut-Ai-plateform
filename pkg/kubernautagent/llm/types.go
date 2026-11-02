@@ -1,0 +1,153 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package llm
+
+import (
+	"context"
+	"encoding/json"
+)
+
+// Client abstracts the LLM provider behind a Kubernaut-owned interface.
+// Business logic never imports the underlying framework (LangChainGo, Eino, etc.).
+// Authority: DD-KA-019 — Framework Isolation Pattern
+//
+// Close releases resources held by the client (gRPC connections, HTTP idle
+// pools). Callers must call Close when the client is no longer needed.
+// Implementations where no cleanup is required should return nil.
+type Client interface {
+	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
+	StreamChat(ctx context.Context, req ChatRequest, callback func(ChatStreamEvent) error) (ChatResponse, error)
+	Close() error
+}
+
+// ChatStreamEvent represents a single streaming chunk from the LLM.
+// The callback receives these incrementally; the caller should forward
+// text deltas to the SSE event sink for real-time observer delivery.
+type ChatStreamEvent struct {
+	Delta         string           `json:"delta,omitempty"`
+	ToolCallDelta *PartialToolCall `json:"tool_call_delta,omitempty"`
+	Usage         *TokenUsage      `json:"usage,omitempty"`
+	Done          bool             `json:"done,omitempty"`
+}
+
+// PartialToolCall represents an incremental fragment of a tool call
+// received during streaming. The caller accumulates these to build
+// the final ToolCall.
+type PartialToolCall struct {
+	Index          int    `json:"index"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	ArgumentsDelta string `json:"arguments_delta,omitempty"`
+}
+
+// ChatRequest contains the messages and tool definitions for an LLM call.
+type ChatRequest struct {
+	Messages []Message        `json:"messages"`
+	Tools    []ToolDefinition `json:"tools,omitempty"`
+	Options  ChatOptions      `json:"options,omitempty"`
+}
+
+// FinishReason constants normalized across all LLM providers. Adapters must
+// map provider-specific stop reasons to one of these values.
+const (
+	FinishReasonStop      = "stop"
+	FinishReasonLength    = "length"
+	FinishReasonToolCalls = "tool_calls"
+)
+
+// ChatResponse contains the LLM's reply and any tool call requests.
+type ChatResponse struct {
+	Message      Message    `json:"message"`
+	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	Usage        TokenUsage `json:"usage,omitempty"`
+	FinishReason string     `json:"finish_reason,omitempty"`
+}
+
+// Message represents a single conversation message.
+type Message struct {
+	Role       string          `json:"role"`
+	Content    string          `json:"content"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+	Reasoning  *ReasoningBlock `json:"reasoning,omitempty"`
+}
+
+// ReasoningBlock captures a provider's reasoning/thinking output for a single
+// assistant message, kept provider-agnostic so business logic in
+// internal/kubernautagent/investigator/* never sees provider-specific wire
+// formats (DD-KA-019). Nil means no reasoning was requested or returned.
+// Authority: BR-AI-086 AC1.
+type ReasoningBlock struct {
+	// Text is the visible reasoning content (Anthropic thinking, DeepSeek
+	// reasoning_content, vLLM reasoning). Empty when Redacted is true.
+	Text string `json:"text,omitempty"`
+	// Signature is an opaque, provider-specific value (Anthropic thinking
+	// signature, encrypted payload) that must be replayed verbatim on the
+	// next turn without inspection or modification.
+	Signature string `json:"signature,omitempty"`
+	// Redacted marks an opaque reasoning block whose visible text was
+	// withheld by the provider (Anthropic redacted_thinking) but which must
+	// still be replayed on subsequent turns.
+	Redacted bool `json:"redacted,omitempty"`
+}
+
+// ToolDefinition describes a tool available to the LLM.
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// ToolCall represents the LLM requesting execution of a tool.
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// TokenUsage tracks token consumption for a single LLM call.
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// ChatOptions holds optional parameters for the LLM call.
+type ChatOptions struct {
+	Temperature  *float64          `json:"temperature,omitempty"`
+	MaxTokens    int               `json:"max_tokens,omitempty"`
+	JSONMode     bool              `json:"json_mode,omitempty"`
+	OutputSchema json.RawMessage   `json:"output_schema,omitempty"`
+	Reasoning    *ReasoningRequest `json:"reasoning,omitempty"`
+}
+
+// ReasoningRequest opts into provider reasoning/thinking output for a single
+// chat call. Nil (or Enabled: false) means no reasoning is requested — the
+// safe default for every provider/model (BR-AI-086 AC2). Resolved once at
+// LLM-client-construction time from operator config, never threaded
+// per-call from business logic (DD-KA-019).
+type ReasoningRequest struct {
+	Enabled      bool `json:"enabled,omitempty"`
+	BudgetTokens int  `json:"budget_tokens,omitempty"`
+	// Effort is the canonical, provider-agnostic reasoning-depth value
+	// ("", "none", "minimal", "low", "medium", "high", "xhigh", "max" — #1604).
+	// BudgetTokens, when > 0, always wins over Effort for Anthropic (an
+	// exact-value power-user override); Effort is otherwise ignored by
+	// clients with no effort-dial concept.
+	Effort string `json:"effort,omitempty"`
+}

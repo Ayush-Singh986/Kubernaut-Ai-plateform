@@ -1,0 +1,48 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: duplicate-test-v1
+spec:
+  # Duplicate Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: DataStorage E2E — 18_workflow_duplicate_api_test.go (DS-BUG-001)
+  # This workflow is created twice to test 409 Conflict duplicate detection
+  version: "1.0.0"
+  description:
+    what: "Test workflow for duplicate creation detection"
+    whenToUse: "For E2E testing of RFC 9110 Section 15.5.10 duplicate resource handling"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "DataStorage service running"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [high]
+    environment: [test]
+    component: [apps/v1/Deployment]
+    priority: P2
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to restart"

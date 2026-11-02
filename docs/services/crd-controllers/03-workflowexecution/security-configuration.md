@@ -1,0 +1,685 @@
+## Security Configuration
+
+**Version**: 4.3
+**Last Updated**: 2026-06-30
+**CRD API Group**: `kubernaut.ai/v1alpha1`
+**Status**: ✅ Updated for Dedicated Execution Namespace (DD-WE-002), per-workflow ServiceAccounts (DD-WE-005 v2.0), and spawned execution pod hardening (BR-WE-018)
+
+---
+
+## Changelog
+
+### Version 4.3 (2026-06-30)
+- ✅ **BR-WE-018** (GitHub #1505 GAP-03): Spawned Job/Tekton execution pods now carry a restricted `SecurityContext`, plus a Pod Security Admission backstop on the `kubernaut-workflows` namespace. See [Spawned Execution Pod Security Context](#spawned-execution-pod-security-context-br-we-018).
+
+### Version 4.2 (2026-03-21)
+- ✅ **DD-WE-005 v2.0**: PipelineRun execution uses operator-managed **per-workflow** ServiceAccounts referenced from the workflow schema (`serviceAccountName`). Kubernaut no longer ships a platform-managed runner SA via Helm. If no SA is set, Kubernetes uses the execution namespace’s default ServiceAccount.
+
+### Version 4.1 (2026-02-18)
+- ✅ **Issue #91**: Removed `kubernaut.ai/component` label from Namespace example; `kubernaut.ai/workflow-execution` KEPT on PipelineRun (external resource)
+
+### Version 4.0 (2025-12-03)
+- ✅ **Added**: Dedicated execution namespace RBAC (DD-WE-002)
+- ✅ **Added**: Example ClusterRole pattern for workflow execution SAs (cross-namespace remediation)
+- ✅ **Updated**: All PipelineRuns run in `kubernaut-workflows` namespace
+
+### Version 3.1 (2025-12-02)
+- ✅ **Removed**: All KubernetesExecution (DEPRECATED - ADR-025) RBAC and code references
+- ✅ **Updated**: RBAC to use Tekton PipelineRun permissions
+- ✅ **Updated**: Code examples for Tekton-based architecture
+
+---
+
+## ServiceAccounts
+
+| ServiceAccount | Namespace | Purpose | RBAC |
+|----------------|-----------|---------|------|
+| `workflowexecution-controller` | `kubernaut-system` | Controller operations | ClusterRole |
+| **Per-workflow** (example: `my-workflow-sa`) | `kubernaut-workflows` | PipelineRun execution (you create and bind) | ClusterRole or Role, as required by that workflow |
+
+**DD-WE-005 v2.0**: Operators **pre-create** one (or more) ServiceAccounts per workflow—or per class of workflows—with RBAC scoped to what those workflows need. The workflow catalog/schema sets `serviceAccountName` (propagated to `WorkflowExecution.spec.executionConfig.serviceAccountName`). If that field is empty, Tekton/Kubernetes uses the **default** ServiceAccount for `kubernaut-workflows`.
+
+---
+
+## 1. PipelineRun Execution RBAC (DD-WE-002 + DD-WE-005 v2.0)
+
+**Example**: a dedicated SA for one workflow, with cross-namespace remediation permissions (adjust rules to least privilege per workflow):
+
+```yaml
+# Dedicated namespace for all PipelineRuns
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubernaut-workflows
+---
+# Operator-managed SA for a specific workflow (name is your choice)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-workflow-sa
+  namespace: kubernaut-workflows
+---
+# ClusterRole with cross-namespace remediation permissions (example only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: my-workflow-remediation
+rules:
+  # Workload remediation (all namespaces)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  # Node operations (cluster-scoped)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch"]
+  # ConfigMaps/Secrets for workflow data (read-only)
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+  # Events for workflow logging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+# Bind ClusterRole to ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-workflow-sa-remediation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: my-workflow-remediation
+subjects:
+- kind: ServiceAccount
+  name: my-workflow-sa
+  namespace: kubernaut-workflows
+```
+
+**Why ClusterRole (not namespace-scoped Role)**:
+- PipelineRuns remediate resources in ANY namespace
+- Cluster-scoped resources (Nodes) require cluster-level access
+- Industry standard pattern (Crossplane, AWX, Argo)
+
+---
+
+## 2. Controller RBAC
+
+### ServiceAccount & RBAC Least Privilege
+
+**ServiceAccount Setup**:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflowexecution-controller
+  namespace: kubernaut-system
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workflowexecution-controller
+rules:
+# WorkflowExecution CRD permissions (full control)
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions/finalizers"]
+  verbs: ["update"]
+
+# Tekton PipelineRun permissions (create + watch for execution)
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns/status"]
+  verbs: ["get", "list", "watch"]
+
+# RemediationRequest CRD permissions (read-only for parent reference)
+- apiGroups: ["remediation.kubernaut.ai"]
+  resources: ["remediationrequests"]
+  verbs: ["get", "list", "watch"]
+# NOTE: NO status write permissions - Remediation Orchestrator Pattern (see below)
+
+# Event emission (write-only)
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workflowexecution-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workflowexecution-controller
+subjects:
+- kind: ServiceAccount
+  name: workflowexecution-controller
+  namespace: kubernaut-system
+```
+
+**Least Privilege Principles**:
+- ✅ Write access ONLY to WorkflowExecution CRDs
+- ✅ Create access to Tekton PipelineRun (workflow execution)
+- ✅ Watch access to PipelineRun status (completion monitoring)
+- ✅ NO direct Kubernetes resource access (Tekton handles execution)
+- ✅ Event creation scoped to WorkflowExecution events only
+
+**Remediation Orchestrator Pattern - RBAC Justification**:
+
+This controller follows the **Remediation Orchestrator Pattern** where:
+- ✅ **This controller** updates ONLY `WorkflowExecution.status`
+- ✅ **RemediationOrchestrator** watches `WorkflowExecution` and aggregates status
+- ❌ **NO status write permissions** needed on `RemediationRequest` - watch-based coordination handles all status updates
+
+**Why No RemediationRequest.status Write Access**:
+1. **Architectural Separation**: Remediation Orchestrator Pattern decouples child controllers from orchestration
+2. **Watch-Based Coordination**: RemediationOrchestrator watches this CRD for status changes (<1s latency)
+3. **Single Writer**: Only RemediationOrchestrator updates `RemediationRequest.status` (prevents race conditions)
+4. **Testability**: This controller can be tested in complete isolation without RemediationRequest dependency
+
+**What This Controller CAN Do with RemediationRequest**:
+- ✅ `get` - Read parent CRD for owner reference setup
+- ✅ `list` - List parent CRDs for audit/tracing
+- ✅ `watch` - Watch for parent lifecycle events (deletion)
+- ❌ NO `update` or `patch` on `remediationrequests` or `remediationrequests/status`
+
+**Reference**:
+- See: [Remediation Orchestrator Architecture](../05-remediationorchestrator/overview.md)
+
+**🚨 CRITICAL SECRET PROTECTION**:
+- ❌ Secrets are NEVER captured verbatim in logs, CRD status, events, or audit trails
+- ✅ Secret values are ALWAYS scrambled/sanitized before any storage or logging
+- ✅ Only secret **references** (name, namespace, type) are stored
+- ✅ Regex-based sanitization applied to ALL outgoing data (logs, events, audit records)
+
+---
+
+### Network Policies
+
+**Restrict Controller Network Access**:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workflowexecution-controller
+  namespace: kubernaut-system
+spec:
+  podSelector:
+    matchLabels:
+      app: workflowexecution-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Health/readiness probes from kubelet
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8081  # Health/Ready (DD-TEST-001)
+  # Metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090  # Metrics
+  egress:
+  # Kubernetes API server (for CRD and PipelineRun operations)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443
+  # Data Storage Service (audit trail)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: data-storage-service
+    ports:
+    - protocol: TCP
+      port: 8080
+  # DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+```
+
+**Why These Restrictions**:
+- No external network access (all dependencies internal or via API server)
+- No direct database access (goes through Data Storage Service)
+- No access to application namespaces (delegates execution to Tekton)
+- No direct service-to-service communication (CRD-based coordination)
+
+---
+
+### Secret Management
+
+**No Direct Secret Handling in WorkflowExecution**:
+
+WorkflowExecution controller does NOT handle secrets directly. All secrets are:
+- Referenced in workflow OCI bundles (defined by workflow authors)
+- Passed through workflow parameters (LLM-selected)
+- Referenced by name/namespace only (no secret values in CRD)
+
+**Pattern 1: Workflow Parameter Sanitization**:
+```go
+package controller
+
+import (
+    "context"
+    "fmt"
+    "regexp"
+
+    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+)
+
+var (
+    // Common secret patterns to sanitize
+    secretPatterns = []*regexp.Regexp{
+        regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*\S+`),
+        regexp.MustCompile(`(?i)(api[_-]?key|apikey)\s*[:=]\s*\S+`),
+        regexp.MustCompile(`(?i)(token|auth)\s*[:=]\s*\S+`),
+        regexp.MustCompile(`(?i)(secret)\s*[:=]\s*\S+`),
+        // AWS credentials
+        regexp.MustCompile(`(?i)(aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key)\s*[:=]\s*\S+`),
+        // Database connection strings
+        regexp.MustCompile(`(?i)(connection[_-]?string|database[_-]?url)\s*[:=]\s*\S+`),
+        // JWT tokens
+        regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
+        // Generic base64 secrets (>32 chars)
+        regexp.MustCompile(`(?i)(secret|token|key)\s*[:=]\s*[A-Za-z0-9+/]{32,}={0,2}`),
+    }
+)
+
+func sanitizeWorkflowPayload(payload string) string {
+    sanitized := payload
+    for _, pattern := range secretPatterns {
+        sanitized = pattern.ReplaceAllString(sanitized, "$1=***REDACTED***")
+    }
+    return sanitized
+}
+
+func (r *WorkflowExecutionReconciler) recordAudit(
+    ctx context.Context,
+    wfe *workflowexecutionv1.WorkflowExecution,
+) error {
+    // Sanitize parameters before audit logging
+    sanitizedParams := sanitizeWorkflowPayload(fmt.Sprintf("%v", wfe.Spec.Parameters))
+
+    auditRecord := &AuditRecord{
+        WorkflowID:     wfe.Spec.WorkflowRef.WorkflowID,
+        TargetResource: wfe.Spec.TargetResource,
+        Parameters:     sanitizedParams,  // Sanitized version
+        // ... other fields
+    }
+
+    return r.StorageClient.RecordAudit(ctx, auditRecord)
+}
+```
+
+**Pattern 2: Kubernetes Event Sanitization**:
+```go
+package controller
+
+import (
+    "fmt"
+
+    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+
+    "k8s.io/client-go/tools/record"
+)
+
+func (r *WorkflowExecutionReconciler) emitEventSanitized(
+    wfe *workflowexecutionv1.WorkflowExecution,
+    eventType string,
+    reason string,
+    message string,
+) {
+    // Sanitize message before emitting event
+    sanitizedMessage := sanitizeWorkflowPayload(message)
+
+    r.Recorder.Event(wfe, eventType, reason, sanitizedMessage)
+}
+
+// Example: PipelineRun creation event with sanitized details
+func (r *WorkflowExecutionReconciler) emitPipelineRunCreationEvent(
+    wfe *workflowexecutionv1.WorkflowExecution,
+) {
+    // Build message with potentially sensitive data
+    message := fmt.Sprintf(
+        "Creating PipelineRun: workflow=%s, target=%s, params=%v",
+        wfe.Spec.WorkflowRef.WorkflowID,
+        wfe.Spec.TargetResource,
+        wfe.Spec.Parameters,  // May contain secrets
+    )
+
+    // Sanitize before emitting
+    r.emitEventSanitized(wfe, "Normal", "PipelineRunCreating", message)
+}
+```
+
+**Pattern 3: Structured Logging Sanitization**:
+```go
+package controller
+
+import (
+    "context"
+
+    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+
+    "github.com/go-logr/logr"
+)
+
+func (r *WorkflowExecutionReconciler) logWithSanitization(
+    log logr.Logger,
+    message string,
+    keysAndValues ...interface{},
+) {
+    // Sanitize all string values in keysAndValues
+    sanitizedKVs := make([]interface{}, len(keysAndValues))
+    for i, kv := range keysAndValues {
+        if str, ok := kv.(string); ok {
+            sanitizedKVs[i] = sanitizeWorkflowPayload(str)
+        } else {
+            sanitizedKVs[i] = kv
+        }
+    }
+
+    log.Info(message, sanitizedKVs...)
+}
+
+// Example usage
+func (r *WorkflowExecutionReconciler) createPipelineRun(
+    ctx context.Context,
+    wfe *workflowexecutionv1.WorkflowExecution,
+    log logr.Logger,
+) error {
+    // Sanitize before logging
+    r.logWithSanitization(log, "Creating Tekton PipelineRun",
+        "workflowId", wfe.Spec.WorkflowRef.WorkflowID,
+        "targetResource", wfe.Spec.TargetResource,
+        "parameters", fmt.Sprintf("%v", wfe.Spec.Parameters),  // Will be sanitized
+    )
+
+    // ... PipelineRun creation logic
+    return nil
+}
+```
+
+**Pattern 4: PipelineRun Parameter Sanitization**:
+```go
+package controller
+
+import (
+    "context"
+    "fmt"
+
+    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+func (r *WorkflowExecutionReconciler) buildPipelineRun(
+    wfe *workflowexecutionv1.WorkflowExecution,
+) *tektonv1.PipelineRun {
+    // Build parameters from spec
+    params := make([]tektonv1.Param, 0, len(wfe.Spec.Parameters))
+    for key, value := range wfe.Spec.Parameters {
+        params = append(params, tektonv1.Param{
+            Name:  key,
+            Value: tektonv1.ParamValue{Type: tektonv1.ParamTypeString, StringVal: value},
+        })
+    }
+
+    // Create PipelineRun with bundle resolver
+    return &tektonv1.PipelineRun{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      wfe.Name,
+            Namespace: wfe.Namespace,
+            Labels: map[string]string{
+                // Issue #91: KEPT - label on external K8s resource (PipelineRun) for WE-to-PipelineRun correlation
+                "kubernaut.ai/workflow-execution": wfe.Name,
+                "kubernaut.ai/workflow-id":        wfe.Spec.WorkflowRef.WorkflowID,
+            },
+            OwnerReferences: []metav1.OwnerReference{
+                *metav1.NewControllerRef(wfe, workflowexecutionv1.GroupVersion.WithKind("WorkflowExecution")),
+            },
+        },
+        Spec: tektonv1.PipelineRunSpec{
+            PipelineRef: &tektonv1.PipelineRef{
+                ResolverRef: tektonv1.ResolverRef{
+                    Resolver: "bundles",
+                    Params: []tektonv1.Param{
+                        {Name: "bundle", Value: tektonv1.ParamValue{StringVal: wfe.Spec.WorkflowRef.ContainerImage}},
+                        {Name: "name", Value: tektonv1.ParamValue{StringVal: "workflow"}},
+                    },
+                },
+            },
+            Params: params,  // Pass through as-is (Tekton handles securely)
+        },
+    }
+}
+
+func (r *WorkflowExecutionReconciler) createPipelineRunWithLogging(
+    ctx context.Context,
+    wfe *workflowexecutionv1.WorkflowExecution,
+) error {
+    pr := r.buildPipelineRun(wfe)
+
+    // Sanitize parameters ONLY for logging (not in PipelineRun)
+    sanitizedParams := sanitizeWorkflowPayload(fmt.Sprintf("%v", wfe.Spec.Parameters))
+    r.logWithSanitization(r.Log, "Creating PipelineRun",
+        "workflowId", wfe.Spec.WorkflowRef.WorkflowID,
+        "parameters", sanitizedParams,  // Sanitized for logs
+    )
+
+    return r.Create(ctx, pr)
+}
+```
+
+**Secret Handling Rules** (MANDATORY):
+- ❌ NEVER store secret values in CRD status
+- ❌ NEVER log secret values verbatim (logs, events, traces)
+- ❌ NEVER include secrets in audit records
+- ❌ NEVER include secrets in Kubernetes Events
+- ✅ Pass secrets through to PipelineRun params (Tekton handles securely)
+- ✅ Sanitize ALL outgoing data (logs, events, audit records, traces)
+- ✅ Use regex patterns for common secret formats
+- ✅ Apply sanitization at controller boundaries (before any external output)
+
+**Sanitization Coverage** (100% Required):
+- ✅ CRD Status Updates → No secrets stored
+- ✅ Audit Logs → `sanitizeWorkflowPayload()` applied
+- ✅ Structured Logs → `logWithSanitization()` wrapper
+- ✅ Kubernetes Events → `emitEventSanitized()` wrapper
+- ✅ Distributed Traces → Sanitize span attributes
+- ✅ PipelineRun Creation → Pass through (Tekton handles securely)
+
+---
+
+### Security Context
+
+**Pod Security Standards** (Restricted Profile):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflowexecution-controller
+  namespace: kubernaut-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workflowexecution-controller
+  template:
+    metadata:
+      labels:
+        app: workflowexecution-controller
+    spec:
+      serviceAccountName: workflowexecution-controller
+      securityContext:
+        # Pod-level security context
+        runAsNonRoot: true
+        runAsUser: 65532  # nonroot user
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: manager
+        image: workflowexecution-controller:latest
+        securityContext:
+          # Container-level security context
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /.cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+```
+
+**Why These Settings**:
+- **runAsNonRoot**: Prevents privilege escalation
+- **readOnlyRootFilesystem**: Immutable container filesystem
+- **drop ALL capabilities**: Minimal Linux capabilities
+- **seccompProfile**: Syscall filtering for defense-in-depth
+- **emptyDir volumes**: Writable directories for tmp files only
+
+---
+
+### Spawned Execution Pod Security Context (BR-WE-018)
+
+The section above hardens the **WE controller's own pod**. This section covers the pods the controller *spawns* to execute remediation workflows — Kubernetes Jobs (`JobExecutor.buildJob`) and Tekton PipelineRuns (`TektonExecutor.BuildPipelineRun`) — which carry the same restricted profile as of **BR-WE-018** (closing GAP-03 from the GA Readiness Audit, [#1505](https://github.com/jordigilh/kubernaut/issues/1505)).
+
+**This profile is intentionally non-configurable.** There is no CRD field to relax it to a "baseline" profile. See [BR-WE-018](../../../requirements/BR-WE-018-execution-pod-security-hardening.md) for the full rationale, including why a configurable escape hatch was deliberately rejected (an AI/LLM-driven `WorkflowExecution` creation pipeline should not have a runtime lever to weaken pod hardening).
+
+**Kubernetes Job** (`pkg/workflowexecution/executor/job.go`):
+
+```yaml
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: workflow
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+```
+
+The `tmp` `emptyDir` volume (mounted at `/tmp`, with `HOME`/`TMPDIR` pointed at it) provides writable scratch space so tools like `kubectl` — which expect to write a discovery cache under `$HOME` — keep working under `readOnlyRootFilesystem: true`.
+
+**Tekton PipelineRun** (`pkg/workflowexecution/executor/tekton.go`) — **pod-level only**:
+
+```yaml
+spec:
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+```
+
+**Asymmetric hardening — why Tekton has no container-level settings**: Tekton's `PipelineRunSpec.TaskRunTemplate.PodTemplate` (`github.com/tektoncd/pipeline/pkg/apis/pipeline/pod.PodTemplate`) exposes only a pod-level `SecurityContext`. Container-level settings (`allowPrivilegeEscalation`, `readOnlyRootFilesystem`, capabilities) belong to the `Task` spec resolved from the OCI bundle at execution time — outside the WE controller's authoring control. This is an accepted, API-level constraint, not a gap.
+
+**Defense in depth — Pod Security Admission backstop**: the `kubernaut-workflows` namespace (Helm-managed, `charts/kubernaut/templates/workflowexecution/workflowexecution.yaml`) carries the Kubernetes built-in Pod Security Admission `restricted` labels:
+
+```yaml
+metadata:
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+Since every pod built above already satisfies `restricted`, this is a no-op under normal operation — it exists purely as an independent, API-server-enforced backstop in case the controller's `SecurityContext`-authoring code ever regresses. The same hardening is tracked for the `kubernaut-operator` repository (which builds its own `Namespace` object independently) under milestone v1.6.
+
+---

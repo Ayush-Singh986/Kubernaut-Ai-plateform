@@ -1,0 +1,392 @@
+# BR-WORKFLOW-004: Workflow Schema Format Specification
+
+**Business Requirement ID**: BR-WORKFLOW-004
+**Category**: Workflow Catalog Service
+**Priority**: P0
+**Target Version**: V1.0
+**Status**: Active
+**Date**: March 2, 2026
+**Version**: 1.3
+
+**Authority**: This is the authoritative specification for the `workflow-schema.yaml` file format. All implementations, tests, and documentation must conform to this BR.
+
+**Related**:
+- [DD-WORKFLOW-016](../architecture/decisions/DD-WORKFLOW-016-action-type-workflow-indexing.md) -- Action type taxonomy and structured descriptions
+- [DD-WORKFLOW-017](../architecture/decisions/DD-WORKFLOW-017-workflow-lifecycle-component-interactions.md) -- Workflow lifecycle (CRD-based registration via AuthWebhook)
+- [BR-WORKFLOW-006](./BR-WORKFLOW-006-remediation-workflow-crd.md) -- RemediationWorkflow CRD specification
+- [ADR-058](../architecture/decisions/ADR-058-webhook-driven-workflow-registration.md) -- Webhook-driven registration architecture
+- [DD-WE-006](../architecture/decisions/DD-WE-006-schema-declared-dependencies.md) -- Schema-declared infrastructure dependencies (Secrets, ConfigMaps)
+- [ADR-043](../architecture/decisions/ADR-043-workflow-schema-definition-standard.md) -- Original schema standard (superseded by this BR for format)
+
+---
+
+## Changelog
+
+### Version 1.4 (2026-03-11)
+- **UPDATED**: Schema structure per issue #329
+  - Workflow name from `metadata.name` (CRD envelope); `version`, `description`, `maintainers` moved to top level of `spec`
+  - Removed nested `spec.metadata` (workflowId, version, description); `WorkflowSchemaMetadata` type no longer used
+
+### Version 1.3 (2026-03-04)
+- **UPDATED**: Registration mechanism is now CRD-based via `RemediationWorkflow` CRD (BR-WORKFLOW-006, ADR-058)
+  - Schema content is embedded in the CRD `.spec` and forwarded to DS by the AuthWebhook
+  - DS `POST /api/v1/workflows` is an internal API consumed only by the AuthWebhook
+  - Added cross-references to BR-WORKFLOW-006 and ADR-058
+
+### Version 1.2 (2026-03-04)
+- **REMOVED**: `labels.signalType` / `labels.signalName` (#274)
+  - Signal names are adapter-specific (Prometheus vs K8s Event) and inconsistent across sources
+  - LLM selects workflows by `actionType` + structured descriptions, not signal name
+  - Aligns code with DD-WORKFLOW-016 decision (signalName not used for matching)
+  - Removed from: `MandatoryLabels` struct, search filter, parser, all fixtures
+
+### Version 1.1 (2026-03-02)
+- **ADDED**: `apiVersion` in CRD envelope (#255)
+  - Distinguishes schema format generations (e.g., "1.0" vs "1.1" which adds `rbac` per DD-WE-005)
+  - Validated by parser: required, must be in allowed set
+  - Stored in `remediation_workflow_catalog.schema_version` (migration 031)
+
+### Version 1.0 (2026-02-12)
+- Initial specification
+
+---
+
+## Business Need
+
+### Problem Statement
+
+Kubernaut remediation workflows are packaged as OCI container images. Each image must contain a `/workflow-schema.yaml` file that provides all metadata needed for catalog registration, discovery, and LLM-assisted workflow selection. A clear, authoritative format specification is required to ensure:
+
+- Operators know exactly what to include in their workflow images
+- Data Storage can reliably parse and validate the schema
+- The LLM receives structured, consistent information for decision-making
+- Tests have a single source of truth for fixture generation
+
+### Design Principles
+
+1. **CRD envelope format** -- `workflow-schema.yaml` uses the RemediationWorkflow CRD structure (`apiVersion`, `kind`, `metadata`, `spec`). Workflow name is provided by `metadata.name`; schema content (version, description, maintainers, etc.) is in `spec` per BR-WORKFLOW-006.
+2. **camelCase field names** -- Consistent with kubernaut configuration conventions.
+3. **Single source of truth** -- All workflow metadata is defined in this schema format. When embedded in a RemediationWorkflow CRD spec, the AuthWebhook forwards it to DS for validation and catalog population (BR-WORKFLOW-006, ADR-058).
+4. **Structured descriptions** -- Descriptions use a structured format (`what`, `whenToUse`, `whenNotToUse`, `preconditions`) that is useful for both operators and the LLM.
+5. **Versioned schema format** -- The `apiVersion` field identifies the structural generation of the schema. This allows the platform to gate features (e.g., RBAC in v1.1) on schema version.
+
+---
+
+## Schema Format
+
+### Complete Example
+
+```yaml
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: oomkill-restart-pod
+spec:
+  version: "1.0.0"
+  description:
+    what: "Delete and recreate a pod to recover from transient OOMKill failures"
+    whenToUse: "OOMKilled with transient root cause, such as a temporary traffic spike or undersized resource limits"
+    whenNotToUse: "When OOM is caused by a memory leak in application code"
+    preconditions: "Pod is managed by a controller (Deployment, StatefulSet, DaemonSet)"
+  maintainers:
+    - name: "Platform Team"
+      email: "platform@example.com"
+
+  actionType: RestartPod
+
+  labels:
+    severity: [critical]
+    environment: [production]
+    component: [v1/Pod]
+    priority: p1
+
+  customLabels:
+    team: platform
+    costCenter: ops
+
+  detectedLabels:
+    hpaEnabled: "true"
+    gitOpsTool: "*"
+
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut/oomkill-restart:v1.0.0
+
+  dependencies:
+    secrets:
+      - name: app-credentials
+    configMaps:
+      - name: remediation-thresholds
+
+  parameters:
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace containing the pod"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to restart"
+    - name: GRACE_PERIOD
+      type: integer
+      required: false
+      description: "Graceful shutdown period in seconds"
+      default: 30
+      minimum: 0
+      maximum: 300
+
+  rollbackParameters:
+    - name: SNAPSHOT_ID
+      type: string
+      required: false
+      description: "Snapshot to restore if restart fails"
+```
+
+---
+
+## Field Specification
+
+### CRD Envelope Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `apiVersion` | string | Yes | API version (e.g., `kubernaut.ai/v1alpha1`). Determines schema format generation. |
+| `kind` | string | Yes | Must be `RemediationWorkflow`. |
+| `metadata.name` | string | Yes | Workflow name. Unique identifier; format: lowercase alphanumeric with hyphens (e.g., `oomkill-restart-pod`). Max 255 characters. |
+
+### Spec Fields (Top-Level)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `spec.version` | string | Yes | Semantic version (e.g., `1.0.0`). Max 50 characters. |
+| `spec.description` | object | Yes | Structured description (see below) |
+| `spec.maintainers` | array | No | Maintainer contact information |
+| `spec.actionType` | string | Yes | Action type from the taxonomy (PascalCase, e.g., `RestartPod`, `ScaleReplicas`). Must match a valid entry in `action_type_taxonomy`. |
+| `spec.labels` | object | Yes | Mandatory matching/filtering criteria for workflow discovery |
+| `spec.customLabels` | map[string]string | No | Operator-defined key-value labels for additional filtering |
+| `spec.detectedLabels` | object | No | Author-declared infrastructure requirements (DD-WORKFLOW-001 v2.0). Matched against incident DetectedLabels from Kubernaut Agent (KA) during workflow discovery. |
+| `spec.execution` | object | No | Execution engine configuration retained for KA/execution; not part of the LLM workflow-selection projection |
+| `spec.dependencies` | object | No | Infrastructure dependencies (Secrets, ConfigMaps) required by the workflow. Retained for execution and not exposed to the LLM. See DD-WE-006. |
+| `spec.parameters` | array | Yes | Workflow input parameters (at least one required) |
+| `spec.rollbackParameters` | array | No | Parameters needed for rollback |
+
+### `spec.description` Fields (Structured)
+
+The description uses the same structured format as `action_type_taxonomy.description` (DD-WORKFLOW-016). This information is provided to the LLM during workflow selection to help it choose the right workflow for the incident.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `what` | string | Yes | What this workflow concretely does. One sentence. |
+| `whenToUse` | string | Yes | Root cause conditions under which this workflow is appropriate. |
+| `whenNotToUse` | string | No | Specific exclusion conditions for this workflow. Only include when there is a genuinely useful exclusion. Do not include failure-based exclusions (handled by remediation history, DD-KA-016). |
+| `preconditions` | string | No | Conditions that must be verified through investigation that cannot be determined by catalog label filtering. |
+
+### `spec.labels` Fields (Mandatory Matching Criteria)
+
+These fields are used by the three-step discovery protocol (DD-KA-017) to filter workflows for a given incident context. They are stored in the `labels` JSONB column of `remediation_workflow_catalog`.
+
+| Field | Type | Required | Valid Values | Description |
+|-------|------|----------|--------------|-------------|
+| `severity` | string[] | Yes | `[critical, high, medium, low]`, `["*"]` for all | Severity level(s) this workflow is designed for. Always an array. Use `"*"` to match any severity. |
+| `component` | string[] | Yes | Non-empty array of GVK strings (format `apiVersion/Kind`, e.g., `v1/Pod`, `apps/v1/Deployment`, `v1/Node`, `v1/Service`). Use `["*"]` to match any resource kind | Kubernetes API resource GVK(s) (`apiVersion/Kind`) this workflow remediates |
+| `environment` | string[] | Yes | Any (e.g., `[production, staging]`, `[*]` for all) | Target environment(s). Always an array. Use `*` to match any environment. |
+| `priority` | string | Yes | `p0`, `p1`, `p2`, `p3`, `p4`, `*` for all | Business priority level |
+
+### `spec.execution` Fields
+
+| Field | Type | Required | Valid Values | Description |
+|-------|------|----------|--------------|-------------|
+| `engine` | string | No | `tekton`, `ansible`, `lambda`, `shell` | Execution engine type. Defaults to `tekton`. |
+| `bundle` | string | No | OCI image reference | Execution bundle or container image |
+
+### `spec.dependencies` Fields (Infrastructure Dependencies)
+
+Declares Kubernetes Secrets and ConfigMaps that must exist in the execution namespace (`kubernaut-workflows`) for the workflow to function. These are infrastructure resources provisioned by operators at deployment time -- they are NOT provided by the LLM.
+
+**Authority**: [DD-WE-006](../architecture/decisions/DD-WE-006-schema-declared-dependencies.md)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `secrets` | array of objects | No | Kubernetes Secrets required by the workflow |
+| `configMaps` | array of objects | No | Kubernetes ConfigMaps required by the workflow |
+
+Each entry in `secrets` or `configMaps` is an object with:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Resource name in the execution namespace (`kubernaut-workflows`) |
+
+**Validation Rules**:
+- Each entry must have a non-empty `name`
+- Names must be unique within each category (`secrets`, `configMaps`)
+- At registration time, Data Storage validates each resource exists in `kubernaut-workflows` with non-empty `.data`
+- At execution time, the WFE controller re-validates existence and non-empty data (defense in depth)
+
+**Mount Paths** (Job executor):
+- Secrets: `/run/kubernaut/secrets/<secret-name>/<key>`
+- ConfigMaps: `/run/kubernaut/configmaps/<configmap-name>/<key>`
+
+**Workspace Names** (Tekton executor):
+- Secrets: workspace `secret-<name>` (e.g., `secret-gitea-repo-creds`)
+- ConfigMaps: workspace `configmap-<name>` (e.g., `configmap-remediation-config`)
+- The Pipeline inside the OCI bundle must declare matching workspace names
+
+**Operational Ordering**: Infrastructure (Secrets/ConfigMaps) must be provisioned in `kubernaut-workflows` BEFORE workflow registration. Registration will fail if dependencies are missing or empty.
+
+**Examples**:
+
+```yaml
+# Workflow requiring git credentials
+dependencies:
+  secrets:
+    - name: gitea-repo-creds
+
+# Workflow requiring credentials and config
+dependencies:
+  secrets:
+    - name: gitea-repo-creds
+  configMaps:
+    - name: remediation-thresholds
+
+# Workflow with no dependencies (section omitted or empty)
+# dependencies: (absent)
+```
+
+---
+
+### `spec.detectedLabels` Fields (Infrastructure Requirements)
+
+Author-declared infrastructure characteristics this workflow requires. Matched against incident DetectedLabels from KA LabelDetector during workflow discovery (DD-WORKFLOW-001 v2.0).
+
+All fields are optional. Absence of a field means "no requirement" for that characteristic.
+
+| Field | Type | Valid Values | Description |
+|-------|------|--------------|-------------|
+| `gitOpsManaged` | string | `"true"` | Requires GitOps management (ArgoCD/Flux) |
+| `gitOpsTool` | string | `"argocd"`, `"flux"`, `"*"` | Specific GitOps tool required. `"*"` = any tool. |
+| `pdbProtected` | string | `"true"` | Requires PodDisruptionBudget protection |
+| `hpaEnabled` | string | `"true"` | Requires HorizontalPodAutoscaler |
+| `stateful` | string | `"true"` | Requires stateful workload (StatefulSet/PVC) |
+| `helmManaged` | string | `"true"` | Requires Helm management |
+| `networkIsolated` | string | `"true"` | Requires NetworkPolicy |
+| `serviceMesh` | string | `"istio"`, `"linkerd"`, `"*"` | Service mesh required. `"*"` = any mesh. |
+
+**Validation Rules**:
+- Boolean fields: only `"true"` is accepted. `"false"`, `"yes"`, `"1"` etc. are rejected with a validation error.
+- String fields: only the listed values are accepted. Unknown values are rejected.
+- Unknown field names: rejected with a validation error naming the invalid field.
+
+**Examples** (from demo scenarios):
+
+```yaml
+# Workflow requiring any GitOps tool
+detectedLabels:
+  gitOpsTool: "*"
+
+# Workflow requiring HPA
+detectedLabels:
+  hpaEnabled: "true"
+
+# Workflow requiring PDB + specific mesh
+detectedLabels:
+  pdbProtected: "true"
+  serviceMesh: "istio"
+```
+
+### `spec.parameters` and `spec.rollbackParameters` Fields
+
+Each parameter is an object with the following fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Parameter name (UPPER_SNAKE_CASE per DD-WORKFLOW-003) |
+| `type` | string | Yes | One of: `string`, `integer`, `boolean`, `array` |
+| `required` | boolean | Yes | Whether the parameter must be provided |
+| `description` | string | Yes | Human-readable description (shown to LLM for operational parameters; KA-managed target parameter definitions are stripped per DD-WORKFLOW-003/DD-KA-006) |
+| `enum` | array of strings | No | Allowed values (for string type) |
+| `pattern` | string | No | Regex pattern for validation (for string type) |
+| `minimum` | integer | No | Minimum value (for integer type) |
+| `maximum` | integer | No | Maximum value (for integer type) |
+| `default` | any | No | Default value if not provided |
+| `dependsOn` | array of strings | No | Parameter names that must be set first |
+
+### `spec.maintainers` Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Maintainer name |
+| `email` | string | Yes | Maintainer email address |
+
+---
+
+## Validation Rules
+
+### Registration Validation (Data Storage)
+
+When a workflow is registered via the RemediationWorkflow CRD (BR-WORKFLOW-006), the AuthWebhook forwards the CRD spec as inline content to the DS internal API (`POST /api/v1/workflows`). Data Storage:
+
+1. Receives inline JSON content from the AuthWebhook
+2. Parses the content as a workflow schema
+3. Validates the schema against this specification
+4. Validates `actionType` against `action_type_taxonomy` (FK constraint)
+5. Validates `dependencies`: each declared Secret/ConfigMap must exist in `kubernaut-workflows` with non-empty `.data` (DD-WE-006)
+6. Extracts and stores all fields in `remediation_workflow_catalog`
+
+### Required Field Validation
+
+- `apiVersion` must be present and must be a supported value (currently `kubernaut.ai/v1alpha1`)
+- `metadata.name` must be present and non-empty (workflow name)
+- All spec fields marked "Required: Yes" must be present and non-empty
+- `spec.description.what` and `spec.description.whenToUse` are always required
+- `spec.description.whenNotToUse` and `spec.description.preconditions` are optional
+- At least one parameter is required in `spec.parameters`
+- Each parameter must have `name`, `type`, and `description`
+- Labels are validated: severity must be a non-empty array of values from [critical, high, medium, low]; environment must be a non-empty array; component must be a non-empty array of GVK strings (or `["*"]`); priority must be a non-empty string
+
+### Action Type Validation
+
+- `actionType` must reference a valid entry in the `action_type_taxonomy` table
+- Action type values use PascalCase (e.g., `RestartPod`, `ScaleReplicas`)
+- If the action type is not found, registration fails with an error listing valid action types
+
+---
+
+## Deprecated Fields
+
+The following fields from previous schema formats are removed:
+
+| Field | Reason |
+|-------|--------|
+| `metadata.workflowId` | Workflow name now comes from CRD `metadata.name` (issue #329). |
+| `metadata.version` | Moved to `spec.version`. |
+| `metadata.description` | Moved to `spec.description`. |
+| `metadata.maintainers` | Moved to `spec.maintainers`. |
+| `labels.riskTolerance` | Never stored in the database, never queried, never used in discovery. Dead code. If needed in the future, use `customLabels`. |
+| `labels.businessCategory` | Moved to `customLabels` (operator-defined, not a mandatory matching criterion). |
+| `labels.signalType` / `labels.signalName` | Removed (#274). Signal names are adapter-specific and inconsistent. LLM selects by `actionType` + structured descriptions. See DD-WORKFLOW-016. |
+
+---
+
+## Naming Conventions
+
+| Context | Convention | Example |
+|---------|-----------|---------|
+| YAML field names | camelCase | `workflowName`, `actionType` |
+| Action type values | PascalCase | `RestartPod`, `ScaleReplicas` |
+| Parameter names | UPPER_SNAKE_CASE | `NAMESPACE`, `POD_NAME` |
+| JSONB keys (DB storage) | camelCase | `{"signalType": "OOMKilled"}` |
+| PostgreSQL columns | snake_case | `workflow_name`, `action_type` |
+
+---
+
+## Acceptance Criteria
+
+1. Data Storage can parse and validate a `workflow-schema.yaml` file conforming to this specification
+2. All required fields are validated; missing fields produce clear error messages
+3. `actionType` is validated against `action_type_taxonomy`; unknown types produce an error with valid options
+4. Structured description fields (`what`, `whenToUse`) are required; optional fields are accepted when present
+5. Labels are stored in the `labels` JSONB column with camelCase keys
+6. Parameters are extracted and stored for LLM consumption
+7. The schema format is documented and used consistently across all test fixtures
+8. `dependencies` section is parsed, validated (unique names, existence in `kubernaut-workflows`, non-empty data), stored, and returned via workflow API
+9. Workflows without `dependencies` continue to work unchanged (backward compatible)

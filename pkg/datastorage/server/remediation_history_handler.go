@@ -1,0 +1,467 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// HTTP handler for GET /api/v1/remediation-history/context.
+//
+// BR-KA-016: Remediation history context for LLM prompt enrichment.
+// DD-KA-016 v1.7: Both tiers query the complete causal chain by spec hash (#2490).
+//
+// This handler orchestrates the full remediation history query flow:
+//  1. Parse and validate required query parameters
+//  2. Query the linked RO chain by spec hash (Tier 1)
+//  3. Batch query EM component events by correlation_id
+//  4. Correlate into detailed Tier 1 entries
+//  5. Detect regression (preRemediation hash match)
+//  6. Query Tier 2 across the full lookback so it can bridge from recent
+//     entries into older links, then retain only the historical window
+//  7. Return JSON response
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
+	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/jordigilh/kubernaut/pkg/datastorage/server/response"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// Default lookback windows per DD-KA-016 v1.1.
+const (
+	defaultTier1Window = 24 * time.Hour   // 24 hours
+	defaultTier2Window = 2160 * time.Hour // 90 days
+)
+
+// remediationHistoryRequest holds the parsed and validated request
+// parameters for HandleGetRemediationHistoryContext.
+type remediationHistoryRequest struct {
+	targetResource  string
+	clusterID       string // Issue #1802: optional fleet scoping (main only; empty = unscoped)
+	currentSpecHash string
+	tier1Window     time.Duration
+	tier2Window     time.Duration
+}
+
+// HandleGetRemediationHistoryContext handles GET /api/v1/remediation-history/context.
+//
+// Query Parameters (required):
+//   - targetKind: Kubernetes resource kind (e.g., Deployment)
+//   - targetName: Kubernetes resource name
+//   - targetNamespace: Kubernetes resource namespace
+//   - currentSpecHash: SHA-256 hash of the current target resource spec
+//
+// Query Parameters (optional):
+//   - tier1Window: Tier 1 lookback duration (default "24h")
+//   - tier2Window: Tier 2 lookback duration (default "2160h")
+func (h *Handler) HandleGetRemediationHistoryContext(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.parseRemediationHistoryRequest(w, r)
+	if !ok {
+		return
+	}
+
+	now := time.Now()
+	ctx := r.Context()
+
+	h.logger.V(1).Info("Querying remediation history context",
+		"target_resource", req.targetResource,
+		"current_spec_hash", req.currentSpecHash,
+		"tier1_window", req.tier1Window.String(),
+		"tier2_window", req.tier2Window.String())
+
+	tier1Entries, tier1Since, ok := h.queryTier1History(w, ctx, req, now)
+	if !ok {
+		return
+	}
+
+	// DD-KA-016 v1.1: preRemediation hash match detects regression from Tier 1.
+	regressionDetected := DetectRegression(tier1Entries)
+
+	// GAP-DS-1: Tier 2 runs regardless of Tier 1 results — regression can be
+	// detected from Tier 2 alone when Tier 1 is empty but historical events exist.
+	tier2Summaries, err := h.queryTier2History(ctx, req, now, tier1Since)
+	if err != nil {
+		h.writeRemediationHistoryQueryError(w, err)
+		return
+	}
+	if !regressionDetected && len(tier2Summaries) > 0 {
+		regressionDetected = DetectRegressionFromTier2(tier2Summaries)
+	}
+
+	// Ensure non-nil slices for JSON serialization ([] not null)
+	if tier1Entries == nil {
+		tier1Entries = []api.RemediationHistoryEntry{}
+	}
+	if tier2Summaries == nil {
+		tier2Summaries = []api.RemediationHistorySummary{}
+	}
+	if err := h.attachHistoricalDecisionContext(ctx, req.clusterID, tier1Entries, tier2Summaries); err != nil {
+		// #2533: a failed supplemental source query means the complete
+		// historical decision context cannot be reconstructed. Preserve the
+		// existing fail-closed history path; missing rows/fields alone remain
+		// explicit unknown context.
+		h.logger.Error(err, "AIAnalysis historical decision context unavailable; failing closed",
+			"target_resource", req.targetResource, "cluster_id", req.clusterID)
+		h.writeRemediationHistoryQueryError(w, err)
+		return
+	}
+	h.logHistorySelectionMetadataGaps(r, req, tier1Entries, tier2Summaries)
+
+	h.logger.Info("Remediation history context served",
+		"target_resource", req.targetResource,
+		"tier1_count", len(tier1Entries),
+		"tier2_count", len(tier2Summaries),
+		"regression_detected", regressionDetected)
+
+	h.writeRemediationHistoryResponse(w, req, tier1Entries, tier2Summaries, regressionDetected)
+}
+
+func (h *Handler) attachHistoricalDecisionContext(
+	ctx context.Context,
+	clusterID string,
+	tier1 []api.RemediationHistoryEntry,
+	tier2 []api.RemediationHistorySummary,
+) error {
+	querier, ok := h.remediationHistoryRepo.(HistoricalDecisionContextQuerier)
+	if !ok {
+		return nil
+	}
+	correlationIDs := make([]string, 0, len(tier1)+len(tier2))
+	seen := make(map[string]struct{}, len(tier1)+len(tier2))
+	add := func(correlationID string) {
+		if correlationID == "" {
+			return
+		}
+		if _, exists := seen[correlationID]; exists {
+			return
+		}
+		seen[correlationID] = struct{}{}
+		correlationIDs = append(correlationIDs, correlationID)
+	}
+	for _, entry := range tier1 {
+		add(entry.RemediationUID)
+	}
+	for _, entry := range tier2 {
+		add(entry.RemediationUID)
+	}
+	if len(correlationIDs) == 0 {
+		return nil
+	}
+
+	contexts, err := querier.QueryAIAnalysisDecisionContextBatch(ctx, correlationIDs, clusterID)
+	if err != nil {
+		return fmt.Errorf("query aianalysis historical decision context: %w", err)
+	}
+	for i := range tier1 {
+		applyHistoricalDecisionContext(&tier1[i].WorkflowRationale, &tier1[i].RepeatJustification, contexts[tier1[i].RemediationUID])
+	}
+	for i := range tier2 {
+		applyHistoricalDecisionContext(&tier2[i].WorkflowRationale, &tier2[i].RepeatJustification, contexts[tier2[i].RemediationUID])
+	}
+	return nil
+}
+
+func applyHistoricalDecisionContext(rationale *api.OptString, justification *api.OptRepeatJustification, context repository.AIAnalysisDecisionContext) {
+	safe := sharedtypes.SafeHistoricalDecisionContext(context)
+	if safe.WorkflowRationale != "" {
+		rationale.SetTo(safe.WorkflowRationale)
+	}
+	if safe.RepeatJustification != nil {
+		justification.SetTo(api.RepeatJustification{
+			EvidenceBasis:         safe.RepeatJustification.EvidenceBasis,
+			PriorOutcomeRelevance: safe.RepeatJustification.PriorOutcomeRelevance,
+			ExpectedMechanism:     safe.RepeatJustification.ExpectedMechanism,
+		})
+	}
+}
+
+// logHistorySelectionMetadataGaps emits one bounded diagnostic for the entire
+// lookup (DD-KA-2496). No payloads, parameter values, record-age guesses or
+// backfill are involved. Pending effectiveness is not a selection-metadata gap.
+func (h *Handler) logHistorySelectionMetadataGaps(r *http.Request, req remediationHistoryRequest, tier1 []api.RemediationHistoryEntry, tier2 []api.RemediationHistorySummary) {
+	missing := make(map[string]bool, 3)
+	affected := make(map[string]struct{}, len(tier1)+len(tier2))
+	note := func(uid string, id, name api.OptString, confidence api.OptFloat64) {
+		if !id.Set || !name.Set || !confidence.Set {
+			affected[uid] = struct{}{}
+			missing["workflow_id"] = missing["workflow_id"] || !id.Set
+			missing["workflow_name"] = missing["workflow_name"] || !name.Set
+			missing["workflow_selection_confidence"] = missing["workflow_selection_confidence"] || !confidence.Set
+		}
+	}
+	for _, entry := range tier1 {
+		note(entry.RemediationUID, entry.WorkflowId, entry.WorkflowName, entry.WorkflowSelectionConfidence)
+	}
+	for _, entry := range tier2 {
+		note(entry.RemediationUID, entry.WorkflowId, entry.WorkflowName, entry.WorkflowSelectionConfidence)
+	}
+	if len(affected) == 0 {
+		return
+	}
+	fields := make([]string, 0, 3)
+	for _, field := range []string{"workflow_id", "workflow_name", "workflow_selection_confidence"} {
+		if missing[field] {
+			fields = append(fields, field)
+		}
+	}
+	h.logger.Info("Remediation history selection metadata incomplete",
+		"request_id", middleware.GetReqID(r.Context()), "target_resource", req.targetResource, "cluster_id", req.clusterID,
+		"affected_record_count", len(affected), "missing_fields", fields, "backfill_attempted", false)
+}
+
+// parseRemediationHistoryRequest parses and validates the required/optional
+// query parameters for HandleGetRemediationHistoryContext, writing an
+// RFC 7807 error response and returning ok=false on any validation failure.
+// Extracted from HandleGetRemediationHistoryContext
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 3) — pure code motion, no behavior
+// change.
+func (h *Handler) parseRemediationHistoryRequest(w http.ResponseWriter, r *http.Request) (remediationHistoryRequest, bool) {
+	q := r.URL.Query()
+
+	targetKind := q.Get("targetKind")
+	targetName := q.Get("targetName")
+	targetNamespace := q.Get("targetNamespace")
+	currentSpecHash := q.Get("currentSpecHash")
+	clusterID := q.Get("clusterId") // Issue #1802: optional fleet scoping (main only)
+
+	if targetKind == "" {
+		response.WriteRFC7807Error(w, http.StatusBadRequest,
+			"missing-parameter", "Missing Required Parameter",
+			"targetKind query parameter is required", h.logger)
+		return remediationHistoryRequest{}, false
+	}
+	if targetName == "" {
+		response.WriteRFC7807Error(w, http.StatusBadRequest,
+			"missing-parameter", "Missing Required Parameter",
+			"targetName query parameter is required", h.logger)
+		return remediationHistoryRequest{}, false
+	}
+	// targetNamespace may be empty for cluster-scoped resources (#762)
+	if currentSpecHash == "" {
+		response.WriteRFC7807Error(w, http.StatusBadRequest,
+			"missing-parameter", "Missing Required Parameter",
+			"currentSpecHash query parameter is required", h.logger)
+		return remediationHistoryRequest{}, false
+	}
+
+	tier1Window, ok := h.parseHistoryWindow(w, q, "tier1Window", defaultTier1Window)
+	if !ok {
+		return remediationHistoryRequest{}, false
+	}
+	tier2Window, ok := h.parseHistoryWindow(w, q, "tier2Window", defaultTier2Window)
+	if !ok {
+		return remediationHistoryRequest{}, false
+	}
+
+	if detail, ok := validateWindows(tier1Window, tier2Window); !ok {
+		response.WriteRFC7807Error(w, http.StatusBadRequest,
+			"invalid-parameter", "Invalid Parameter", detail, h.logger)
+		return remediationHistoryRequest{}, false
+	}
+
+	// Build target resource string: unconditional "{namespace}/{kind}/{name}"
+	// (Issue #1802). This MUST match the exact format RO's audit emission
+	// writes to event_data->>'target_resource' (emitWorkflowCreatedAudit,
+	// internal/controller/remediationorchestrator/audit_events.go), which
+	// always uses this 3-part form — cluster-scoped resources produce a
+	// leading "/" (empty namespace segment). Now that QueryROEventsBySpecHash
+	// filters on target_resource equality, a mismatched format here would
+	// silently exclude all history for cluster-scoped resources.
+	targetResource := fmt.Sprintf("%s/%s/%s", targetNamespace, targetKind, targetName)
+
+	return remediationHistoryRequest{
+		targetResource:  targetResource,
+		clusterID:       clusterID,
+		currentSpecHash: currentSpecHash,
+		tier1Window:     tier1Window,
+		tier2Window:     tier2Window,
+	}, true
+}
+
+// parseHistoryWindow parses an optional duration query parameter, falling
+// back to defaultValue when absent, and writing an RFC 7807 error (returning
+// ok=false) when present but not a valid duration string.
+func (h *Handler) parseHistoryWindow(w http.ResponseWriter, q url.Values, param string, defaultValue time.Duration) (time.Duration, bool) {
+	v := q.Get(param)
+	if v == "" {
+		return defaultValue, true
+	}
+	parsed, err := time.ParseDuration(v)
+	if err != nil {
+		response.WriteRFC7807Error(w, http.StatusBadRequest,
+			"invalid-parameter", "Invalid Parameter",
+			fmt.Sprintf("%s must be a valid duration string (e.g. '24h', '7d')", param), h.logger)
+		return 0, false
+	}
+	return parsed, true
+}
+
+// queryTier1History executes DD-KA-016 v1.7 Tier 1 query steps: query the
+// complete RO chain by spec hash, batch query EM events by correlation_id, and
+// correlate into detailed Tier 1 entries. Returns ok=false (after writing the
+// RFC 7807 error response) on any query failure.
+func (h *Handler) queryTier1History(w http.ResponseWriter, ctx context.Context, req remediationHistoryRequest, now time.Time) ([]api.RemediationHistoryEntry, time.Time, bool) {
+	tier1Since := now.Add(-req.tier1Window)
+	roEvents, err := h.remediationHistoryRepo.QueryROEventsBySpecHash(ctx, req.targetResource, req.clusterID, req.currentSpecHash, tier1Since, now)
+	if err != nil {
+		h.logger.Error(err, "Failed to query Tier 1 RO events",
+			"spec_hash", req.currentSpecHash, "since", tier1Since, "until", now)
+		h.writeRemediationHistoryQueryError(w, err)
+		return nil, tier1Since, false
+	}
+
+	var emEvents map[string][]*EffectivenessEvent
+	if len(roEvents) > 0 {
+		correlationIDs := make([]string, 0, len(roEvents))
+		for _, ro := range roEvents {
+			correlationIDs = append(correlationIDs, ro.CorrelationID)
+		}
+
+		emEvents, err = h.remediationHistoryRepo.QueryEffectivenessEventsBatch(ctx, correlationIDs)
+		if err != nil {
+			h.logger.Error(err, "Failed to query EM events",
+				"correlation_id_count", len(correlationIDs))
+			h.writeRemediationHistoryQueryError(w, err)
+			return nil, tier1Since, false
+		}
+	}
+
+	return CorrelateTier1Chain(roEvents, emEvents, req.currentSpecHash), tier1Since, true
+}
+
+// queryTier2History executes the Tier 2 query: query the complete linked chain
+// across the full lookback so a recent remediation can bridge to an older
+// pre/post hash link, then retain only entries older than the Tier 1 boundary.
+// It batches EM events and builds summaries. Errors are returned so the handler
+// never emits an apparently complete 200 response with incomplete history.
+func (h *Handler) queryTier2History(ctx context.Context, req remediationHistoryRequest, now, tier1Since time.Time) ([]api.RemediationHistorySummary, error) {
+	tier2Since := now.Add(-req.tier2Window)
+	// Query through 'now', rather than stopping at tier1Since, because the
+	// recursive history query needs recent entries as bridge nodes to reach
+	// older remediations. The response remains disjoint by filtering the
+	// recent entries before building Tier 2 summaries.
+	tier2RO, err := h.remediationHistoryRepo.QueryROEventsBySpecHash(ctx, req.targetResource, req.clusterID, req.currentSpecHash, tier2Since, now)
+	if err != nil {
+		h.logger.Error(err, "Failed to query Tier 2 events",
+			"spec_hash", req.currentSpecHash, "since", tier2Since, "until", now)
+		return nil, err
+	}
+	tier2RO = filterRemediationHistoryWindow(tier2RO, tier2Since, tier1Since)
+	if len(tier2RO) == 0 {
+		return nil, nil
+	}
+
+	t2CorrelationIDs := make([]string, 0, len(tier2RO))
+	for _, ro := range tier2RO {
+		t2CorrelationIDs = append(t2CorrelationIDs, ro.CorrelationID)
+	}
+	t2EMEvents, err := h.remediationHistoryRepo.QueryEffectivenessEventsBatch(ctx, t2CorrelationIDs)
+	if err != nil {
+		h.logger.Error(err, "Failed to query Tier 2 EM events",
+			"correlation_id_count", len(t2CorrelationIDs))
+		return nil, err
+	}
+	return BuildTier2Summaries(tier2RO, t2EMEvents, req.currentSpecHash), nil
+}
+
+// writeRemediationHistoryQueryError converts repository failures into a safe
+// RFC 7807 response. Resource-limit failures are service unavailability, not
+// successful empty history: returning 200 would hide an incomplete chain.
+func (h *Handler) writeRemediationHistoryQueryError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	errorType := "query-error"
+	title := "Internal Server Error"
+	detail := "Failed to query remediation history"
+	if errors.Is(err, repository.ErrRemediationHistoryResourceLimit) {
+		status = http.StatusServiceUnavailable
+		errorType = "resource-limit"
+		title = "Service Unavailable"
+		detail = "Remediation history is temporarily unavailable because the complete chain exceeds the configured resource limits"
+	}
+	response.WriteRFC7807Error(w, status, errorType, title, detail, h.logger)
+}
+
+// filterRemediationHistoryWindow keeps the response tiers disjoint while the
+// repository query is allowed to traverse bridge entries across the Tier 1/Tier
+// 2 boundary. The repository already applies this same broad lower/upper
+// bound; keeping the check here makes the handler contract explicit and keeps
+// the helper safe for alternate querier implementations.
+func filterRemediationHistoryWindow(events []repository.RawAuditRow, since, until time.Time) []repository.RawAuditRow {
+	filtered := make([]repository.RawAuditRow, 0, len(events))
+	for _, event := range events {
+		if event.EventTimestamp.Before(since) || !event.EventTimestamp.Before(until) {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	return filtered
+}
+
+// writeRemediationHistoryResponse encodes and writes the JSON response body
+// for HandleGetRemediationHistoryContext. Extracted from
+// HandleGetRemediationHistoryContext (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 3)
+// — pure code motion, no behavior change.
+func (h *Handler) writeRemediationHistoryResponse(w http.ResponseWriter, req remediationHistoryRequest, tier1Entries []api.RemediationHistoryEntry, tier2Summaries []api.RemediationHistorySummary, regressionDetected bool) {
+	resp := map[string]interface{}{
+		"targetResource":     req.targetResource,
+		"currentSpecHash":    req.currentSpecHash,
+		"regressionDetected": regressionDetected,
+		"tier1": map[string]interface{}{
+			"window": req.tier1Window.String(),
+			"chain":  tier1Entries,
+		},
+		"tier2": map[string]interface{}{
+			"window": req.tier2Window.String(),
+			"chain":  tier2Summaries,
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
+		h.logger.Error(err, "Failed to encode remediation history response",
+			"target_resource", req.targetResource)
+		response.WriteRFC7807Error(w, http.StatusInternalServerError,
+			"encoding-error", "Internal Server Error",
+			"Failed to serialize remediation history response", h.logger)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+// validateWindows checks that tier1Window and tier2Window are positive and that
+// tier2Window is strictly greater than tier1Window. Returns the error detail
+// string and false if validation fails.
+func validateWindows(tier1, tier2 time.Duration) (string, bool) {
+	if tier1 <= 0 {
+		return "tier1Window must be a positive duration", false
+	}
+	if tier2 <= 0 {
+		return "tier2Window must be a positive duration", false
+	}
+	if tier2 <= tier1 {
+		return "tier2Window must be greater than tier1Window", false
+	}
+	return "", true
+}

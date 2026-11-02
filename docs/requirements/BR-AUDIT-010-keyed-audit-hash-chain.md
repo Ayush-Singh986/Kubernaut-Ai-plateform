@@ -1,0 +1,84 @@
+# BR-AUDIT-010: Keyed Audit Hash Chain (HMAC-SHA256)
+
+**Business Requirement ID**: BR-AUDIT-010
+**Category**: Data Storage Service — Security & Compliance
+**Priority**: **P1 (HIGH)** — Closes a HIGH-severity GA readiness gap
+**Target Version**: **V1.5**
+**Status**: ✅ Implemented in DataStorage and the operator-backed deployment path
+**Date**: June 30, 2026
+**Related ADRs**: [ADR-034: Unified Audit Table Design](../architecture/decisions/ADR-034-unified-audit-table-design.md)
+**Related BRs**: BR-AUDIT-005 (Core Audit Business Requirement), BR-AUDIT-007 (Tamper-evident audit exports)
+**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-05)
+
+> **Superseded (Helm gating only)**: [DD-PLATFORM-006](../architecture/decisions/DD-PLATFORM-006-helm-chart-configuration-surface-reduction.md)
+> Decision Areas 6/7 made `datastorage.config.auditHashKey` mandatory (the
+> `enabled` toggle described below no longer exists in the chart schema) and
+> added chart-managed auto-generation of the HMAC key via a `pre-install`/
+> `pre-upgrade` hook. The algorithm design, hash-chain mechanics, and residual
+> risk discussion below are still accurate; only the "opt-in"/"no
+> chart-managed secret generation" framing in the Decision and Success
+> Criteria sections is superseded.
+
+---
+
+## Business Need
+
+### Problem Statement
+
+DataStorage's `audit_events` table implements a blockchain-style hash chain (SOC2 Gap #9): each row's `event_hash` is `SHA256(previous_event_hash + event_json)`, so tampering with any row breaks the chain for every subsequent event. Before this BR, that hash was **unkeyed**: anyone with read/write access to the PostgreSQL database — including a DBA, a compromised service account with `UPDATE` on `audit_events`, or an attacker who gained database credentials — could tamper with a row and then recompute a self-consistent SHA256 chain for the rows that follow, defeating the tamper-evidence guarantee entirely.
+
+This was identified as **GAP-05 (HIGH severity)** in the GA Readiness Audit (issue #1505): "the hash chain protects against accidental corruption but not against a database-privileged attacker."
+
+### Impact Without This BR
+
+- **FedRAMP AU-9** (Protection of Audit Information) is only partially satisfied: the chain detects *unintentional* corruption but not a deliberate, DB-privileged forgery.
+- **SOC2 CC8.1** audit reconstruction cannot fully rely on `event_hash`/`previous_event_hash` alone as proof against a database-level compromise — a necessary caveat for any compliance narrative built on this chain.
+
+---
+
+## Decision: Keyed HMAC-SHA256, Operator-Managed Default and Backward Compatible
+
+New audit events are hashed with **HMAC-SHA256** using a key stored **outside the database** (a Kubernetes Secret mounted into the DataStorage pod), instead of plain SHA256. Forging a valid HMAC without that key is computationally infeasible, even for an attacker with full database read/write access — closing the gap that made the previous unkeyed chain forgeable by a DB-privileged actor.
+
+Key design choices:
+
+1. **Per-row `hash_algorithm` column** (migration `013_audit_hash_algorithm.sql`): every row records which algorithm produced its `event_hash` (`sha256-unkeyed` or `hmac-sha256`). This supports a **mixed-algorithm chain**: existing rows keep verifying under the legacy algorithm; only new writes made after the HMAC key is provisioned use `hmac-sha256`. There is no retroactive re-hashing of historical data.
+2. **Backward-compatible upstream behavior; operator-managed keyed default**: when no HMAC key is configured in an upstream DataStorage configuration, DataStorage continues using the legacy unkeyed SHA256 algorithm — existing deployments upgrade with zero required action. Operator-managed deployments provision and preserve a keyed HMAC Secret by default. Administrators may provide `spec.dataStorage.audit.hashKey.existingSecret` and `secretKey` through the `Kubernaut` CR; the operator validates that reference. The implementation tracked by kubernaut-operator#209 is complete and that issue is closed.
+3. **Excluded from the hash payload**: `hash_algorithm` itself is *not* included in the JSON that gets hashed (`PrepareEventForHashing` zeroes it, the same treatment as `EventHash`/`PreviousEventHash`/`EventDate`). This keeps pre-GAP-05 hashes verifiable byte-for-byte against their original JSON representation, which never contained this field.
+4. **Shared verification logic**: `repository.CalculateHashForVerification(hmacKey, previousHash, event)` is the single source of truth for algorithm-aware verification, used by both the `/api/v1/audit/verify-chain` HTTP handler and the `Export` (compliance export) path. Verifying an `hmac-sha256` event without a configured key fails loudly with an explicit error rather than silently reporting a false "tampered" mismatch.
+5. **Operator-managed Secret provisioning**: the operator generates and preserves the audit HMAC Secret by default. Administrators can provide an existing Secret through the `Kubernaut` CR, and the operator validates that reference.
+
+For `kubernaut-operator`-managed deployments, the operator constructs the DataStorage
+ConfigMap/Deployment and owns the default Secret provisioning and administrator override
+validation described above. kubernaut-operator#209 is retained as historical implementation
+tracking; it is closed.
+
+### Known Residual Risk (Documented, Not Closed by This BR)
+
+The per-row `hash_algorithm` column is itself ordinary database data. A sufficiently privileged attacker who can rewrite arbitrary rows could, in principle, also rewrite `hash_algorithm` from `hmac-sha256` back to `sha256-unkeyed` and recompute a plain SHA256 hash from scratch (a "downgrade" forgery) — the same fundamental class of risk as an attacker rewriting `event_hash`/`previous_event_hash` directly, which is not blocked by the immutability trigger (migration `012_audit_event_immutability.sql`) because doing so would break existing tamper-*detection* tests that deliberately rely on being able to `UPDATE event_hash` to simulate an attacker (see `test/integration/datastorage/audit_export_integration_test.go`, `test/e2e/datastorage/05_soc2_compliance_test.go`).
+
+Closing this residual risk would require an external, out-of-band anchor (e.g., periodically publishing chain-tip hashes to an external immutable log, or WORM storage) — out of scope for this BR. HMAC-SHA256 still meaningfully raises the bar: it defeats the *straightforward* SHA256-recompute-and-forge attack the unkeyed algorithm was vulnerable to, requiring instead a more complex attack that also depends on hiding evidence of the downgrade itself.
+
+---
+
+## Success Criteria
+
+1. `AuditEventsRepository.Create`/`CreateBatch` stamp `hash_algorithm` and select `hmac-sha256` when an HMAC key is configured (`WithHMACKey`), else `sha256-unkeyed` (backward-compatible default).
+2. `repository.CalculateHashForVerification` is algorithm-aware, used identically by `Export` and the verify-chain HTTP handler.
+3. `hmac-sha256` verification without a configured key fails with an explicit error, not a false "tampered" result.
+4. Pre-GAP-05 events (empty `hash_algorithm`) continue to verify identically to `sha256-unkeyed` events.
+5. Operator-managed deployments provision the audit HMAC Secret by default, mount it into DataStorage, and validate an administrator-provided override through `spec.dataStorage.audit.hashKey`.
+6. FedRAMP/SOC2 control mapping: **AU-9** (Protection of Audit Information) is materially strengthened for post-rollout events; **CC8.1** reconstruction retains a documented, bounded caveat for the residual downgrade risk above.
+
+---
+
+## Related Documents
+
+- [ADR-034: Unified Audit Table Design](../architecture/decisions/ADR-034-unified-audit-table-design.md)
+- [kubernaut-operator#209 — operator-managed keyed audit hash chain wiring](https://github.com/jordigilh/kubernaut-operator/issues/209)
+
+---
+
+**Document Version**: 1.0
+**Last Updated**: June 30, 2026
+**Maintained By**: Kubernaut Architecture Team

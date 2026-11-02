@@ -1,0 +1,79 @@
+# Kind cluster configuration for SignalProcessing E2E tests
+# Reference: DD-TEST-001 Port Allocation Strategy
+#
+# Port Allocation (from DD-TEST-001):
+#   Host Port: 8082
+#   NodePort (API): 30082
+#   NodePort (Metrics): 30182
+#
+# Kubeconfig Convention (per TESTING_GUIDELINES.md):
+#   Pattern: ~/.kube/{service}-e2e-config
+#   Path: ~/.kube/signalprocessing-e2e-config
+#   Cluster Name: signalprocessing-e2e
+#
+# Usage:
+#   kind create cluster \
+#     --name signalprocessing-e2e \
+#     --config test/infrastructure/kind-signalprocessing-config.yaml \
+#     --kubeconfig ~/.kube/signalprocessing-e2e-config
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  # Expose SignalProcessing Controller ports via NodePort to host machine
+  # This eliminates kubectl port-forward instability for E2E tests
+  extraPortMappings:
+  # Service NodePort (for API access if needed)
+  - containerPort: 30082  # SignalProcessing NodePort (per DD-TEST-001)
+    hostPort: 8082        # Port on host machine (localhost:8082)
+    protocol: TCP
+  # Metrics NodePort (for Prometheus scraping)
+  - containerPort: 30182  # SignalProcessing Metrics NodePort (per DD-TEST-001)
+    hostPort: 9182        # Port on host machine (localhost:9182/metrics)
+    protocol: TCP
+  # BR-SP-090: DataStorage NodePort for audit E2E testing
+  - containerPort: 30081  # DataStorage NodePort (per DD-TEST-001)
+    hostPort: 30081       # Port on host machine (localhost:30081)
+    protocol: TCP
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 30281       # Port on host machine
+    protocol: TCP
+  # BR-SP-090: PostgreSQL NodePort for migration testing
+  - containerPort: 30432  # PostgreSQL NodePort
+    hostPort: 30432       # Port on host machine (localhost:30432)
+    protocol: TCP
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Increase API server rate limits for parallel E2E testing
+        # With 4 parallel test processes, need headroom for CRD operations
+        max-requests-inflight: "800"
+        max-mutating-requests-inflight: "400"
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        kube-api-qps: "100"
+        kube-api-burst: "200"
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        # BR-SP-106: Reduce ConfigMap sync frequency for E2E tests
+        # Default: 1m (60s) → E2E: 10s
+        # Reduces hot-reload test duration from 60-90s to 15-20s
+        # Still tests real ConfigMap propagation mechanism (not mocked)
+        # Production clusters often tune this for faster config updates
+        sync-frequency: "10s"
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        # BR-SP-106: Reduce ConfigMap sync frequency for E2E tests
+        # Default: 1m (60s) → E2E: 10s
+        # Reduces hot-reload test duration from 60-90s to 15-20s
+        # Production clusters often tune this for faster ConfigMap propagation
+        sync-frequency: "10s"

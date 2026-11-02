@@ -1,0 +1,704 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/singleflight"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
+
+	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	auth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/tools/custom"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/audit"
+	dsschema "github.com/jordigilh/kubernaut/pkg/datastorage/schema"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	fleetclient "github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	fleetregistry "github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	amtools "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/alertmanager"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/investigation"
+	k8stools "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
+	logtools "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/logs"
+	promtools "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/prometheus"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+)
+
+// buildToolRegistry creates and populates the tool registry with all available tool sets.
+// wfCatalog is always non-nil (workflowcatalog.LazyCatalog, #1677 hardening,
+// DD-WORKFLOW-019): the 3 workflow discovery tools are always registered,
+// and fail at execution time with a clear "not ready" error (rather than
+// registration time) until the background cache sync completes.
+func buildToolRegistry(cfg *kaconfig.Config, logger logr.Logger, infra *k8sInfra, ds *dsClients, wfCatalog *workflowcatalog.LazyCatalog, auditStore audit.AuditStore) *registry.Registry {
+	reg := registry.New()
+
+	if infra != nil {
+		registerK8sTools(reg, infra, logger, auditStore)
+	}
+
+	if cfg.Integrations.Tools.Prometheus.URL != "" {
+		registerPrometheusTools(reg, cfg, logger)
+	}
+
+	if cfg.Integrations.Tools.Alertmanager.URL != "" {
+		registerAlertmanagerTools(reg, cfg, logger)
+	}
+
+	if ds != nil {
+		// wfCatalog (LazyCatalog) is always non-nil and always satisfies
+		// custom.WorkflowCatalog -- no typed-nil-interface guard needed
+		// (#1677 hardening, DD-WORKFLOW-019). Before the cache syncs, its
+		// methods return workflowcatalog.ErrCatalogNotReady, which each
+		// tool's Execute already surfaces as a normal per-call error.
+		custom.RegisterAll(reg, wfCatalog, auditStore, ds.dsAdapter, ds.k8sAdapter, logger)
+		logger.Info("registered custom tools", "count", len(custom.AllToolNames))
+	}
+
+	reg.Register(investigation.NewTodoWriteTool())
+	logger.Info("registered TodoWrite tool")
+
+	logger.Info("tool registry ready", "total_tools", len(reg.All()))
+	return reg
+}
+
+// buildTLSAwareTransport builds an SA-bearer-authenticated http.RoundTripper
+// backed by a custom CA bundle for the given tlsCaFile. Returns nil (fail-open:
+// the caller falls back to the client's default transport) and logs an error
+// when the CA bundle cannot be loaded — integrations tools are best-effort
+// and must not block agent startup.
+func buildTLSAwareTransport(tlsCaFile string, logger logr.Logger, label string) http.RoundTripper {
+	base, err := sharedtls.NewTLSTransport(tlsCaFile)
+	if err != nil {
+		logger.Error(err, "failed to create TLS transport", "integration", label, "ca_file", tlsCaFile)
+		return nil
+	}
+	logger.Info("client configured with TLS + SA bearer auth", "integration", label, "ca_file", tlsCaFile)
+	return auth.NewAuthTransport(auth.NewDefaultTokenSource(), base)
+}
+
+// registerPrometheusTools builds the Prometheus client (with optional custom
+// CA bundle) and registers its 8 tools. Best-effort: logs and skips
+// registration on any construction failure rather than blocking startup.
+func registerPrometheusTools(reg *registry.Registry, cfg *kaconfig.Config, logger logr.Logger) {
+	promCfg := promtools.ClientConfig{
+		URL:       cfg.Integrations.Tools.Prometheus.URL,
+		Timeout:   cfg.Integrations.Tools.Prometheus.Timeout,
+		SizeLimit: cfg.Integrations.Tools.Prometheus.SizeLimit,
+	}
+	// GAP-14 / Issue #1519: outbound span for every Prometheus query --
+	// wired unconditionally (not just when TLS CA is configured) so the
+	// tool-call latency breakdown includes Prometheus regardless of
+	// transport config. No-op cost when no TracerProvider is registered.
+	var promBase = http.DefaultTransport
+	if cfg.Integrations.Tools.Prometheus.TLSCaFile != "" {
+		if tlsBase := buildTLSAwareTransport(cfg.Integrations.Tools.Prometheus.TLSCaFile, logger, "Prometheus"); tlsBase != nil {
+			promBase = tlsBase
+		}
+	}
+	promCfg.Transport = otelhttp.NewTransport(promBase)
+	promClient, promErr := promtools.NewClient(promCfg)
+	if promErr != nil {
+		logger.Error(promErr, "failed to create Prometheus client")
+		return
+	}
+	for _, t := range promtools.NewAllTools(promClient) {
+		reg.Register(t)
+	}
+	logger.Info("registered Prometheus tools", "count", len(promtools.AllToolNames))
+}
+
+// registerAlertmanagerTools builds the Alertmanager client (with optional
+// custom CA bundle) and registers its tools. Best-effort: logs and skips
+// registration on any construction failure rather than blocking startup.
+func registerAlertmanagerTools(reg *registry.Registry, cfg *kaconfig.Config, logger logr.Logger) {
+	amCfg := amtools.ClientConfig{
+		URL:       cfg.Integrations.Tools.Alertmanager.URL,
+		Timeout:   cfg.Integrations.Tools.Alertmanager.Timeout,
+		SizeLimit: cfg.Integrations.Tools.Alertmanager.SizeLimit,
+	}
+	if cfg.Integrations.Tools.Alertmanager.TLSCaFile != "" {
+		amCfg.Transport = buildTLSAwareTransport(cfg.Integrations.Tools.Alertmanager.TLSCaFile, logger, "Alertmanager")
+	}
+	amClient, amErr := amtools.NewClient(amCfg)
+	if amErr != nil {
+		logger.Error(amErr, "failed to create Alertmanager client")
+		return
+	}
+	for _, t := range amtools.NewAllTools(amClient) {
+		reg.Register(t)
+	}
+	logger.Info("registered Alertmanager tools", "count", len(amtools.AllToolNames))
+}
+
+// resolveAlignmentCheckConfig returns the effective AlignmentCheckConfig.
+// When fleet mode is active and defines its own alignment check, the fleet
+// override takes precedence over the global ai.alignmentCheck. This allows
+// operators to enforce cross-model shadow evaluation specifically for
+// multi-cluster investigations where prompt injection risk is higher.
+func resolveAlignmentCheckConfig(cfg *kaconfig.Config) kaconfig.AlignmentCheckConfig {
+	fleetCfg := cfg.Integrations.Fleet
+	if fleetCfg.GatewayType != "" && fleetCfg.Endpoint != "" && fleetCfg.AlignmentCheck != nil {
+		return *fleetCfg.AlignmentCheck
+	}
+	return cfg.AI.AlignmentCheck
+}
+
+// gatewayOverlayResolver implements investigator.FleetOverlayResolver by
+// wrapping a fleetclient.GatewayDiscoverer. Overlay re-keys the discovered
+// tool definitions under each tool's generic (unprefixed) name, so KA's LLM
+// sees the exact same tool identity for a remote-cluster investigation as
+// for a hub-local one (DD-FLEET-005 full name transparency, issue #1732).
+// The wire-level name used to actually reach the gateway (which may carry
+// the "{clusterID}__" EAIGW convention) is untouched inside the wrapped
+// BridgeTool — only the LLM-facing identity changes.
+type gatewayOverlayResolver struct {
+	discoverer fleetclient.GatewayDiscoverer
+	session    fleetclient.Session
+
+	// bindingResolver owns gateway-specific logical-to-wire resolution and
+	// session-scoped selection leases. It is set by production wiring; static
+	// session test doubles intentionally keep the legacy direct path.
+	bindingResolver fleetclient.ToolBindingResolver
+	handleProvider  fleetclient.SessionHandleProvider
+	reconnect       func(context.Context) error
+	retryObserver   fleetclient.RetryObserver
+	bindingInitErr  error
+
+	// sessionProvider resolves the live MCP session on every Overlay call,
+	// following ResilientClient reconnects instead of binding to a
+	// one-time snapshot (issue #2315 self-healing fix). Takes precedence
+	// over session when set -- production wiring (registerFleetTools)
+	// always sets this; only test doubles construct a gatewayOverlayResolver
+	// literal with a static session and no provider.
+	sessionProvider fleetclient.SessionProvider
+
+	// sf deduplicates concurrent Overlay calls for the same clusterID down
+	// to a single ToolsForCluster gateway round trip (SC-5: Denial of
+	// Service Protection), exactly as the deleted ListToolsForClusterTool
+	// did before DD-FLEET-005 removed the LLM-facing discovery tools --
+	// every investigation now calls Overlay() once at pre-scoping time, so
+	// N investigations landing on the same busy cluster concurrently would
+	// otherwise each trigger their own discover_tools/select_tools call.
+	sf singleflight.Group
+}
+
+// resolveSession returns the session to bind newly-constructed BridgeTools
+// to, preferring a live sessionProvider resolution over the static session
+// snapshot when a provider is set -- mirrors fleetclient.ResolveSession's
+// precedence, reimplemented here (rather than called directly) because this
+// struct's session field is the test-double-friendly fleetclient.Session
+// interface, not ResolveSession's concrete *mcp.ClientSession parameter
+// type.
+func (r *gatewayOverlayResolver) resolveSession() (fleetclient.Session, error) {
+	session := r.session
+	if r.sessionProvider != nil {
+		if live := r.sessionProvider(); live != nil {
+			session = live
+		} else {
+			session = nil
+		}
+	}
+	if session == nil {
+		return nil, fmt.Errorf("MCP session not available (gateway disconnected)")
+	}
+	return session, nil
+}
+
+// Overlay implements investigator.FleetOverlayResolver.
+func (r *gatewayOverlayResolver) Overlay(ctx context.Context, clusterID string) (map[string]tools.Tool, error) {
+	v, err, _ := r.sf.Do(clusterID, func() (any, error) {
+		if r.bindingInitErr != nil {
+			return nil, fmt.Errorf("initialize Fleet binding resolver: %w", r.bindingInitErr)
+		}
+		defs, err := r.discoverer.ToolsForCluster(ctx, clusterID)
+		if err != nil {
+			return nil, fmt.Errorf("discover tools for cluster %q: %w", clusterID, err)
+		}
+		session, sessErr := r.resolveSession()
+		if sessErr != nil {
+			return nil, fmt.Errorf("resolve session for cluster %q: %w", clusterID, sessErr)
+		}
+		names := make([]string, len(defs))
+		for i, def := range defs {
+			names[i] = def.Name
+		}
+		// EAIGW names carry a "{clusterID}__" wire prefix; Kuadrant names
+		// carry whatever admin-set MCPServerRegistration.spec.prefix the
+		// cluster was registered with, which is NOT guaranteed to follow the
+		// "{clusterID}__" shape (Issue #1756). PrefixFromToolNames matches
+		// gateway-agnostically against the discovered names themselves
+		// rather than assuming either convention, so both gateway types
+		// resolve correctly without KA needing to know which one it's
+		// talking to.
+		prefix, prefixErr := fleetclient.PrefixFromToolNames(clusterID, names)
+		if prefixErr != nil {
+			return nil, fmt.Errorf("resolve tool prefix for cluster %q: %w", clusterID, prefixErr)
+		}
+		overlay := make(map[string]tools.Tool, len(defs))
+		for _, def := range defs {
+			genericName := strings.TrimPrefix(def.Name, prefix)
+			var bridge *fleetclient.BridgeTool
+			if r.bindingResolver != nil {
+				bridge = fleetclient.NewBridgeToolWithBindingResolverAndObserver(
+					fleetclient.ToolDefinition{
+						Name:        genericName,
+						Description: def.Description,
+						InputSchema: def.InputSchema,
+					},
+					clusterID,
+					r.bindingResolver,
+					r.handleProvider,
+					r.reconnect,
+					r.retryObserver,
+				)
+			} else {
+				bridge = fleetclient.NewBridgeTool(def, clusterID, session)
+			}
+			overlay[genericName] = &genericNameTool{inner: bridge, name: genericName}
+		}
+		return overlay, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Safe to share the same map across every waiter on this singleflight
+	// key: FleetOverlayFromContext/resolveTool only ever read it, never
+	// mutate it (see fleet_overlay.go).
+	overlay, ok := v.(map[string]tools.Tool)
+	if !ok {
+		return nil, fmt.Errorf("internal error: unexpected type %T from tool overlay singleflight", v)
+	}
+	return overlay, nil
+}
+
+// genericNameTool decorates a *fleetclient.BridgeTool, exposing it to KA's
+// tool registry/LLM schema under its generic name while Execute still
+// delegates to the inner BridgeTool, which calls the remote MCP gateway
+// using the tool's original wire name (DD-FLEET-005: LLM-facing identity
+// and wire identity are allowed to differ; only the former is transparent).
+type genericNameTool struct {
+	inner *fleetclient.BridgeTool
+	name  string
+}
+
+func (g *genericNameTool) Name() string                { return g.name }
+func (g *genericNameTool) Description() string         { return g.inner.Description() }
+func (g *genericNameTool) Parameters() json.RawMessage { return g.inner.Parameters() }
+func (g *genericNameTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return g.inner.Execute(ctx, args)
+}
+
+// fleetOAuth2CredentialsDefaultSecretName is the fleet OAuth2 Secret name
+// assumed when oauth2.CredentialsSecretRef is not explicitly overridden --
+// matches fleetmetadatacache's own default (/etc/fleetmetadatacache/
+// fleet-oauth2, see operator-managed manifests/fleetmetadatacache/
+// fleetmetadatacache.yaml) so the "fleet-oauth2" Secret name convention is
+// shared across every fleet-aware service.
+const fleetOAuth2CredentialsDefaultSecretName = "fleet-oauth2"
+
+// fleetOAuth2CredentialsBasePath returns the on-disk directory KA's fleet
+// OAuth2 client-id/client-secret files are mounted at, matching the Helm
+// chart's "/etc/kubernaut-agent/..." mount convention used for every other
+// KA credential (base LLM OAuth2, phase credentials, alignment-check
+// credentials -- see operator-managed manifests/kubernaut-agent/
+// kubernaut-agent.yaml).
+//
+// Issue #1729: this previously hardcoded the un-hyphenated
+// "/etc/kubernautagent/" prefix, a latent mismatch (no Helm-exposed
+// kubernautAgent.fleet.oauth2 existed to reach this code path at all) that
+// would have made fleet OAuth2 authentication silently fail to find its
+// mounted credential files the moment Helm wiring was added, had it not
+// been caught and fixed here first.
+func fleetOAuth2CredentialsBasePath(oauth2 kaconfig.FleetOAuth2) string {
+	secretRef := oauth2.CredentialsSecretRef
+	if secretRef == "" {
+		secretRef = fleetOAuth2CredentialsDefaultSecretName
+	}
+	return "/etc/kubernaut-agent/" + secretRef
+}
+
+// fleetOAuth2ConfigFromKA translates KA's bespoke FleetOAuth2 config into
+// the shared fleet.FleetOAuth2Config DTO that mcpclient.Connect expects. KA
+// carries its own parallel FleetOAuth2 struct (rather than the shared type
+// every other fleet-aware service uses) for historical reasons; this is the
+// one remaining KA-specific translation point since Connect() itself only
+// knows the shared type.
+//
+// PR #1820 CI RCA (E2E-FLEET-017, run 30712261367): TLSCAFile must be
+// carried through here -- without it, the OAuth2 token-fetch HTTP client
+// always falls back to the system CA trust store, and every token request
+// against a cluster-local IdP with a cert-manager-issued certificate (e.g.
+// Fleet E2E's Keycloak) fails with "tls: failed to verify certificate:
+// x509: certificate signed by unknown authority", leaving kubernaut-agent's
+// fleet readiness gate permanently NotReady.
+func fleetOAuth2ConfigFromKA(oauth2 kaconfig.FleetOAuth2) fleet.FleetOAuth2Config {
+	return fleet.FleetOAuth2Config{
+		Enabled:   oauth2.Enabled,
+		TokenURL:  oauth2.TokenURL,
+		Scopes:    oauth2.Scopes,
+		TLSCAFile: oauth2.TLSCaFile,
+	}
+}
+
+// registerFleetTools connects to the MCP Gateway and creates a
+// GatewayDiscoverer for the configured gateway type, returning an
+// investigator.FleetOverlayResolver that pre-scopes tools for each
+// investigation's own target cluster (DD-FLEET-005 / issue #1732). No tools
+// are registered into any shared, LLM-facing registry here — pre-scoping
+// happens per-investigation via the resolver, replacing the previous
+// LLM-driven list_clusters/list_tools_for_cluster discovery tools entirely.
+//
+// Both the returned client and resolver are always non-nil once fleet mode
+// is configured (gatewayType/endpoint set), even when the initial connect
+// attempt fails: the resolver is built from a SessionProvider that resolves
+// the live session on every Overlay() call, so it self-heals once
+// resilientClient reconnects in the background, instead of staying
+// permanently unavailable until a pod restart (issue #2315). Callers MUST
+// NOT gate resolver construction/registration on a connect error — only on
+// gatewayType/endpoint being configured at all. Returns (nil, nil) only
+// when fleet mode is not configured.
+//
+// Authority: DD-FLEET-005, ADR-068 decision #11
+func registerFleetTools(ctx context.Context, cfg *kaconfig.Config, logger logr.Logger, observers ...fleetclient.RetryObserver) (*fleetclient.ResilientClient, investigator.FleetOverlayResolver) {
+	gatewayType := cfg.Integrations.Fleet.GatewayType
+	endpoint := cfg.Integrations.Fleet.Endpoint
+	if gatewayType == "" || endpoint == "" {
+		return nil, nil
+	}
+
+	fleetLog := logger.WithName("fleet")
+	var retryObserver fleetclient.RetryObserver
+	if len(observers) > 0 {
+		retryObserver = observers[0]
+	}
+	fleetLog.Info("connecting to MCP Gateway for fleet tool discovery",
+		"endpoint", endpoint, "gatewayType", gatewayType)
+
+	connectCfg := fleetclient.ConnectConfig{
+		Endpoint:            endpoint,
+		MCPGatewayTLSCAFile: cfg.Integrations.Fleet.MCPGatewayTLSCAFile,
+		Resilience:          cfg.Integrations.Fleet.Resilience,
+	}
+	if cfg.Integrations.Fleet.OAuth2.Enabled {
+		basePath := fleetOAuth2CredentialsBasePath(cfg.Integrations.Fleet.OAuth2)
+		connectCfg.OAuth2 = fleetOAuth2ConfigFromKA(cfg.Integrations.Fleet.OAuth2)
+		connectCfg.CredentialsBasePath = basePath
+		fleetLog.Info("fleet OAuth2 authentication configured (hot-reloadable)",
+			"tokenURL", cfg.Integrations.Fleet.OAuth2.TokenURL,
+			"secretPath", basePath,
+			"tlsCaFile", cfg.Integrations.Fleet.OAuth2.TLSCaFile)
+	}
+
+	// #1553/#2315: keep (don't discard) the client even when the initial
+	// connect attempt fails -- the fleet readiness gate attaches an
+	// MCPClientProber to it so the periodic probe keeps retrying and the
+	// "fleet" readyz check correctly reports NotReady until reconnect, and
+	// the resolver built below self-heals via SessionProvider once the
+	// background retry succeeds, instead of the client (and fleet tools)
+	// being silently lost with no path back to healthy short of a restart.
+	resilientClient, err := fleetclient.Connect(ctx, connectCfg, fleetLog) //nolint:contextcheck // Connect's internal reload/backoff loops are intentionally independent of any single request context
+	if err != nil {
+		fleetLog.Error(err, "failed to connect to MCP Gateway at startup; readiness will report NotReady "+
+			"and keep retrying in the background; fleet tools will become available automatically once "+
+			"the connection is established (self-healing, issue #2315)")
+	}
+
+	discoverer := fleetclient.NewDiscovererWithProvider(fleetregistry.MCPGatewayType(gatewayType), resilientClient.SessionProvider(), resilientClient.Reconnect)
+	bindingResolver, bindingErr := fleetclient.NewGatewayBindingResolver(
+		fleetregistry.MCPGatewayType(gatewayType), discoverer,
+	)
+	if bindingErr != nil {
+		fleetLog.Error(bindingErr, "failed to initialize Fleet MCP binding resolver")
+	}
+
+	fleetLog.Info("fleet tool pre-scoping resolver ready (self-healing, DD-FLEET-005)",
+		"endpoint", endpoint, "gatewayType", gatewayType)
+	return resilientClient, &gatewayOverlayResolver{
+		discoverer:      discoverer,
+		sessionProvider: resilientClient.SessionProvider(),
+		handleProvider:  resilientClient.SessionHandleProvider(),
+		reconnect:       resilientClient.Reconnect,
+		bindingResolver: bindingResolver,
+		bindingInitErr:  bindingErr,
+		retryObserver:   retryObserver,
+	}
+}
+
+// newFleetRetryObserver adapts the dependency-free shared MCP recovery seam
+// to KA's injected metrics and audit stores. High-cardinality target/wire
+// values stay in structured audit fields and never become metric labels.
+func newFleetRetryObserver(store audit.AuditStore, m *kametrics.Metrics, logger logr.Logger) fleetclient.RetryObserver {
+	return fleetclient.RetryObserverFunc(func(ctx context.Context, observation fleetclient.RetryObservation) {
+		failureClass := string(observation.FailureClass)
+		if failureClass == "" && observation.Outcome != fleetclient.RetryOutcomeSuccess {
+			failureClass = "unknown"
+		}
+		if m != nil {
+			m.RecordMCPRecovery(observation.ToolClass, observation.Source, observation.Outcome, failureClass)
+		}
+		if store == nil {
+			return
+		}
+		if ctx == nil {
+			return
+		}
+		correlationID, _ := audit.CorrelationIDFromContext(ctx)
+		event := audit.NewEvent(audit.EventTypeEnrichmentFailed, correlationID)
+		if observation.Outcome == fleetclient.RetryOutcomeSuccess {
+			event = audit.NewEvent(audit.EventTypeEnrichmentCompleted, correlationID)
+		}
+		action := audit.ActionMCPRetry
+		switch {
+		case observation.Outcome == fleetclient.RetryOutcomeExhausted:
+			action = audit.ActionMCPRetryExhausted
+		case observation.FailureClass == fleetclient.FailureSessionReset && observation.Outcome == fleetclient.RetryOutcomeRetry:
+			action = audit.ActionMCPTransportReset
+		}
+		event.EventAction = action
+		event.EventOutcome = audit.OutcomePending
+		switch observation.Outcome {
+		case fleetclient.RetryOutcomeSuccess:
+			event.EventOutcome = audit.OutcomeSuccess
+		case fleetclient.RetryOutcomeFailed, fleetclient.RetryOutcomeExhausted:
+			event.EventOutcome = audit.OutcomeFailure
+		}
+		event.ClusterID = observation.ClusterID
+		event.Data["incident_id"] = correlationID
+		event.Data["reason"] = "mcp_recovery"
+		event.Data["detail"] = observation.Outcome + ":" + failureClass
+		event.Data["affected_resource_kind"] = "MCP"
+		event.Data["affected_resource_name"] = observation.LogicalTool
+		event.Data["source"] = observation.Source
+		event.Data["tool_class"] = observation.ToolClass
+		event.Data["logical_tool"] = observation.LogicalTool
+		event.Data["attempt"] = observation.Attempt
+		event.Data["retry_outcome"] = observation.Outcome
+		if failureClass != "" {
+			event.Data["failure_class"] = failureClass
+		}
+		event.Data["failure_code"] = observation.FailureCode
+		event.Data["cluster_id"] = observation.ClusterID
+		// The enrichment payload is also the typed persistence envelope for
+		// recovery observations. These bounded placeholders satisfy its
+		// required root-owner fields without fabricating Kubernetes evidence.
+		event.Data["root_owner_kind"] = "MCP"
+		event.Data["root_owner_name"] = observation.LogicalTool
+		event.Data["owner_chain_length"] = 0
+		event.Data["remediation_history_fetched"] = false
+		audit.StoreBestEffort(ctx, store, event, logger)
+	})
+}
+
+// fleetReadinessProbeInterval controls how often the #1553 Fleet readiness
+// gate re-probes its dependencies once started (mirrors GW/RO/EM/SP/WE/AF).
+const fleetReadinessProbeInterval = 15 * time.Second
+
+// wireFleetReadinessGate builds and starts the #1553 Fleet dependency
+// readiness gate (ADR-068 decision #11, BR-INTEGRATION-054): once fleet
+// mode is configured, KA's pod-wide readyz must fail closed when the MCP
+// Gateway becomes unreachable, instead of the previous fail-open behavior
+// of only logging an error. KA has no scope-checker or cluster-registry
+// dependency (unlike GW/RO/SP), so its gate only ever carries an
+// MCPClientProber. Returns nil when fleetClient is nil (registerFleetTools
+// only returns a non-nil client when fleet mode is configured). The
+// caller registers the returned Gate's Ready method into readinessHandler
+// and must Stop() it on shutdown.
+func wireFleetReadinessGate(ctx context.Context, fleetClient *fleetclient.ResilientClient, logger logr.Logger) *readiness.Gate {
+	if fleetClient == nil {
+		return nil
+	}
+
+	prober := &readiness.MCPClientProber{Client: fleetClient}
+	gate := readiness.NewGate(fleetReadinessProbeInterval, logger.WithName("fleet-readiness"), prober)
+	gate.Start(ctx)
+	logger.Info("Fleet readiness gate started", "ready", gate.Ready())
+	return gate
+}
+
+// wireDataStorageReadinessGate builds and starts the DataStorage
+// dependency readiness gate (#1985, BR-AUDIT-005 v2.0): KA's pod-wide
+// readyz must fail closed when DataStorage is unreachable, closing the
+// audit-loss window where a pod accepts traffic (and generates audit
+// events) before DataStorage is confirmed reachable. Unlike
+// wireFleetReadinessGate, this is unconditional -- always wired, never
+// nil -- since every service writes audit. The caller registers the
+// returned Gate's Ready method into readinessHandler and must Stop() it
+// on shutdown. Delegates gate construction to sharedaudit.NewReadinessGate
+// (REFACTOR, shared across all 10 services).
+func wireDataStorageReadinessGate(ctx context.Context, cfg *kaconfig.Config, logger logr.Logger) *readiness.Gate {
+	return sharedaudit.NewReadinessGate(ctx, cfg.Integrations.DataStorage.HealthURL, logger)
+}
+
+func registerK8sTools(reg *registry.Registry, infra *k8sInfra, logger logr.Logger, auditStore audit.AuditStore) {
+	kindIndex, err := k8stools.BuildKindIndex(infra.clientset.Discovery())
+	if err != nil {
+		logger.Info("failed to build kind index, using empty index", "error", err)
+		kindIndex = make(map[string]schema.GroupKind)
+	}
+	resolver := k8stools.NewDynamicResolver(infra.dynClient, infra.mapper, kindIndex, logger.WithName("k8s-resolver"),
+		k8stools.WithSecretAccessObserver(newSecretAccessObserver(auditStore, logger.WithName("secret-access-audit"))))
+
+	for _, t := range k8stools.NewAllTools(infra.clientset, resolver) {
+		reg.Register(t)
+	}
+	logger.Info("registered K8s tools", "count", len(k8stools.AllToolNames))
+
+	reg.Register(logtools.NewFetchPodLogsTool(infra.clientset))
+	logger.Info("registered fetch_pod_logs tool")
+
+	mc, mcErr := metricsclient.NewForConfig(infra.kubeConfig)
+	if mcErr != nil {
+		logger.Error(mcErr, "failed to create metrics client, metrics tools will not be registered")
+	} else {
+		for _, t := range k8stools.NewMetricsTools(k8stools.NewMetricsClient(mc)) {
+			reg.Register(t)
+		}
+		logger.Info("registered metrics tools", "count", len(k8stools.MetricsToolNames))
+	}
+
+	npc := k8stools.NewNodeProxyClient(infra.clientset)
+	for _, t := range k8stools.NewNodeProxyTools(npc, 30000) {
+		reg.Register(t)
+	}
+	logger.Info("registered node proxy tools", "count", len(k8stools.NodeProxyToolNames))
+}
+
+// newSecretAccessObserver builds the k8stools.SecretAccessObserver wired into
+// the K8s resource resolver (GAP-13, Issue #1505). It is the detective
+// control compensating for KubernautAgent's intentionally broad read RBAC on
+// Secrets (see docs/services/kubernaut-agent/security-configuration.md):
+// every Secret Get/List — success or failure — becomes an independently
+// queryable aiagent.secret.accessed audit event, correlated to the
+// investigation via the correlationID set on ctx by
+// session.Manager.launchInvestigation.
+func newSecretAccessObserver(auditStore audit.AuditStore, logger logr.Logger) func(ctx context.Context, verb, name, namespace string, err error) {
+	return func(ctx context.Context, verb, name, namespace string, accessErr error) {
+		if auditStore == nil {
+			return
+		}
+		correlationID, _ := audit.CorrelationIDFromContext(ctx)
+
+		event := audit.NewEvent(audit.EventTypeSecretAccessed, correlationID)
+		event.EventAction = audit.ActionSecretAccessed
+		event.EventOutcome = audit.OutcomeSuccess
+		event.Data["verb"] = verb
+		if namespace != "" {
+			event.Data["namespace"] = namespace
+		}
+		if name != "" {
+			event.Data["secret_name"] = name
+		}
+		if accessErr != nil {
+			event.EventOutcome = audit.OutcomeFailure
+			event.Data["outcome_detail"] = accessErr.Error()
+		}
+		audit.StoreBestEffort(ctx, auditStore, event, logger)
+	}
+}
+
+// workflowCatalogFetcher implements investigator.CatalogFetcher by querying
+// KubernautAgent's own informer-backed workflow catalog on every call. This
+// removes the boot-time blocking fetch that caused #665 (CrashLoopBackOff
+// when the catalog was not yet seeded).
+//
+// Per DD-KA-001 (v1.1+), KA is the sole workflow validator. The catalog
+// is fetched per-request so KA always validates against the current catalog
+// without needing a restart when workflows are added/removed.
+//
+// #1677 Phase 2g follow-up (DD-WORKFLOW-019): previously queried DataStorage's
+// REST API (GET /api/v1/workflows) directly via the DS ogen client. That
+// route was retired as dead code once workflow discovery moved to KA -- this
+// was a real, missed production caller (not covered by the Phase 2g Wiring
+// Manifest), discovered when regenerating the DS ogen client after pruning
+// the OpenAPI spec broke this file's build. Fixed by reading from the same
+// cache-backed Catalog the 3-step discovery protocol already uses, which is
+// a strict improvement: zero network hop, zero dependency on DS's REST
+// surface, and no artificial page-size cap (List(ctx, nil, -1, 0) is
+// unfiltered/unbounded, unlike the old default-100/max-1000 REST endpoint).
+type workflowCatalogFetcher struct {
+	catalog *workflowcatalog.LazyCatalog
+	logger  logr.Logger
+}
+
+func newWorkflowCatalogFetcher(catalog *workflowcatalog.LazyCatalog, logger logr.Logger) *workflowCatalogFetcher {
+	return &workflowCatalogFetcher{catalog: catalog, logger: logger}
+}
+
+func (f *workflowCatalogFetcher) FetchValidator(ctx context.Context) (*parser.Validator, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	// limit=-1: unfiltered, unbounded -- this fetch supplies catalog metadata
+	// for validation. The workflow-selection context separately restricts
+	// membership to IDs returned by list_workflows (Issue #2442).
+	workflows, _, err := f.catalog.List(fetchCtx, nil, -1, 0)
+	if err != nil {
+		return nil, fmt.Errorf("workflow catalog list failed: %w", err)
+	}
+
+	ids := make([]string, 0, len(workflows))
+	for i := range workflows {
+		if workflows[i].WorkflowID != "" {
+			ids = append(ids, workflows[i].WorkflowID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("workflow catalog returned 0 workflows")
+	}
+
+	validator := parser.NewValidator(ids)
+	schemaParser := dsschema.NewParser()
+	for i := range workflows {
+		w := &workflows[i]
+		if w.WorkflowID == "" {
+			continue
+		}
+		validator.SetWorkflowMeta(w.WorkflowID, buildWorkflowMeta(w, schemaParser, f.logger))
+	}
+
+	f.logger.Info("workflow catalog fetched (DD-KA-001: per-request validation)",
+		"allowed_workflows", len(ids))
+	return validator, nil
+}
+
+// buildWorkflowMeta translates a single catalog RemediationWorkflow entry
+// into the parser.WorkflowMeta used for parameter/schema validation. Schema
+// parse failures are logged and fail-closed (no Parameters set, stripping
+// all LLM-supplied params for that workflow) rather than aborting the whole
+// catalog fetch.
+func buildWorkflowMeta(w *models.RemediationWorkflow, schemaParser *dsschema.Parser, logger logr.Logger) parser.WorkflowMeta {
+	_ = schemaParser
+	return workflowcatalog.BuildWorkflowMeta(w, logger)
+}

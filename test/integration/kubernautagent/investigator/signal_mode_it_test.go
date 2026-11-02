@@ -1,0 +1,125 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package investigator_test
+
+import (
+	"context"
+
+	"github.com/go-logr/logr"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+var _ = Describe("KA-KA Integration Parity — Signal Mode (TP-433-PARITY)", func() {
+
+	var (
+		invLogger  logr.Logger
+		auditStore *capturingAuditStore
+		builder    *prompt.Builder
+		rp         *parser.ResultParser
+		enricher   *enrichment.Enricher
+		phaseTools katypes.PhaseToolMap
+	)
+
+	BeforeEach(func() {
+		invLogger = logr.Discard()
+		auditStore = newCapturingAuditStore(suiteAuditStore)
+		builder, _ = prompt.NewBuilder()
+		rp = parser.NewResultParser()
+		k8sClient := &k8sFixtureClient{ownerChain: []enrichment.OwnerChainEntry{}}
+		enricher = enrichment.NewEnricher(k8sClient, suiteDSAdapter, auditStore, invLogger)
+		phaseTools = investigator.DefaultPhaseToolMap()
+	})
+
+	Describe("IT-KA-433-SM-001: Investigation with signal_mode=proactive produces proactive-style prompt", func() {
+		It("should include proactive terminology in the system prompt", func() {
+			mockClient := &mockLLMClient{
+				responses: []llm.ChatResponse{
+					{Message: llm.Message{Role: "assistant", Content: `{"rca_summary":"anticipated failure"}`}},
+					wfToolResp(`{"workflow_id":"scale-up","confidence":0.8}`),
+				},
+			}
+
+			inv := investigator.New(investigator.Config{
+				Client: mockClient, Builder: builder, ResultParser: rp,
+				Enricher: enricher, AuditStore: auditStore, Logger: invLogger,
+				MaxTurns: 15, PhaseTools: phaseTools,
+			})
+
+			_, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api-server", Namespace: "production", Severity: "warning",
+				Message: "High memory trend", SignalMode: "proactive",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(mockClient.calls).ToNot(BeEmpty())
+			systemPrompt := extractSystemPrompt(mockClient.calls[0])
+			Expect(systemPrompt).NotTo(BeEmpty())
+			Expect(systemPrompt).To(SatisfyAny(
+				ContainSubstring("proactive"),
+				ContainSubstring("anticipated"),
+				ContainSubstring("prevention"),
+			), "proactive signal_mode should influence prompt wording")
+		})
+	})
+
+	Describe("IT-KA-433-SM-002: Investigation with missing signal_mode defaults to reactive", func() {
+		It("should not include proactive terminology when signal_mode is empty", func() {
+			mockClient := &mockLLMClient{
+				responses: []llm.ChatResponse{
+					{Message: llm.Message{Role: "assistant", Content: `{"rca_summary":"pod crashed"}`}},
+					wfToolResp(`{"workflow_id":"restart","confidence":0.9}`),
+				},
+			}
+
+			inv := investigator.New(investigator.Config{
+				Client: mockClient, Builder: builder, ResultParser: rp,
+				Enricher: enricher, AuditStore: auditStore, Logger: invLogger,
+				MaxTurns: 15, PhaseTools: phaseTools,
+			})
+
+			_, err := inv.Investigate(context.Background(), katypes.SignalContext{
+				Name: "api-server", Namespace: "production", Severity: "critical",
+				Message: "OOMKilled",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(mockClient.calls).ToNot(BeEmpty())
+			systemPrompt := extractSystemPrompt(mockClient.calls[0])
+			Expect(systemPrompt).NotTo(BeEmpty())
+			Expect(systemPrompt).NotTo(ContainSubstring("proactive"),
+				"missing signal_mode should default to reactive, not proactive")
+		})
+	})
+})
+
+func extractSystemPrompt(req llm.ChatRequest) string {
+	for _, msg := range req.Messages {
+		if msg.Role == "system" {
+			return msg.Content
+		}
+	}
+	return ""
+}

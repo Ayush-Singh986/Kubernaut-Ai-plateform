@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-storage-service
+  namespace: kubernaut-system
+  labels:
+    app: data-storage-service
+    component: stateless
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: data-storage-service
+  template:
+    metadata:
+      labels:
+        app: data-storage-service
+        component: stateless
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: data-storage-sa
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # ========================================
+        # DD-AUTH-014: Middleware-Based Authentication/Authorization
+        # No oauth-proxy sidecar - auth handled in DataStorage middleware
+        #
+        # Flow: Client → DataStorage:8081 (direct)
+        # - DataStorage middleware validates tokens (TokenReview API)
+        # - DataStorage middleware checks permissions (SubjectAccessReview API)
+        # - User identity injected into context for audit logging
+        # ========================================
+        - name: data-storage
+          image: quay.io/jordigilh/data-storage:latest
+          imagePullPolicy: Always
+          ports:
+            # DD-AUTH-014: Direct access (no proxy)
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: CONFIG_PATH
+              value: /etc/datastorage/config.yaml
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # DD-AUTH-014: Health probes check DataStorage directly (no proxy)
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081  # Direct to DataStorage health server
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081  # DD-AUTH-014: Direct to DataStorage health server
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/datastorage
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/datastorage/secrets
+              readOnly: true
+            - name: signing-cert
+              mountPath: /etc/certs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: data-storage-config
+        - name: secrets
+          projected:
+            sources:
+              - secret:
+                  name: data-storage-db-secret
+                  items:
+                    - key: db-secrets.yaml
+                      path: db-secrets.yaml
+              - secret:
+                  name: data-storage-redis-secret
+                  items:
+                    - key: redis-secrets.yaml
+                      path: redis-secrets.yaml
+        - name: signing-cert
+          secret:
+            secretName: datastorage-signing-cert
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 90
+

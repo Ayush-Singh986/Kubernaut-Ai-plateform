@@ -1,0 +1,645 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package datastorage
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// Test suite for Data Storage E2E tests
+// This suite sets up a complete production-like environment:
+// - Kind cluster (2 nodes: 1 control-plane + 1 worker) with NodePort exposure
+// - PostgreSQL 16 (V1.0 label-only, for workflow catalog)
+// - Redis (for DLQ fallback)
+// - Data Storage service (deployed to Kind cluster)
+//
+// ARCHITECTURE: Uses SHARED deployment pattern (like Gateway E2E tests)
+// - Services deployed ONCE in SynchronizedBeforeSuite
+// - All tests share the same infrastructure via NodePort (no port-forwarding)
+// - Eliminates kubectl port-forward instability
+// - Faster execution, no per-test deployment overhead
+//
+// E2E Test Coverage (10-15%):
+// - Scenario 1: Happy Path - Complete remediation audit trail
+// - Scenario 2: DLQ Fallback - Data Storage Service outage recovery
+// - Scenario 3: Query API - Timeline retrieval with filtering
+// - Scenario 4: Workflow Search - Hybrid weighted scoring
+// - Scenario 5: [REMOVED] Embedding Service (V1.0: label-only architecture)
+// - Scenario 6: Workflow Search Audit Trail - Audit event generation
+
+func TestDataStorageE2E(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Data Storage E2E Suite")
+}
+
+var (
+	ctx    context.Context
+	cancel context.CancelFunc
+	logger logr.Logger
+
+	// Cluster configuration (shared across all tests)
+	clusterName    string
+	kubeconfigPath string
+
+	// Shared service URLs (NodePort - no port-forwarding needed)
+	// These are set in SynchronizedBeforeSuite and available to all tests
+	dataStorageURL string // https://localhost:28090 (NodePort 30081 mapped via Kind extraPortMappings per DD-TEST-001) - Issue #753: HTTPS
+	healthURL      string // http://localhost:28092 (NodePort 30281 mapped via Kind extraPortMappings) - Issue #753: plain HTTP health
+	metricsURL     string // http://localhost:28091 (NodePort 30181 mapped via Kind extraPortMappings per DD-TEST-001 v3.1)
+	postgresURL    string // localhost:25433 (NodePort 30432 mapped via Kind extraPortMappings per DD-TEST-001)
+
+	// DSClient is the shared authenticated OpenAPI client for E2E tests (DD-AUTH-014)
+	//
+	// USAGE PATTERN (DD-AUTH-014 - Zero Trust):
+	//   - Use DSClient for functional tests (audit, workflow, metrics)
+	//   - Create custom clients for authorization tests (SAR scenarios)
+	//
+	// This client is authenticated with the shared E2E ServiceAccount
+	// (datastorage-e2e-client) which has full CRUD RBAC permissions.
+	//
+	// Authority: DD-API-001 (OpenAPI Client Mandate)
+	// Authority: DD-AUTH-014 (Middleware-based Authentication)
+	DSClient *dsgen.Client
+
+	// AuthHTTPClient is an authenticated HTTP client for tests requiring raw HTTP calls
+	// (e.g., 409 Conflict responses not yet in OpenAPI spec, or detailed response inspection)
+	//
+	// Authority: DD-AUTH-014 (Middleware-based Authentication)
+	AuthHTTPClient *http.Client
+
+	// Shared PostgreSQL connection for E2E test verification
+	// NOTE: E2E tests should prefer API verification over direct DB access
+	// This is provided for tests migrated from integration that require DB verification
+	testDB *sql.DB
+
+	// Shared namespace for all tests (services deployed ONCE)
+	sharedNamespace string = "datastorage-e2e"
+
+	// Track if any test failed (for cluster cleanup decision)
+	anyTestFailed bool
+
+	// Coverage mode detection (DD-TEST-007: E2E Coverage Capture Standard)
+	coverageMode bool
+	coverDir     string = "./coverdata"
+)
+
+// Note: Helper functions (generateUniqueNamespace, createNamespace, deleteNamespace, etc.)
+// are defined in helpers.go to avoid duplication
+
+var _ = SynchronizedBeforeSuite(
+	// This function runs ONCE on process 1 only
+	func() []byte {
+		// Initialize context for process 1
+		ctx, cancel = context.WithCancel(context.Background())
+
+		// Initialize logger for process 1 (DD-005 v2.0: logr.Logger migration)
+		logger = kubelog.NewLogger(kubelog.DevelopmentOptions())
+
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		logger.Info("Data Storage E2E Test Suite - Cluster Setup (ONCE - Process 1)")
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// DD-TEST-007: E2E Coverage Capture Standard
+		// Detect if coverage mode is enabled via E2E_COVERAGE environment variable
+		coverageMode = os.Getenv("E2E_COVERAGE") == "true"
+		if coverageMode {
+			logger.Info("📊 DD-TEST-007: E2E Coverage mode ENABLED")
+			// Create coverage directory for Go 1.20+ binary profiling
+			if err := os.MkdirAll(coverDir, 0777); err != nil {
+				logger.Info("⚠️  Failed to create coverage directory", "error", err)
+			} else {
+				logger.Info("   ✅ Coverage directory created", "path", coverDir)
+				logger.Info("   💡 Coverage data will be extracted from Kind node after tests")
+			}
+		} else {
+			logger.Info("📊 DD-TEST-007: E2E Coverage mode DISABLED (set E2E_COVERAGE=true to enable)")
+		}
+
+		logger.Info("Creating Kind cluster with NodePort exposure...")
+		logger.Info("  • Kind cluster (2 nodes: control-plane + worker)")
+		logger.Info("  • NodePort exposure: Data Storage (30081→8080), Metrics (30181→9090), PostgreSQL (30432→5432)")
+		logger.Info("  • PostgreSQL 16 (V1.0 label-only, workflow catalog, SOC2 audit storage)")
+		logger.Info("  • Redis (DLQ fallback)")
+		logger.Info("  • Data Storage Docker image (build + load)")
+		logger.Info("  • Kubeconfig: ~/.kube/datastorage-e2e-config")
+		logger.Info("")
+		logger.Info("Note: All tests share the same infrastructure via NodePort")
+		logger.Info("      No kubectl port-forward needed - eliminates instability")
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Set cluster configuration
+		clusterName = "datastorage-e2e"
+		homeDir, err := os.UserHomeDir()
+		Expect(err).ToNot(HaveOccurred())
+		// Use isolated kubeconfig path per TESTING_GUIDELINES.md section "Kubeconfig Isolation Policy"
+		// Convention: ~/.kube/{serviceName}-e2e-config (NEVER ~/.kube/config)
+		kubeconfigPath = fmt.Sprintf("%s/.kube/datastorage-e2e-config", homeDir)
+
+		// Create infrastructure with parallel setup (ONCE for all tests)
+		// This uses parallel optimization: Build image | PostgreSQL | Redis run concurrently
+		// Saves ~1 minute per E2E run (~23% faster)
+		logger.Info("🚀 Setting up DataStorage E2E infrastructure (PARALLEL MODE)...")
+		logger.Info("   Expected: ~3.6 min (vs ~4.7 min sequential)")
+		err = infrastructure.SetupDataStorageInfrastructureParallel(ctx, clusterName, kubeconfigPath, sharedNamespace, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Issue #753: Wait for Data Storage health endpoint via dedicated health port (plain HTTP)
+		// Health server on :8081 (NodePort 30281 → host 28092) — no TLS needed
+		logger.Info("⏳ Waiting for Data Storage health endpoint to be responsive...")
+		healthClient := &http.Client{Timeout: 10 * time.Second}
+		Eventually(func() error {
+			resp, err := healthClient.Get("http://localhost:28092/readyz") // Issue #753: health port (NodePort 30281 → host 28092)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("health check returned status %d", resp.StatusCode)
+			}
+			return nil
+		}, 120*time.Second, 2*time.Second).Should(Succeed(), "Data Storage health endpoint did not become responsive")
+		logger.Info("✅ Data Storage health is ready via NodePort (localhost:28092)")
+
+		// Wait for dedicated metrics server to be responsive (Issue #283: separate port 9090)
+		logger.Info("⏳ Waiting for Data Storage metrics endpoint to be responsive...")
+		metricsClient := &http.Client{Timeout: 10 * time.Second}
+		Eventually(func() error {
+			resp, err := metricsClient.Get("http://localhost:28091/metrics") // Per DD-TEST-001 v3.1 (NodePort 30181 → host 28091)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("metrics endpoint returned status %d", resp.StatusCode)
+			}
+			return nil
+		}, 30*time.Second, 2*time.Second).Should(Succeed(), "Data Storage metrics endpoint did not become responsive")
+		logger.Info("✅ Data Storage metrics is ready via NodePort (localhost:28091)")
+
+		// DD-API-001 + DD-AUTH-014: Initialize OpenAPI client with ServiceAccount authentication
+		logger.Info("📋 DD-API-001 + DD-AUTH-014: Creating ServiceAccount for E2E tests...")
+		e2eSAName := "datastorage-e2e-client"
+		testNamespace := sharedNamespace
+		err = infrastructure.CreateE2EServiceAccountWithDataStorageAccess(
+			ctx,
+			testNamespace,
+			kubeconfigPath,
+			e2eSAName,
+			GinkgoWriter,
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create E2E ServiceAccount")
+
+		// Get token for E2E ServiceAccount
+		var e2eToken string
+		e2eToken, err = infrastructure.GetServiceAccountToken(
+			ctx,
+			testNamespace,
+			e2eSAName,
+			kubeconfigPath,
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to get E2E ServiceAccount token")
+		logger.Info("✅ E2E ServiceAccount created with DataStorage access", "name", e2eSAName)
+
+		// Issue #753: Create TLS-aware transport for HTTPS API calls
+		logger.Info("📋 DD-API-001 + DD-AUTH-014 + Issue #753: Creating TLS-aware authenticated clients...")
+		tlsTransport, err := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create TLS-aware transport")
+		saTransport := testauth.NewServiceAccountTransportWithBase(e2eToken, tlsTransport)
+		httpClient := &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: saTransport,
+		}
+		DSClient, err = dsgen.NewClient(
+			"https://localhost:28090",
+			dsgen.WithClient(httpClient),
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create DataStorage OpenAPI client")
+
+		// DD-WORKFLOW-016: Seed action types before any workflow operations.
+		// #1661 Phase 55c: Postgres-backed seeding removed alongside DS's
+		// createWorkflow/createActionType REST endpoints (DD-WORKFLOW-018 --
+		// AuthWebhook is the sole write path). Specs in this suite that need a
+		// registered workflow do so via direct CRD creation
+		// (infrastructure.SeedWorkflowContentViaDirectCRDCreation); this
+		// ActionType CRD seed remains for specs asserting against the
+		// taxonomy directly. #1677 (DD-WORKFLOW-019): DS itself no longer
+		// maintains an informer-backed cache over these CRDs -- that cache
+		// and the discovery/scoring logic that read it moved to KA.
+		Expect(infrastructure.SeedActionTypesViaCRD(ctx, kubeconfigPath, testNamespace, GinkgoWriter)).To(Succeed(), "Failed to seed action types (CRD)")
+
+		// Also export authenticated HTTP client for tests needing raw HTTP (non-spec responses)
+		AuthHTTPClient = &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: saTransport,
+		}
+		logger.Info("✅ Shared authenticated clients created (DD-AUTH-014 + Issue #753 TLS)",
+			"baseURL", "https://localhost:28090",
+			"pattern", "Use DSClient for spec-compliant APIs, AuthHTTPClient for non-spec responses (409, etc)")
+
+		// Note: Certificate warm-up is SKIPPED in suite setup
+		// Rationale: cert-manager is installed per-test-suite (e.g., SOC2 tests),
+		// not in global infrastructure. Each test suite that needs cert-manager
+		// will install and warm it up in its BeforeAll block.
+		// This keeps suite setup fast and avoids unnecessary cert-manager dependency
+		// for tests that don't need digital signatures.
+		logger.Info("📋 Certificate generation: Delegated to test suites (SOC2 tests install cert-manager)")
+
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		logger.Info("Cluster Setup Complete - Broadcasting to all processes")
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		logger.Info("Cluster configuration", "cluster", clusterName, "kubeconfig", kubeconfigPath)
+		logger.Info("Service URLs (per DD-TEST-001 + Issue #753)", "dataStorage", "https://localhost:28090", "health", "http://localhost:28092", "metrics", "http://localhost:28091", "postgresql", "localhost:25433")
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Return kubeconfig path and ServiceAccount token to all processes
+		setupData := map[string]string{
+			"kubeconfig": kubeconfigPath,
+			"token":      e2eToken,
+		}
+		setupJSON, err := json.Marshal(setupData)
+		Expect(err).ToNot(HaveOccurred(), "Failed to marshal setup data")
+		return setupJSON
+	},
+	// This function runs on ALL processes (including process 1)
+	func(data []byte) {
+		// Initialize context
+		ctx, cancel = context.WithCancel(context.Background())
+
+		// Initialize logger for this process (DD-005 v2.0: logr.Logger migration)
+		logger = kubelog.NewLogger(kubelog.DevelopmentOptions())
+
+		// Initialize failure tracking
+		anyTestFailed = false
+
+		// Receive kubeconfig path and ServiceAccount token from process 1
+		var setupData map[string]string
+		err := json.Unmarshal(data, &setupData)
+		Expect(err).ToNot(HaveOccurred(), "Failed to unmarshal setup data")
+		kubeconfigPath = setupData["kubeconfig"]
+		e2eToken := setupData["token"]
+		clusterName = "datastorage-e2e"
+
+		// Set shared URLs - NodePort or port-forward depending on Kind provider
+		// Per DD-TEST-001: DataStorage E2E uses ports 25433-28139
+		// Kind with Docker: extraPortMappings work (localhost:25433)
+		// Kind with Podman: extraPortMappings DON'T work, need port-forward
+		processID := GinkgoParallelProcess()
+
+		// Try NodePort first (works with Docker) - Per DD-TEST-001 lines 106-127
+		// Issue #753: API port is now HTTPS, health port is plain HTTP
+		dataStorageURL = "https://localhost:28090"
+		healthURL = "http://localhost:28092"
+		metricsURL = "http://localhost:28091"
+		postgresURL = "postgresql://slm_user:test_password@localhost:25433/action_history?sslmode=disable"
+
+		// Test if NodePort is accessible (check PostgreSQL connection)
+		testDB, err = sql.Open("pgx", postgresURL)
+		nodePortWorks := false
+		if err == nil {
+			if err := testDB.Ping(); err == nil {
+				nodePortWorks = true
+				logger.Info("✅ NodePort accessible (Docker provider) - testDB ready", "process", processID)
+				// Keep testDB open for use by E2E tests (closed in AfterSuite)
+			} else {
+				_ = testDB.Close()
+				testDB = nil
+			}
+		} else {
+			testDB = nil
+		}
+
+		// If NodePort doesn't work, use kubectl port-forward (Podman)
+		if !nodePortWorks {
+			logger.Info("⚠️  NodePort not accessible (Podman provider) - starting port-forward", "process", processID)
+
+			// Start port-forward for PostgreSQL (background process)
+			// Use process-specific ports to avoid conflicts in parallel execution
+			// Per DD-TEST-001: Base ports 25433 (PostgreSQL), 28090 (DataStorage), 28091 (Metrics), 28092 (Health)
+			pgLocalPort := 25433 + (processID * 100)
+			dsLocalPort := 28090 + (processID * 100)
+			metricsLocalPort := 28091 + (processID * 100)
+			healthLocalPort := 28092 + (processID * 100)
+
+			// PostgreSQL port-forward
+			go func() {
+				cmd := exec.Command("kubectl", "port-forward",
+					"--kubeconfig", kubeconfigPath,
+					"-n", sharedNamespace,
+					"svc/postgresql",
+					fmt.Sprintf("%d:5432", pgLocalPort))
+				if err := cmd.Run(); err != nil {
+					logger.Error(err, "PostgreSQL port-forward failed", "process", processID)
+				}
+			}()
+
+			// DataStorage API port-forward (Issue #753: HTTPS on port 8080)
+			go func() {
+				cmd := exec.Command("kubectl", "port-forward",
+					"--kubeconfig", kubeconfigPath,
+					"-n", sharedNamespace,
+					"svc/data-storage-service",
+					fmt.Sprintf("%d:8080", dsLocalPort))
+				if err := cmd.Run(); err != nil {
+					logger.Error(err, "DataStorage port-forward failed", "process", processID)
+				}
+			}()
+
+			// DataStorage Metrics port-forward (Issue #283: dedicated metrics server on port 9090)
+			go func() {
+				cmd := exec.Command("kubectl", "port-forward",
+					"--kubeconfig", kubeconfigPath,
+					"-n", sharedNamespace,
+					"svc/data-storage-service",
+					fmt.Sprintf("%d:9090", metricsLocalPort))
+				if err := cmd.Run(); err != nil {
+					logger.Error(err, "DataStorage metrics port-forward failed", "process", processID)
+				}
+			}()
+
+			// DataStorage Health port-forward (Issue #753: dedicated health server on port 8081)
+			go func() {
+				cmd := exec.Command("kubectl", "port-forward",
+					"--kubeconfig", kubeconfigPath,
+					"-n", sharedNamespace,
+					"svc/data-storage-service",
+					fmt.Sprintf("%d:8081", healthLocalPort))
+				if err := cmd.Run(); err != nil {
+					logger.Error(err, "DataStorage health port-forward failed", "process", processID)
+				}
+			}()
+
+			// Per TESTING_GUIDELINES.md: Use Eventually() to verify port-forward is ready
+			Eventually(func() bool {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", dsLocalPort), 500*time.Millisecond)
+				if err != nil {
+					return false
+				}
+				_ = conn.Close()
+				return true
+			}, 30*time.Second, 1*time.Second).Should(BeTrue(), "Port-forward should be established")
+
+			// Update URLs to use process-specific ports
+			// Issue #753: API port is now HTTPS
+			dataStorageURL = fmt.Sprintf("https://localhost:%d", dsLocalPort)
+			healthURL = fmt.Sprintf("http://localhost:%d", healthLocalPort)
+			metricsURL = fmt.Sprintf("http://localhost:%d", metricsLocalPort)
+			postgresURL = fmt.Sprintf("postgresql://slm_user:test_password@localhost:%d/action_history?sslmode=disable", pgLocalPort)
+
+			// Connect to PostgreSQL via port-forward
+			testDB, err = sql.Open("pgx", postgresURL)
+			if err != nil {
+				logger.Error(err, "Failed to open PostgreSQL connection via port-forward")
+			} else if err := testDB.Ping(); err != nil {
+				logger.Error(err, "Failed to ping PostgreSQL via port-forward")
+				_ = testDB.Close()
+				testDB = nil
+			}
+
+			logger.Info("✅ Port-forward established", "process", processID,
+				"dataStorageURL", dataStorageURL,
+				"healthURL", healthURL,
+				"metricsURL", metricsURL,
+				"postgresURL", postgresURL,
+				"testDB", testDB != nil)
+		}
+
+		logger.Info("🔌 URLs configured",
+			"process", processID,
+			"dataStorageURL", dataStorageURL,
+			"healthURL", healthURL,
+			"metricsURL", metricsURL,
+			"postgresURL", postgresURL,
+			"method", map[bool]string{true: "NodePort", false: "port-forward"}[nodePortWorks])
+
+		// DD-API-001 + DD-AUTH-014 + Issue #753: Initialize TLS-aware authenticated OpenAPI client
+		logger.Info("📋 DD-API-001 + DD-AUTH-014 + Issue #753: Creating TLS-aware authenticated client for process", "process", processID)
+		tlsTransport, tlsErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsErr).ToNot(HaveOccurred(), "Failed to create TLS-aware transport")
+		saTransport := testauth.NewServiceAccountTransportWithBase(e2eToken, tlsTransport)
+		httpClient := &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: saTransport,
+		}
+		DSClient, err = dsgen.NewClient(
+			dataStorageURL,
+			dsgen.WithClient(httpClient),
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create DataStorage OpenAPI client")
+
+		// Also export authenticated HTTP client for tests needing raw HTTP (non-spec responses)
+		AuthHTTPClient = &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: saTransport,
+		}
+
+		logger.Info("✅ Shared authenticated clients created (DD-AUTH-014 + Issue #753 TLS)",
+			"process", processID,
+			"baseURL", dataStorageURL,
+			"pattern", "Use DSClient for spec-compliant APIs, AuthHTTPClient for non-spec responses (409, etc)")
+
+		// Note: We do NOT set KUBECONFIG environment variable to avoid affecting other tests
+		// All kubectl commands must use --kubeconfig flag explicitly
+		logger.Info("Process ready", "process", processID, "kubeconfig", kubeconfigPath)
+	},
+)
+
+// Track test failures for cluster cleanup decision
+var _ = ReportAfterEach(func(report SpecReport) {
+	if report.Failed() {
+		anyTestFailed = true
+		infrastructure.MarkTestFailure(clusterName)
+	}
+})
+
+var _ = SynchronizedAfterSuite(
+	// This function runs on ALL processes (cleanup per-process resources)
+	func() {
+		processID := GinkgoParallelProcess()
+		logger.Info("Process cleanup complete",
+			"process", processID,
+			"hadFailures", anyTestFailed)
+
+		// Close PostgreSQL connection for this process
+		if testDB != nil {
+			_ = testDB.Close()
+		}
+
+		// Cancel context for this process
+		if cancel != nil {
+			cancel()
+		}
+
+		// Sync logger for this process (DD-005 v2.0: use kubelog.Sync)
+		kubelog.Sync(logger)
+	},
+	// This function runs ONCE on process 1 only (cleanup shared resources)
+	func() {
+		// Re-initialize logger for final cleanup (DD-005 v2.0: logr.Logger migration)
+		logger = kubelog.NewLogger(kubelog.DevelopmentOptions())
+
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		logger.Info("Data Storage E2E Test Suite - Cleanup (Process 1)")
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		// Detect setup failure: if DSClient is nil, BeforeSuite failed
+		setupFailed := DSClient == nil
+		if setupFailed {
+			logger.Info("⚠️  Setup failure detected (DSClient is nil)")
+		}
+
+		// Check if we should keep the cluster for debugging
+		// Note: In parallel execution, anyTestFailed may not capture all process failures
+		// Use KEEP_CLUSTER=always to force preservation, or check test exit code
+		keepCluster := os.Getenv("KEEP_CLUSTER")
+
+		// In SynchronizedAfterSuite, we're in process 1 which may not have run failing tests
+		// The safest approach: always export logs if ANY process reported failures
+		// We'll check this by looking at the captured anyTestFailed flag from process cleanup
+		// Also check for setup failures (BeforeSuite failures)
+		suiteFailed := infrastructure.ResolveAnyFailure(clusterName, setupFailed, anyTestFailed, GinkgoWriter) ||
+			keepCluster == "true" || keepCluster == "always"
+		defer infrastructure.CleanupFailureMarker(clusterName)
+
+		// DD-TESTING-003 / Issue #2036: production must-gather image as a local
+		// podman container on the cluster's "kind" network, replacing the old
+		// ad-hoc "kind export logs" + manual tail mechanism. Collected BEFORE
+		// coverage collection, which may terminate the DS pod (SIGTERM for
+		// flush) -- if we collect after, the container is removed and its
+		// logs are lost. DS deploys to sharedNamespace ("datastorage-e2e"),
+		// not the default "kubernaut-system".
+		var mustGatherOutputDir string
+		if suiteFailed {
+			logger.Info("⚠️  Test failure detected - collecting diagnostic information...")
+
+			// #2036 rollout validation (2026-08-19 CI run): the package-level
+			// `ctx` is already canceled by the first SynchronizedAfterSuite
+			// closure's `cancel()` (runs on ALL processes, before this
+			// process-1-only closure) -- exec.CommandContext against an
+			// already-canceled context fails immediately with "context
+			// canceled" before podman ever runs. Use a fresh, independent
+			// context here so cluster teardown timing can never suppress
+			// diagnostic collection.
+			bgCtx := context.Background()
+			mustGatherImage, buildErr := infrastructure.BuildMustGatherImageForE2E(bgCtx, GinkgoWriter)
+			if buildErr != nil {
+				logger.Error(buildErr, "Failed to build must-gather image (non-fatal, no diagnostics collected)")
+			} else {
+				mustGatherOutputDir = filepath.Join("/tmp", "kubernaut-must-gather", "datastorage", clusterName)
+				if err := infrastructure.RunMustGatherImage(bgCtx, infrastructure.RunMustGatherImageOptions{
+					ClusterName: clusterName,
+					Image:       mustGatherImage,
+					OutputDir:   mustGatherOutputDir,
+					Namespace:   sharedNamespace,
+					UsePodman:   true,
+				}, GinkgoWriter); err != nil {
+					logger.Error(err, "Failed to run must-gather image (non-fatal, no diagnostics collected)")
+				}
+			}
+		}
+
+		// DD-TEST-007: Collect E2E binary coverage AFTER log export but BEFORE cluster deletion
+		if coverageMode {
+			if err := infrastructure.CollectE2EBinaryCoverage(infrastructure.E2ECoverageOptions{
+				ServiceName:    "datastorage",
+				ClusterName:    clusterName,
+				DeploymentName: "datastorage",
+				Namespace:      sharedNamespace,
+				KubeconfigPath: kubeconfigPath,
+			}, GinkgoWriter); err != nil {
+				logger.Error(err, "Failed to collect E2E binary coverage (non-fatal)")
+			}
+		}
+
+		if suiteFailed {
+			logger.Info("⚠️  Keeping cluster for debugging (KEEP_CLUSTER=true or test failed)")
+			logger.Info("Cluster details for debugging",
+				"cluster", clusterName,
+				"kubeconfig", kubeconfigPath,
+				"dataStorageURL", dataStorageURL,
+				"postgresURL", postgresURL,
+				"must_gather_output", mustGatherOutputDir)
+			logger.Info("To delete the cluster manually: kind delete cluster --name " + clusterName)
+			logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			return
+		}
+
+		// Delete Kind cluster (no log export needed - tests passed)
+		logger.Info("🗑️  Deleting Kind cluster...")
+		if err := infrastructure.DeleteCluster(clusterName, "datastorage", false, GinkgoWriter); err != nil {
+			logger.Error(err, "Failed to delete cluster")
+		} else {
+			logger.Info("✅ Cluster deleted successfully")
+		}
+
+		// DD-TEST-001 v1.1: Clean up service images built for Kind
+		logger.Info("🧹 DD-TEST-001 v1.1: Cleaning up service images...")
+		imageRegistry := os.Getenv("IMAGE_REGISTRY")
+		imageTag := os.Getenv("IMAGE_TAG")
+
+		// Skip cleanup when using registry images (CI/CD mode)
+		// In registry mode, images are pulled (not built locally), so local removal fails
+		if imageRegistry != "" && imageTag != "" {
+			logger.Info("ℹ️  Registry mode detected - skipping local image removal",
+				"registry", imageRegistry, "tag", imageTag)
+		} else if imageTag != "" {
+			// Local build mode: Remove locally built images
+			serviceName := "datastorage"
+			imageName := fmt.Sprintf("%s:%s", serviceName, imageTag)
+
+			pruneCmd := exec.Command("podman", "rmi", imageName)
+			pruneOutput, pruneErr := pruneCmd.CombinedOutput()
+			if pruneErr != nil {
+				logger.Info("⚠️  Failed to remove service image (may not exist)",
+					"image", imageName,
+					"error", pruneErr,
+					"output", string(pruneOutput))
+			} else {
+				logger.Info("✅ Service image removed", "image", imageName, "saved", "~200-500MB")
+			}
+		} else {
+			logger.Info("⚠️  IMAGE_TAG not set, skipping service image cleanup")
+		}
+
+		// Prune dangling images from Kind builds
+		logger.Info("🧹 Pruning dangling images from Kind builds...")
+		pruneDanglingCmd := exec.Command("podman", "image", "prune", "-f")
+		_, _ = pruneDanglingCmd.CombinedOutput()
+		logger.Info("✅ Dangling images pruned")
+
+		logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	},
+)

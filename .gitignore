@@ -1,0 +1,319 @@
+vendor/
+prometheus-alerts-slm
+.DS_Store
+*.test
+test-slm
+*coverage.out
+bin/
+mcp-server
+/effectivenessmonitor
+*.log
+*.bak
+*.bak2
+
+# WIP/backup test file artifacts (prevent re-introduction)
+*.final
+*.final[0-9]*
+*.tf
+*.ff
+*.af
+*.uf
+*.lh
+*.ogen
+*.ogen[0-9]*
+*.ogenbak
+*.ogenfix
+*.constbak
+*.all
+*.fix[0-9]*
+
+
+# Compiled Go binaries (service executables - root directory only)
+/aianalysis
+/remediationorchestrator
+/signalprocessing
+/workflowexecution
+/datastorage
+/gateway
+/kubernaut
+/kubernautagent
+/mock-llm
+
+# Compiled Go binary from hack/gen-helm-config-docs (main package, no ext) --
+# `go build ./hack/gen-helm-config-docs` produces this locally; only main.go/
+# main_test.go are meant to be committed
+/hack/gen-helm-config-docs/gen-helm-config-docs
+
+# Root directory markdown files (except README.md and CHANGELOG*.md)
+# Note: Leading slash ensures this only applies to root directory
+/*.md
+!/README.md
+!/CHANGELOG*.md
+!/CONTRIBUTING.md
+!/CODE_OF_CONDUCT.md
+!/SECURITY.md
+!/AGENTS.md
+
+# Root ephemeral files (test artifacts, build metadata)
+/watch_*
+/.last-image-tag-*.env
+/.perf-baseline.json
+/coverprofile.out
+/*-coverage.out
+/coverage-*.out
+/coverage-*.html
+/*.out
+/*.html
+/run_*.sh
+/*-unit.json
+/*-integration.json
+/*-e2e.json
+/test-results.json
+/report.json
+
+# Root ephemeral directories
+/TODO/
+/.hypothesis/
+/.preserved/
+/.pytest_cache/
+/htmlcov/
+/coverdata/
+/_artifacts/
+# Python artifacts
+*.pyc
+__pycache__/
+.coverage
+*.py[cod]
+*$py.class
+
+.trash/*
+# Temporary analysis and build files
+build_failures.*
+*_failures.txt
+*_interfaces.txt
+*_business.txt
+
+# Environment files (except example template)
+.env
+.env.*
+!.env.example
+
+# AI provider credentials (MUST NOT be committed)
+credentials.json
+slack-webhook.url
+slack-webhook-url
+*service-account*.json
+*openai-credentials*.json
+*anthropic-credentials*.json
+*google-credentials*.json
+*gcp-credentials*.json
+*vertex-ai*.json
+*azure-credentials*.json
+*aws-credentials*.json
+
+# IDE configuration directories
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
+.claude/
+
+# Ephemeral documentation files
+*_UPDATE_COMPLETE.md
+*_COMPLETE.md
+*_PROGRESS.md
+*_TRIAGE.md
+*_TRIAGE-*.md
+*-TRIAGE.md
+*-TRIAGE-*.md
+*_SUMMARY.md
+*_STATUS.md
+*_CLEANUP.md
+*_REPORT.md
+*_IMPLEMENTATION.md
+*_ASSESSMENT.md
+*_ANALYSIS.md
+*_STRATEGY.md
+*_RESULTS.md
+*_AUDIT.md
+TDD_*.md
+SKIPPED_*.md
+HEALTH_*.md
+UNIT_TEST_*.md
+
+# GitHub community files (exempt from ephemeral patterns above)
+!.github/**/*.md
+
+# Session and infrastructure ephemeral files
+*SESSION*.md
+# Exception: test plan documents containing "session" in docs/testing/
+!docs/testing/**/session_*
+# Exception: test plan checkpoint files in docs/tests/
+!docs/tests/**/*SESSION*
+*-HOUR-*.md
+*INFRASTRUCTURE-SETUP*.md
+*INFRASTRUCTURE-FINAL*.md
+*INFRASTRUCTURE-ISSUE*.md
+*SUCCESS*.md
+*BREAKTHROUGH*.md
+
+# VHS recording artifacts (GIFs are committed, MP4s are too large for GitHub)
+#*.mp4
+
+# Build artifacts (large binaries that should never be committed)
+/authwebhook
+workflowexecutor
+integration-webhook-server
+/kubernaut
+webhook.test
+dynamic-toolset-server
+main
+remediationprocessor
+gateway-arm64
+/gateway
+/cmd/*/main
+/cmd/*/*
+!/cmd/*/*.go
+!/cmd/*/main.go
+
+# Context API ephemeral development documents
+CONTEXT_API_DEVELOPMENT_KICKOFF.md
+CONTEXT_API_DEFERRED_NEXT_STEPS.md
+
+# Session documentation (ephemeral files from development sessions - GLOBAL)
+DAY[0-9]*-*.md
+DD-[0-9]*-*-COMPLETE.md
+TDD-*.md
+
+# Component/service-specific ephemeral session files (e.g., DATA-STORAGE-*-SUMMARY.md) - GLOBAL
+# Pattern: Uppercase component name with hyphens/underscores followed by ephemeral suffix
+# Applies to ANY directory in the repository
+[A-Z][A-Z-]*-*-SUMMARY.md
+[A-Z][A-Z-]*-*-COMPLETE.md
+[A-Z][A-Z-]*-*-STATUS.md
+[A-Z][A-Z-]*-*-PROGRESS.md
+[A-Z][A-Z-]*-*-TRIAGE.md
+[A-Z][A-Z-]*-*-GAP*.md
+[A-Z][A-Z-]*-*-ASSESSMENT.md
+[A-Z][A-Z-]*-*-HANDOFF.md
+[A-Z][A-Z-]*-*-GUIDE.md
+[A-Z][A-Z-]*-*-REPORT.md
+[A-Z][A-Z-]*-*-FINAL*.md
+# EXCEPTIONS: Allow Design Decision documents (DD-*.md, ADR-*.md) in architecture/decisions
+!docs/architecture/decisions/DD-*.md
+!docs/architecture/decisions/ADR-*.md
+!docs/architecture/decisions/DD-*/**
+!docs/architecture/decisions/ADR-*/**
+
+# EXCEPTIONS: Allow Business Requirement documents (BR-*.md) in requirements
+!docs/requirements/BR-*/**
+
+# EXCEPTIONS: Allow archived design documents
+!docs/archived/
+!docs/archived/**
+
+# Pattern with underscores (e.g., CONTEXT_API_*) - GLOBAL
+[A-Z][A-Z_]*_*_SUMMARY.md
+[A-Z][A-Z_]*_*_COMPLETE.md
+[A-Z][A-Z_]*_*_STATUS.md
+[A-Z][A-Z_]*_*_TRIAGE.md
+[A-Z][A-Z_]*_*_ANALYSIS.md
+[A-Z][A-Z_]*_*_ALIGNMENT*.md
+[A-Z][A-Z_]*_*_UPDATES*.md
+
+# Service binaries (compiled during local development/testing)
+/datastorage
+/contextapi
+/notification
+dynamictoolset
+test/e2e/gateway/.kube/
+
+# Kubernetes cache files (generated during E2E tests)
+**/.kube/cache/
+
+PR_DESCRIPTION.md
+/junit*.xml
+/coverage-*.out
+/coverage-*.html
+
+# Session and triage files (ephemeral documentation)
+*_TRIAGE.md
+*_SUMMARY.md
+*_STATUS.md
+*_ANALYSIS.md
+*_PROGRESS.md
+*_HANDOFF.md
+*_COMPLETE.md
+SESSION_*.txt
+GOOD_*.md
+OVERNIGHT_*.md
+
+# EXCEPTIONS: Allow docs/triage/ (cross-team documentation)
+# Must be at the END of the file to override all ignore patterns above
+!docs/triage/
+!docs/triage/**
+
+# Default configs (Rego policies are now mandatory --set-file; no chart-embedded defaults)
+
+# Auto-generated OpenAPI spec copies (via go:generate)
+# DD-API-002: These are auto-generated from api/openapi/*.yaml
+# Tracked in git so remote builds (e.g. helios08 AMD64) work without running go:generate
+# pkg/*/server/middleware/openapi_spec_data.yaml
+# pkg/audit/openapi_spec_data.yaml
+
+/workflowexecution
+
+# Test coverage files (all tiers - unit, integration, e2e)
+# Go coverage metadata files (generated during coverage collection)
+covcounters.*
+covmeta.*
+
+# Coverage files and directories (ANY file/directory starting with "coverage")
+coverage*
+**/coverage*
+# Exception: scripts/coverage/ directory (contains coverage tooling, not coverage data)
+!scripts/coverage/
+!scripts/coverage/**
+# Exception: Go source files named coverage*.go (e.g., test/infrastructure/coverage.go)
+!**/coverage*.go
+
+# Coverage directories (all tiers)
+coverage-unit/
+coverage-integration/
+coverage-e2e/
+**/coverdata/
+
+# Integration test auth tokens (generated during test setup)
+.hapi-integration-sa-token
+.*-integration-sa-token
+
+# Generated integration test configs (ADR-030)
+test/infrastructure/.generated-configs/
+# Generated mock LLM scenario configs (workflow UUIDs from test seeding)
+test/integration/aianalysis/mock-llm-config.yaml
+# Must-gather diagnostic archives (downloaded during CI triage)
+must-gather-*.tar.gz
+
+# Goose binary (auto-downloaded by apply-migrations.sh, #278)
+.goose-bin/
+
+# Cursor Swarm Extension (development)
+.cursor-swarm-dev/
+*.vsix
+*.venv*
+/apifrontend
+
+# SBOM and license report artifacts (generated during builds)
+/sbom-*/
+/license-report/
+
+# Code graph caches (IDE plugins)
+.codegraph-colbymchenry/
+.codegraph/
+.codanna/
+
+# Serena MCP trial (project config/cache/logs; not yet a team decision)
+.serena/
+
+# MCP server config (local)
+.mcp.json
+/fleetmetadatacache

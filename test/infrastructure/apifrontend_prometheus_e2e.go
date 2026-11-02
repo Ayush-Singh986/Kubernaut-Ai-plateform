@@ -1,0 +1,650 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+// ============================================================================
+// AF Severity Triage Prometheus Infrastructure
+//
+// Deploys Prometheus with AF-specific alert rules for the 5-tier severity
+// triage pipeline E2E tests. Builds on the shared DeployPrometheus helper.
+//
+// Provides:
+//   - DeployPrometheusForSeverityTriage: orchestrates Prometheus + AF rules
+//   - SeedTriageAlertRules: patches Prometheus ConfigMap with AF fixtures
+//   - RemoveFleetOnlyPrometheusRules: isolates standalone AF from Fleet markers
+//   - WaitForPrometheusRuleState: polls /api/v1/rules for desired state
+//   - AFInjectOTLPMetrics: single-metric OTLP injection (wraps InjectMetrics)
+//   - SeverityTriageAlertRulesYAML: PromQL alert rule fixtures
+// ============================================================================
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// DeployPrometheusForSeverityTriage deploys Prometheus in the single-cluster AF
+// E2E environment and seeds AF-specific alert rules for the severity tests.
+// clusterID is optional; the standalone AF lane passes empty because it has no
+// Gateway registration, while a Gateway-backed caller may supply its ID.
+//
+// This delegates to kubernaut's canonical DeployPrometheus (DD-TEST-001 v2.8)
+// and then patches the rules ConfigMap with AF's triage fixtures.
+//
+// CI RCA (#2182, run 32063443903, job 95495177776): DeployPrometheus's initial
+// `kubectl apply` used to be followed immediately by SeedTriageAlertRules's
+// `kubectl rollout restart`, with no wait for the first rollout to settle.
+// Restarting a Deployment before its first ReplicaSet ever reaches Ready lets
+// Kubernetes' RollingUpdate surge/unavailable budget (both round up to 1 for
+// replicas:1) scale the old AND new ReplicaSet to 1 concurrently -- two
+// Prometheus pods, each with its own empty non-PVC TSDB, briefly answering
+// the same prometheus-svc NodePort. kube-proxy load-balances each new
+// connection independently, so the OTLP metric injections that ground
+// "HighCPU" (test/e2e/apifrontend/e2e_suite_test.go) could land with a
+// genuine 200 OK on the pod about to be torn down -- silently discarding the
+// sample -- while every subsequent rule-state poll only ever reaches the
+// surviving pod, which never received it. That poll then times out after
+// 120s ("HighCPU alert must reach firing state within 120s"), failing
+// SynchronizedBeforeSuite and aborting the whole 204-spec suite before any
+// test runs. Waiting for the initial rollout to be fully Ready before
+// SeedTriageAlertRules restarts it removes the race: only one ReplicaSet is
+// ever "current" when the restart begins, so the rolling update tears down
+// the sole old pod before/as the new one becomes ready, never running both
+// concurrently.
+//
+// Ref: Prometheus OTLP receiver -- https://prometheus.io/docs/guides/opentelemetry/
+func DeployPrometheusForSeverityTriage(ctx context.Context, namespace, clusterID, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "Deploying Prometheus for severity triage testing...")
+
+	if err := DeployPrometheus(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("deploy Prometheus: %w", err)
+	}
+
+	if err := waitForPrometheusRollout(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("initial Prometheus rollout not ready: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "Seeding AF severity triage alert rules...")
+
+	if err := SeedTriageAlertRules(ctx, namespace, clusterID, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("seed triage alert rules: %w", err)
+	}
+
+	return nil
+}
+
+// waitForPrometheusRollout blocks until the Prometheus Deployment's initial
+// ReplicaSet is fully available, so a subsequent `kubectl rollout restart`
+// (SeedTriageAlertRules) always starts from a single stable ReplicaSet
+// instead of racing with it (see DeployPrometheusForSeverityTriage RCA above).
+//
+// 120s (not SeedTriageAlertRules's 60s) because, unlike that restart, this is
+// the FIRST rollout: PrometheusImage ("prom/prometheus:latest") is pulled
+// live from Docker Hub here, not preloaded into Kind like the app images
+// (apifrontend/datastorage/mock-llm/kubernautagent) or already cached
+// node-side like SeedTriageAlertRules's restart of the same image. Docker
+// Hub is more prone to registry throttling on shared GH-hosted-runner egress
+// IPs than the ghcr.io pulls elsewhere in this package -- DeployDex's
+// equivalent first-rollout wait for its own external ghcr.io image uses
+// 120s for the same reason (test/infrastructure/dex_e2e.go).
+func waitForPrometheusRollout(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, //nolint:gosec // G204: test infra
+		"rollout", "status", "deployment/prometheus",
+		"-n", namespace,
+		"--timeout=120s")
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("prometheus not ready after initial deploy: %w", err)
+	}
+	return nil
+}
+
+// SeedTriageAlertRules patches the Prometheus rules ConfigMap with AF-specific
+// alert rules for the 5-tier severity triage pipeline. Empty clusterID omits
+// the synthetic cluster labels used only by Gateway-backed callers. After
+// patching, it triggers a Prometheus config reload.
+func SeedTriageAlertRules(ctx context.Context, namespace, clusterID, kubeconfigPath string, writer io.Writer) error {
+	rulesYAML := renderSeverityTriageAlertRules(clusterID)
+
+	patchJSON := fmt.Sprintf(`{"data":{"af-severity-triage.yml":%q}}`, rulesYAML)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, //nolint:gosec // G204: test infra
+		"patch", "configmap", "prometheus-rules",
+		"-n", namespace,
+		"--type=merge",
+		"-p", patchJSON)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("patch prometheus-rules ConfigMap: %w", err)
+	}
+
+	restartCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"rollout", "restart", "deployment/prometheus",
+		"-n", namespace)
+	restartCmd.Stdout = writer
+	restartCmd.Stderr = writer
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("restart Prometheus: %w", err)
+	}
+
+	waitCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"rollout", "status", "deployment/prometheus",
+		"-n", namespace,
+		"--timeout=60s")
+	waitCmd.Stdout = writer
+	waitCmd.Stderr = writer
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("prometheus not ready after restart: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "  Prometheus ready with AF severity triage alert rules")
+	return nil
+}
+
+// RemoveFleetOnlyPrometheusRules removes synthetic Fleet markers from the
+// standalone AF Prometheus. Those cluster-scoped alerts are intentionally
+// fail-closed by severity triage and would otherwise make unrelated local
+// Tier 2/Tier 2.5 fixtures appear ambiguous.
+func RemoveFleetOnlyPrometheusRules(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	patchJSON := `{"data":{"af-hub-cluster-triage-2394.yml":null,"fleet-alerts-cluster-scoped-2274.yml":null,"fleet-interactive-bridge-grounding.yml":null,"fleet-organic-af-only-alert.yml":null,"fleet-organic-gateway-alert.yml":null}}`
+	patchCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, //nolint:gosec // G204: test infra
+		"patch", "configmap", "prometheus-rules", "-n", namespace, "--type=merge", "-p", patchJSON)
+	patchCmd.Stdout = writer
+	patchCmd.Stderr = writer
+	if err := patchCmd.Run(); err != nil {
+		return fmt.Errorf("remove Fleet-only Prometheus rules: %w", err)
+	}
+
+	restartCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"rollout", "restart", "deployment/prometheus", "-n", namespace)
+	restartCmd.Stdout = writer
+	restartCmd.Stderr = writer
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("restart Prometheus after removing Fleet-only rules: %w", err)
+	}
+
+	waitCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"rollout", "status", "deployment/prometheus", "-n", namespace, "--timeout=60s")
+	waitCmd.Stdout = writer
+	waitCmd.Stderr = writer
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("prometheus not ready after removing Fleet-only rules: %w", err)
+	}
+	return nil
+}
+
+// renderSeverityTriageAlertRules renders the local AF fixture without a
+// synthetic Gateway identity. A non-empty ID is available for callers that
+// explicitly need Gateway-attributed rules; the standalone AF E2E passes an
+// empty ID and local triage ignores cluster labels.
+func renderSeverityTriageAlertRules(clusterID string) string {
+	rulesYAML := SeverityTriageAlertRulesYAML
+	if clusterID == "" {
+		rulesYAML = strings.ReplaceAll(rulesYAML, "          cluster: \"__HUB_CLUSTER_ID__\"\n", "")
+		rulesYAML = strings.ReplaceAll(rulesYAML, "          cluster: \"__UNREGISTERED_CLUSTER_ID__\"\n", "")
+	} else {
+		rulesYAML = strings.ReplaceAll(rulesYAML, "\"__HUB_CLUSTER_ID__\"", strconv.Quote(clusterID))
+		rulesYAML = strings.ReplaceAll(rulesYAML, "\"__UNREGISTERED_CLUSTER_ID__\"", strconv.Quote("unregistered-cluster-2462"))
+	}
+	return strings.TrimSpace(rulesYAML)
+}
+
+// PrometheusRuleState represents the state of a Prometheus alerting rule.
+type PrometheusRuleState string
+
+const (
+	// RuleStateFiring means the alerting rule is actively firing.
+	RuleStateFiring PrometheusRuleState = "firing"
+	// RuleStatePending means the rule is pending (threshold met, not yet firing).
+	RuleStatePending PrometheusRuleState = "pending"
+	// RuleStateInactive means the rule is not pending or firing.
+	RuleStateInactive PrometheusRuleState = "inactive"
+)
+
+type prometheusRulesResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		Groups []struct {
+			Name  string `json:"name"`
+			Rules []struct {
+				Name  string `json:"name"`
+				State string `json:"state"`
+				Type  string `json:"type"`
+			} `json:"rules"`
+		} `json:"groups"`
+	} `json:"data"`
+}
+
+// WaitForPrometheusRuleState polls Prometheus /api/v1/rules until the named
+// alert rule reaches the desired state or the timeout expires.
+func WaitForPrometheusRuleState(ctx context.Context, prometheusURL, ruleName string, desired PrometheusRuleState, timeout time.Duration, caPath ...string) error {
+	deadline := time.Now().Add(timeout)
+	client, err := prometheusRulesHTTPClient(caPath)
+	if err != nil {
+		return err
+	}
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, prometheusURL+"/api/v1/rules", http.NoBody)
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusInternalServerError {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("prometheus rules endpoint returned status %d: %s", resp.StatusCode, string(body))
+		}
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		var rulesResp prometheusRulesResponse
+		if err := json.Unmarshal(body, &rulesResp); err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if prometheusRuleStateReached(rulesResp, ruleName, desired) {
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("rule %q did not reach state %q within %v", ruleName, desired, timeout)
+}
+
+func prometheusRulesHTTPClient(caPath []string) (*http.Client, error) {
+	if len(caPath) > 0 && caPath[0] != "" {
+		return NewMonitoringTLSAwareClient(caPath[0])
+	}
+	return &http.Client{Timeout: 5 * time.Second}, nil
+}
+
+func prometheusRuleStateReached(response prometheusRulesResponse, ruleName string, desired PrometheusRuleState) bool {
+	for _, group := range response.Data.Groups {
+		for _, rule := range group.Rules {
+			if rule.Name == ruleName && PrometheusRuleState(rule.State) == desired {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AFInjectOTLPMetrics sends a single gauge metric to Prometheus via the OTLP HTTP endpoint.
+// This is a convenience wrapper around InjectMetrics for AF E2E tests that inject one
+// metric at a time with simple label maps.
+//
+// Retries up to 5 times with 2s back-off to survive NodePort endpoint
+// propagation delays after Prometheus rolling restarts.
+func AFInjectOTLPMetrics(ctx context.Context, prometheusURL, metricName string, value float64, labels map[string]string) error {
+	metric := []TestMetric{{Name: metricName, Value: value, Labels: labels}}
+
+	var lastErr error
+	for attempt := range 5 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if lastErr = InjectMetrics(ctx, prometheusURL, metric); lastErr == nil {
+			return nil
+		}
+		if attempt < 4 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	return fmt.Errorf("after 5 attempts: %w", lastErr)
+}
+
+// SeverityTriageAlertRulesYAML is the Prometheus alert rules YAML for seeding
+// the E2E severity triage pipeline tests.
+//
+// Each rule exercises a specific tier:
+//   - HighCPU: for:0s -> fires immediately when metric is present (tier 1)
+//   - HighMemory: for:1h -> stays pending when metric present (tier 1.5)
+//   - DiskPressure: for:0s + metric injected -> inactive then evaluates live data (tier 2)
+//   - NetworkLatency: query matches no-data-ns target but no metric exists -> inactive no data (tier 2.5)
+//   - AFInvestigateGrounding: for:0s + vector(1) (never stale) -> tier 1, grounds
+//     the mock-LLM's dedicated "af-investigate-e2e/Pod/af-investigate-target"
+//     investigate fixture (see below)
+//   - AFProgressiveGrounding: same deterministic grounding for E2E-AF-1407's
+//     isolated "af-progressive-e2e/Pod/af-progressive-target" fixture
+//   - AFStructuredArtifactGrounding: same deterministic grounding for
+//     E2E-AF-1408's isolated "af-structured-artifact-e2e/Pod/af-structured-artifact-target"
+//     fixture
+//   - AFSessionActiveGrounding: for:0s + vector(1) (never stale) -> tier 1, grounds
+//     the isolated session_active concurrency fixture
+//     (namespace="af-session-active-e2e", kind=Pod, name="af-session-active-target")
+//   - UserSeverityHintGrounding: for:0s + vector(1) (never stale) -> tier 1,
+//     grounds severity_triage_test.go's TC-E2E-SEV-06 "user hint does not
+//     bypass triage" fixture (dedicated namespace="sev-userhint-ns",
+//     kind=Deployment, name="test-user-severity-bypass")
+//   - StructuredDecisionGrounding: for:0s + vector(1) (never stale) -> tier 1,
+//     grounds structured_decision_e2e_test.go's groundSession helper
+//     (dedicated namespace="af-structured-decision-e2e", kind=Pod,
+//     name="structured-decision-target"). Deliberately NOT the same
+//     fixture as AFInvestigateGrounding above: with --procs>1, Ginkgo runs
+//     this suite's Ordered container concurrently with every other spec
+//     that also drives kubernaut_investigate against af-investigate-target
+//     (af_investigate/af_progressive_investigate/af_investigate_resume,
+//     #1839), and af_create_rr.go's checkExistingRRByFingerprint dedups by
+//     target -- so groundSession's investigate call would nondeterministically
+//     inherit an unrelated concurrent test's still-open KA session and hit
+//     the session_active/early_rca fallback path instead of a clean grounded
+//     result, starving present_decision of grounding and emitting no SSE
+//     decision event at all (CI run 31320575553, E2E-AF-1395-001). A
+//     dedicated target closes this the same way test-firing-target et al.
+//     already do for the severity tiers above.
+//   - StructuredDecisionGrounding2: same shape as StructuredDecisionGrounding
+//     (namespace="af-structured-decision-e2e", kind=Pod,
+//     name="structured-decision-target-2"), dedicated to
+//     structured_decision_e2e_test.go's E2E-AF-1396-002 alone. That
+//     Describe block is Ordered, and all three of its Its previously shared
+//     ONE grounding fixture -- fine for #1395-001 and #1396-001, but by the
+//     third call af_create_rr.go's checkExistingRRByFingerprint dedups to
+//     the SAME RR the first two tests already opened a KA interactive
+//     session against, so E2E-AF-1396-002's own groundSession call
+//     nondeterministically observes "session_active" instead of a clean
+//     result -- which per investigateHasGroundedContent (phase_guard.go)
+//     and its own UT-AF-2023-004 deterministically fails present_decision's
+//     grounding guard closed, clearing options to [] (CI run 31335085795,
+//     "AC-6: ALL options must be presented"). A second dedicated target
+//     gives this one test its own RR so it never contends with #1395-001/
+//     #1396-001's still-open sessions, matching the fix already applied
+//     once above for cross-Describe-block contention.
+//   - StructuredDecisionGrounding3: same shape again
+//     (name="structured-decision-target-3"), dedicated to
+//     structured_decision_e2e_test.go's E2E-AF-1396-001 alone. The
+//     StructuredDecisionGrounding2 fix above only closed contention for
+//     the 3rd It (1396-002) relative to the first two -- it did not
+//     address that the 2nd It (1396-001) still shares #1395-001's ORIGINAL
+//     target, so 1396-001's own groundSession call can just as
+//     nondeterministically inherit #1395-001's still-open KA session and
+//     observe "session_active", surfacing as an empty (fail-closed)
+//     payload.RCA.Severity instead of the authoritative "warning" (CI run
+//     31351842574, E2E-AF-1396-001). A third dedicated target removes the last
+//     remaining shared fixture in this Ordered block: each of the 3 Its
+//     now grounds against its own RR.
+//
+// #1839 follow-up (no fixtures in "default"): HighCPU and HighMemory used to
+// target namespace="default" (unlike DiskPressure/NetworkLatency, which
+// already used dedicated sev-tier2-ns/no-data-ns namespaces). "default" is
+// the one namespace every test can use without any setup, which is exactly
+// why it kept attracting *unintentional* consumers: severity_triage_test.go's
+// TC-E2E-SEV-06 ("test-user-severity-bypass") had no rule of its own and was
+// silently passing only because it shared namespace="default" with HighCPU,
+// riding Tier 1's namespace-level fallback (bestAlertMatch in
+// severity/triage.go) -- the same hidden-coupling failure mode diagnosed
+// below for the (now-fixed) AF investigate fixture. HighCPU/HighMemory were
+// moved to their own dedicated namespaces (sev-tier1-ns/sev-tier15-ns) --
+// matching the sev-tier2-ns/no-data-ns convention -- specifically so
+// "default" no longer groups multiple fixtures together and cannot silently
+// backstop a future test that forgets to configure its own grounding.
+//
+// PromQL expressions include label selectors for namespace/kind/name because the
+// triage pipeline's Tier 1.5 and Tier 2 use ExtractLabelMatchers(query)
+// + MatchesResource to correlate rules with the target resource.
+//
+// #1839 RCA: the APIFrontend E2E Mock LLM fixture's generic
+// "af_investigate"/"af_investigate_resume" scenarios target a fixed resource
+// via kubernaut_investigate, which (like kubernaut_remediate) now runs through
+// the fail-closed severity triage pipeline. The progressive and
+// structured-artifact scenarios use their own dedicated targets and rules.
+// Before Tier 3 was removed, an ungrounded call like this silently fell back
+// to the pure-LLM tier and always "succeeded". The generic fixture originally
+// used namespace="default",kind="Pod",name="nginx" with no dedicated rule,
+// so calls degraded to Triager's namespace-level correlation fallback (any
+// firing alert sharing namespace="default", e.g. HighCPU) — which is
+// timing-dependent: HighCPU's injected OTLP metric goes Prometheus-stale
+// (default 5m) if not re-injected, so tests running late in a parallel E2E
+// suite intermittently lost that accidental grounding and failed with
+// ErrSeverityUndetermined (see progressive_flow_e2e_test.go E2E-AF-1408-001).
+//
+// AFInvestigateGrounding's expr (vector(1) > 0) has no underlying series, so
+// it can never go stale and fires deterministically for the whole suite
+// lifetime. Its target was also moved off the shared "default" namespace and
+// generic "nginx" name onto a dedicated namespace="af-investigate-e2e",
+// name="af-investigate-target": labelsOverlap (severity/triage.go) matches
+// resource-level correlation on kind+name only (namespace is intentionally
+// excluded there), and Tier 1 additionally falls back to a namespace-level
+// match against ANY resource sharing an alert's namespace when no
+// resource-exact match exists. A rule keyed to "default"/"nginx" — both
+// generic, easily-reused placeholder values — would silently backstop any
+// *future* scenario that targets the same generic name/namespace without
+// configuring its own grounding, defeating the whole point of removing
+// Tier 3 (a mis-configured new scenario should fail loudly with
+// ErrSeverityUndetermined, not silently inherit an unrelated fixture's
+// severity). A dedicated namespace+name closes both correlation paths to
+// exactly this one fixture, matching the existing convention of
+// test-firing-target/test-pending-target/test-inactive-target/
+// test-nodata-target below (each unique enough that no other scenario would
+// plausibly collide with it).
+const SeverityTriageAlertRulesYAML = `
+groups:
+  - name: e2e-severity-triage
+    interval: 5s
+    rules:
+      - alert: HighCPU
+        expr: e2e_cpu_usage_percent{namespace="sev-tier1-ns",kind="Deployment",name="test-firing-target"} > 90
+        for: 0s
+        labels:
+          severity: critical
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+        annotations:
+          summary: "CPU usage is critically high"
+      - alert: HighMemory
+        expr: e2e_memory_usage_percent{namespace="sev-tier15-ns",kind="Deployment",name="test-pending-target"} > 85
+        for: 1h
+        labels:
+          severity: high
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+        annotations:
+          summary: "Memory usage is high"
+      - alert: DiskPressure
+        expr: e2e_disk_usage_percent{namespace="sev-tier2-ns",kind="Deployment",name="test-inactive-target"} > 90
+        for: 0s
+        labels:
+          severity: medium
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+        annotations:
+          summary: "Disk usage is elevated"
+      - alert: NetworkLatency
+        expr: e2e_network_latency_ms{namespace="no-data-ns",kind="Deployment",name="test-nodata-target"} > 100
+        for: 0s
+        labels:
+          severity: high
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+        annotations:
+          summary: "Network latency is high"
+      - alert: AFInvestigateGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-investigate-e2e
+          kind: Pod
+          name: af-investigate-target
+        annotations:
+          summary: "Synthetic grounding alert for AF investigate E2E fixture (dedicated namespace/name, #1839)"
+      - alert: AFProgressiveGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-progressive-e2e
+          kind: Pod
+          name: af-progressive-target
+        annotations:
+          summary: "Synthetic grounding alert for the isolated progressive RCA fixture (#1407)"
+      - alert: AFStructuredArtifactGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-structured-artifact-e2e
+          kind: Pod
+          name: af-structured-artifact-target
+        annotations:
+          summary: "Synthetic grounding alert for the isolated structured-artifact fixture (#1408)"
+      - alert: AFSessionActiveGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-session-active-e2e
+          kind: Pod
+          name: af-session-active-target
+        annotations:
+          summary: "Synthetic grounding alert for the isolated session_active status E2E fixture (#1922)"
+      - alert: UserSeverityHintGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: sev-userhint-ns
+          kind: Deployment
+          name: test-user-severity-bypass
+        annotations:
+          summary: "Synthetic grounding alert for TC-E2E-SEV-06 (dedicated namespace/name, #1839)"
+      - alert: StructuredDecisionGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-structured-decision-e2e
+          kind: Pod
+          name: structured-decision-target
+        annotations:
+          summary: "Synthetic grounding alert for structured_decision_e2e_test.go's groundSession (dedicated namespace/name, avoids af-investigate-target fixture contention)"
+      - alert: StructuredDecisionGrounding2
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-structured-decision-e2e
+          kind: Pod
+          name: structured-decision-target-2
+        annotations:
+          summary: "Synthetic grounding alert for structured_decision_e2e_test.go's E2E-AF-1396-002 (dedicated target, avoids intra-suite session_active contention with #1395-001/#1396-001)"
+      - alert: StructuredDecisionGrounding3
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-structured-decision-e2e
+          kind: Pod
+          name: structured-decision-target-3
+        annotations:
+          summary: "Synthetic grounding alert for structured_decision_e2e_test.go's E2E-AF-1396-001 (dedicated target -- #1396-002's own fix above only closed contention for the 3rd It relative to the first two; the 2nd It (1396-001) still shared #1395-001's target, CI run 31351842574)"
+      - alert: StructuredDecisionGrounding4
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: af-structured-decision-e2e
+          kind: Pod
+          name: structured-decision-target-4
+        annotations:
+          summary: "Synthetic grounding alert for structured_decision_e2e_test.go's E2E-AF-2387-002 (dedicated target -- same intra-suite session_active contention rationale as Grounding2/3; Gateway creates the RR directly from this alert so the grounding kubernaut_investigate dedups onto it and KA investigates signal StructuredDecisionGrounding4)"
+      - alert: FleetSessionActiveGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__HUB_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: fleet-session-active-e2e
+          kind: Pod
+          name: fleet-session-active-target
+        annotations:
+          summary: "Synthetic grounding alert for Fleet-mode session_active AF E2E (#2462)"
+      - alert: FleetUnregisteredClusterGrounding
+        expr: vector(1) > 0
+        for: 0s
+        labels:
+          severity: warning
+          source: prometheus
+          cluster: "__UNREGISTERED_CLUSTER_ID__"
+          route_skip_gateway: "true"
+          namespace: fleet-unregistered-cluster-e2e
+          kind: Deployment
+          name: fleet-unregistered-target
+        annotations:
+          summary: "Synthetic grounding alert for an unregistered cluster ID with an existing same-named target (#2462)"
+`

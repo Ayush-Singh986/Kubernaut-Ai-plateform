@@ -1,0 +1,461 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package response
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+)
+
+// usageFor returns the scenario-scripted Usage when cfg carries a Usage
+// override (issue #2387), falling back to the builder's deterministic
+// default otherwise.
+func usageFor(cfg scenarios.MockScenarioConfig, def openai.Usage) openai.Usage {
+	if cfg.Usage != nil {
+		return openai.Usage{
+			PromptTokens:     cfg.Usage.PromptTokens,
+			CompletionTokens: cfg.Usage.CompletionTokens,
+			TotalTokens:      cfg.Usage.TotalTokens,
+		}
+	}
+	return def
+}
+
+// BuildToolCallResponse creates a ChatCompletionResponse with a single tool call.
+func BuildToolCallResponse(model, toolName string, cfg scenarios.MockScenarioConfig) openai.ChatCompletionResponse {
+	args := buildToolArguments(toolName, cfg)
+	argsJSON, _ := json.Marshal(args)
+
+	content := (*string)(nil)
+	return openai.ChatCompletionResponse{
+		ID:      randomChatID(),
+		Object:  openai.ObjectChatCompletion,
+		Created: openai.FixedCreatedTime,
+		Model:   model,
+		Choices: []openai.Choice{
+			{
+				Index: 0,
+				Message: openai.Message{
+					Role:             "assistant",
+					Content:          content,
+					ReasoningContent: cfg.ReasoningText,
+					ToolCalls: []openai.ToolCall{
+						{
+							ID:   randomCallID(),
+							Type: "function",
+							Function: openai.FunctionCall{
+								Name:      toolName,
+								Arguments: string(argsJSON),
+							},
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+		Usage: usageFor(cfg, openai.Usage{PromptTokens: 500, CompletionTokens: 50, TotalTokens: 550}),
+	}
+}
+
+// BuildMultiToolCallResponse creates a ChatCompletionResponse with multiple
+// tool calls in a single assistant message, enabling parallel tool execution.
+func BuildMultiToolCallResponse(model string, toolEntries []scenarios.MultiToolCallEntry, cfg scenarios.MockScenarioConfig) openai.ChatCompletionResponse {
+	calls := make([]openai.ToolCall, len(toolEntries))
+	for i, entry := range toolEntries {
+		argsJSON, _ := json.Marshal(entry.Arguments)
+		calls[i] = openai.ToolCall{
+			ID:   randomCallID(),
+			Type: "function",
+			Function: openai.FunctionCall{
+				Name:      entry.Name,
+				Arguments: string(argsJSON),
+			},
+		}
+	}
+
+	content := (*string)(nil)
+	return openai.ChatCompletionResponse{
+		ID:      randomChatID(),
+		Object:  openai.ObjectChatCompletion,
+		Created: openai.FixedCreatedTime,
+		Model:   model,
+		Choices: []openai.Choice{
+			{
+				Index: 0,
+				Message: openai.Message{
+					Role:      "assistant",
+					Content:   content,
+					ToolCalls: calls,
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+		Usage: usageFor(cfg, openai.Usage{PromptTokens: 500, CompletionTokens: 80, TotalTokens: 580}),
+	}
+}
+
+// BuildTextResponse creates a ChatCompletionResponse with the final RCA text.
+func BuildTextResponse(model string, cfg scenarios.MockScenarioConfig) openai.ChatCompletionResponse {
+	text := buildAnalysisText(cfg)
+	return openai.ChatCompletionResponse{
+		ID:      randomChatID(),
+		Object:  openai.ObjectChatCompletion,
+		Created: openai.FixedCreatedTime,
+		Model:   model,
+		Choices: []openai.Choice{
+			{
+				Index: 0,
+				Message: openai.Message{
+					Role:             "assistant",
+					Content:          &text,
+					ReasoningContent: cfg.ReasoningText,
+				},
+				FinishReason: "stop",
+			},
+		},
+		Usage: usageFor(cfg, openai.Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}),
+	}
+}
+
+// BuildForceTextResponse produces a text-only response regardless of tools provided.
+// Used when MOCK_LLM_FORCE_TEXT=true or when tools are nil/empty.
+func BuildForceTextResponse(model string, cfg scenarios.MockScenarioConfig, _ []openai.Tool) openai.ChatCompletionResponse {
+	return BuildTextResponse(model, cfg)
+}
+
+// BuildErrorResponse creates an OpenAI-compatible error response.
+func BuildErrorResponse(message string) openai.ErrorResponse {
+	return openai.ErrorResponse{
+		Error: openai.ErrorDetail{
+			Message: message,
+			Type:    "server_error",
+			Code:    "internal_error",
+		},
+	}
+}
+
+func buildToolArguments(toolName string, cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	if len(cfg.ToolCallArgs) > 0 {
+		return cfg.ToolCallArgs
+	}
+	switch toolName {
+	case openai.ToolSearchWorkflowCatalog:
+		return map[string]interface{}{
+			"query": fmt.Sprintf("%s %s", cfg.SignalName, cfg.Severity),
+			"rca_resource": map[string]string{
+				"signal_name": cfg.SignalName,
+				"kind":        cfg.ResourceKind,
+				"namespace":   cfg.ResourceNS,
+				"name":        cfg.ResourceName,
+			},
+		}
+	case openai.ToolListAvailableActions:
+		return map[string]interface{}{"limit": 100}
+	case openai.ToolListWorkflows:
+		return buildListWorkflowsArguments(cfg)
+	case openai.ToolGetWorkflow:
+		return map[string]interface{}{"workflow_id": cfg.WorkflowID}
+	case openai.ToolGetResourceContext:
+		return map[string]interface{}{
+			"kind": cfg.ResourceKind, "namespace": cfg.ResourceNS, "name": cfg.ResourceName,
+		}
+	case openai.ToolKubectlGetYAML, openai.ToolKubectlGetByName:
+		return buildKubectlArguments(cfg)
+	case openai.ToolSubmitResult:
+		return rcaOnlyJSON(cfg)
+	case openai.ToolSubmitResultWithWorkflow:
+		return analysisJSON(cfg)
+	case openai.ToolSubmitResultNoWorkflow:
+		rca := map[string]interface{}{
+			"summary":     cfg.RootCause,
+			"severity":    cfg.Severity,
+			"signal_name": cfg.SignalName,
+		}
+		return map[string]interface{}{
+			"root_cause_analysis": rca,
+			"reasoning":           "No matching workflow found for this scenario",
+		}
+	case "kubernaut_list_remediations":
+		return map[string]interface{}{"namespace": cfg.ResourceNS}
+	case "kubernaut_remediate":
+		return buildRemediateArguments(cfg)
+	default:
+		return map[string]interface{}{}
+	}
+}
+
+func buildListWorkflowsArguments(cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	actionType := cfg.ActionType
+	if actionType == "" {
+		actionType = "remediation"
+	}
+	return map[string]interface{}{"action_type": actionType}
+}
+
+func buildKubectlArguments(cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	args := map[string]interface{}{"kind": cfg.ResourceKind, "name": cfg.ResourceName, "namespace": cfg.ResourceNS}
+	if cfg.APIGroup != "" {
+		args["api_group"] = cfg.APIGroup
+	}
+	return args
+}
+
+func buildRemediateArguments(cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	args := map[string]interface{}{
+		"namespace":   cfg.ResourceNS,
+		"kind":        cfg.ResourceKind,
+		"name":        cfg.ResourceName,
+		"description": "Auto-remediation triggered by AI analysis",
+	}
+	if cfg.ClusterID != "" {
+		args["cluster_id"] = cfg.ClusterID
+	}
+	if cfg.APIVersion != "" {
+		args["api_version"] = cfg.APIVersion
+	}
+	return args
+}
+
+// analysisJSON builds a structured response that KA's parser can fully extract.
+// Top-level fields (investigation_outcome, actionable, severity, confidence) are
+// required by KA's outcome routing; needs_human_review / human_review_reason are
+// parser-derived (BR-KA-200) and must NOT appear in LLM responses.
+//
+// Golden transcript ref: kubernaut-demo-scenarios#296 — response structure mirrors
+// real Claude Sonnet 4 output to ensure KA parser fidelity.
+func analysisJSON(cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	rca := map[string]interface{}{
+		"summary":              cfg.RootCause,
+		"severity":             cfg.Severity,
+		"signal_name":          cfg.SignalName,
+		"contributing_factors": contributingSlice(cfg),
+	}
+	if cfg.CausalMechanismStatus != "" {
+		rca["causal_mechanism_status"] = cfg.CausalMechanismStatus
+	}
+	if cfg.ResourceKind != "" {
+		rt := map[string]string{
+			"kind":      cfg.ResourceKind,
+			"name":      cfg.ResourceName,
+			"namespace": cfg.ResourceNS,
+		}
+		if cfg.APIVersion != "" {
+			rt["api_version"] = cfg.APIVersion // #1040
+		}
+		rca["remediation_target"] = rt
+	}
+
+	obj := map[string]interface{}{
+		"root_cause_analysis": rca,
+		"severity":            cfg.Severity,
+		"confidence":          cfg.Confidence,
+	}
+
+	if cfg.WorkflowID != "" && !cfg.DeclineWorkflow {
+		sw := map[string]interface{}{
+			"workflow_id":      cfg.WorkflowID,
+			"confidence":       cfg.Confidence,
+			"rationale":        workflowRationale(cfg),
+			"execution_engine": executionEngine(cfg),
+		}
+		if len(cfg.RawParameters) > 0 {
+			sw["parameters"] = cfg.RawParameters
+		} else if len(cfg.Parameters) > 0 {
+			sw["parameters"] = cfg.Parameters
+		}
+		if cfg.RepeatJustification != nil {
+			sw["repeat_justification"] = cfg.RepeatJustification
+		}
+		obj["selected_workflow"] = sw
+	}
+
+	if len(cfg.Alternatives) > 0 {
+		alts := make([]map[string]interface{}, 0, len(cfg.Alternatives))
+		for _, a := range cfg.Alternatives {
+			alt := map[string]interface{}{
+				"workflow_id": a.WorkflowID,
+				"confidence":  a.Confidence,
+				"rationale":   a.Rationale,
+			}
+			if len(a.Parameters) > 0 {
+				alt["parameters"] = a.Parameters
+			}
+			alts = append(alts, alt)
+		}
+		obj["alternative_workflows"] = alts
+	}
+
+	if cfg.InvestigationOutcome != "" {
+		obj["investigation_outcome"] = cfg.InvestigationOutcome
+	}
+	if cfg.IsActionable != nil {
+		obj["actionable"] = *cfg.IsActionable
+	}
+	return obj
+}
+
+// rcaOnlyJSON builds a structured RCA-only response for the submit_result tool
+// (Phase 1 RCA extraction). Matches the RCAResultSchema expected by KA's parser.
+// Used when discover_workflows triggers RCA extraction from interactive conversation.
+func rcaOnlyJSON(cfg scenarios.MockScenarioConfig) map[string]interface{} {
+	rca := map[string]interface{}{
+		"summary":              cfg.RootCause,
+		"severity":             cfg.Severity,
+		"signal_name":          cfg.SignalName,
+		"contributing_factors": contributingSlice(cfg),
+	}
+	if cfg.CausalMechanismStatus != "" {
+		rca["causal_mechanism_status"] = cfg.CausalMechanismStatus
+	}
+	if cfg.ResourceKind != "" {
+		rt := map[string]string{
+			"kind":      cfg.ResourceKind,
+			"name":      cfg.ResourceName,
+			"namespace": cfg.ResourceNS,
+		}
+		if cfg.APIVersion != "" {
+			rt["api_version"] = cfg.APIVersion
+		}
+		rca["remediation_target"] = rt
+	}
+
+	obj := map[string]interface{}{
+		"root_cause_analysis":   rca,
+		"severity":              cfg.Severity,
+		"confidence":            cfg.Confidence,
+		"investigation_outcome": "actionable",
+	}
+	if cfg.RCAConfidence != nil {
+		obj["confidence"] = *cfg.RCAConfidence
+	}
+	if cfg.InvestigationOutcome != "" {
+		obj["investigation_outcome"] = cfg.InvestigationOutcome
+	}
+	if cfg.IsActionable != nil {
+		obj["actionable"] = *cfg.IsActionable
+	}
+	return obj
+}
+
+func workflowRationale(cfg scenarios.MockScenarioConfig) string {
+	if cfg.Rationale != "" {
+		return cfg.Rationale
+	}
+	return "Selected based on signal analysis"
+}
+
+func buildAnalysisText(cfg scenarios.MockScenarioConfig) string {
+	if cfg.ExactAnalysisText != "" {
+		return cfg.ExactAnalysisText
+	}
+	obj := analysisJSON(cfg)
+	data, _ := json.MarshalIndent(obj, "", "  ")
+	return string(data)
+}
+
+func contributingSlice(cfg scenarios.MockScenarioConfig) []string {
+	if len(cfg.Contributing) > 0 {
+		return cfg.Contributing
+	}
+	return []string{"traffic_spike", "resource_limits"}
+}
+
+func executionEngine(cfg scenarios.MockScenarioConfig) string {
+	if cfg.ExecutionEngine != "" {
+		return cfg.ExecutionEngine
+	}
+	return "tekton"
+}
+
+func randomChatID() string {
+	return "chatcmpl-" + randomHex(4)
+}
+
+func randomCallID() string {
+	return "call_" + randomHex(6)
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// ExtractFieldFromToolResult scans OpenAI messages for a tool result that
+// corresponds to the given function name and extracts a top-level string
+// field from its JSON content. Tool results are correlated with function
+// names via the preceding assistant message's ToolCalls ordering.
+func ExtractFieldFromToolResult(messages []openai.Message, toolName, field string) string {
+	var pendingCalls []string
+	callNamesByID := make(map[string]string)
+	for _, m := range messages {
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			pendingCalls = recordPendingToolCalls(m.ToolCalls, callNamesByID, pendingCalls)
+			continue
+		}
+		callName, remaining, ok := resolvePendingToolCall(m, pendingCalls, callNamesByID)
+		pendingCalls = remaining
+		if !ok || callName != toolName {
+			continue
+		}
+		if value := extractStringField(*m.Content, field); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func recordPendingToolCalls(toolCalls []openai.ToolCall, callNamesByID map[string]string, pending []string) []string {
+	pending = pending[:0]
+	for _, tc := range toolCalls {
+		callNamesByID[tc.ID] = tc.Function.Name
+		pending = append(pending, tc.Function.Name)
+	}
+	return pending
+}
+
+func resolvePendingToolCall(message openai.Message, pending []string, namesByID map[string]string) (string, []string, bool) {
+	if message.Role != "tool" || message.Content == nil || (message.ToolCallID == "" && len(pending) == 0) {
+		return "", pending, false
+	}
+	if message.ToolCallID != "" {
+		return namesByID[message.ToolCallID], pending, true
+	}
+	callName := pending[0]
+	return callName, pending[1:], true
+}
+
+func extractStringField(content, field string) string {
+	idx := strings.Index(content, "{")
+	if idx < 0 {
+		return ""
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal([]byte(content[idx:]), &object); err != nil {
+		return ""
+	}
+	value, ok := object[field].(string)
+	if !ok {
+		return ""
+	}
+	return value
+}

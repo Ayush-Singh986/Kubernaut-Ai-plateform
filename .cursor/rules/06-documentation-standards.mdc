@@ -1,0 +1,84 @@
+---
+globs: "docs/**/*,*.md"
+description: "Documentation standards and architecture guidelines for kubernaut"
+---
+
+> **Policy Authority**: [AGENTS.md](../../AGENTS.md) defines all mandatory methodology.
+> This file provides documentation formatting patterns.
+
+# Documentation Standards for Kubernaut
+
+## Documentation Structure
+
+### In-Repo Documentation (`docs/`)
+
+Technical documentation for developers and contributors, organized into 7 directories:
+
+- **[docs/architecture/](mdc:docs/architecture/)** - Architectural Decision Records (ADRs), Design Decisions (DDs), diagrams, case studies, shared utilities patterns
+- **[docs/design/](mdc:docs/design/)** - CRD design specifications (`design/CRD/`)
+- **[docs/requirements/](mdc:docs/requirements/)** - Business requirements (`BR-*`), module documentation
+- **[docs/testing/](mdc:docs/testing/)** - Test plans, testing guidelines, patterns reference, per-issue test documentation
+- **[docs/operations/](mdc:docs/operations/)** - Deployment guides, build guides, CI/CD, troubleshooting, runbooks
+- **[docs/development/](mdc:docs/development/)** - Development methodology, coding guidelines, getting-started guides, technical debt tracking
+- **[docs/services/](mdc:docs/services/)** - Per-service documentation split into `stateless/` and `crd-controllers/`
+
+### User-Facing Documentation
+
+The public documentation site lives in a separate repository and is published at:
+[https://jordigilh.github.io/kubernaut-docs/](https://jordigilh.github.io/kubernaut-docs/)
+
+### Root-Level Files
+
+- [README.md](mdc:README.md) - Project overview and quick start
+- [CONTRIBUTING.md](mdc:CONTRIBUTING.md) - Contribution guidelines
+- [CODE_OF_CONDUCT.md](mdc:CODE_OF_CONDUCT.md) - Community code of conduct
+- [SECURITY.md](mdc:SECURITY.md) - Security vulnerability reporting
+- [CHANGELOG.md](mdc:CHANGELOG.md) - Release changelog
+
+## Where to Put New Documentation
+
+| Document Type | Location |
+|---|---|
+| Architectural decision (long-term impact) | `docs/architecture/decisions/DD-[CATEGORY]-NNN-title.md` or `ADR-NNN-title.md` |
+| Business requirement | `docs/requirements/BR-[CATEGORY]-NNN-title.md` |
+| Test plan for an issue/BR | `docs/testing/[ISSUE-ID]/TEST_PLAN.md` |
+| Service-specific guide | `docs/services/{stateless,crd-controllers}/[service-name]/` |
+| Deployment or operational guide | `docs/operations/deployment/` or `docs/operations/runbooks/` |
+| Development methodology or standards | `docs/development/` |
+| Troubleshooting guide | `docs/operations/troubleshooting/` |
+
+## Code Documentation Standards
+
+### Package Documentation
+- Document all exported functions, methods, and interfaces
+- Include parameter descriptions and potential errors
+- Provide usage examples for complex functions
+
+### Test Documentation
+- Use Ginkgo/Gomega BDD framework
+- Reference business requirements in test descriptions (e.g., `BR-AI-008`)
+- Reference test plan IDs when available (e.g., `UT-WF-197-001`)
+
+## Architectural Decision Records
+
+Store in [docs/architecture/decisions/](mdc:docs/architecture/decisions/):
+- **Design Decisions**: `DD-[CATEGORY]-NNN-title.md`
+- **Architecture Decision Records**: `ADR-NNN-title.md`
+- **Status**: Proposed, Accepted, Deprecated, Superseded
+
+## Testing Documentation
+
+Location: [docs/testing/](mdc:docs/testing/)
+- [docs/testing/README.md](mdc:docs/testing/README.md) - Testing strategy overview
+- [docs/testing/TESTING_PATTERNS_QUICK_REFERENCE.md](mdc:docs/testing/TESTING_PATTERNS_QUICK_REFERENCE.md) - Daily patterns reference
+- [docs/testing/ANTI_PATTERN_DETECTION.md](mdc:docs/testing/ANTI_PATTERN_DETECTION.md) - Anti-pattern detection guide
+- Per-issue test plans in `docs/testing/[ISSUE-ID]/`
+
+## Writing Style Guidelines
+
+- Use clear, concise language
+- Write in active voice
+- Use present tense for current functionality
+- Include concrete examples and code snippets
+- Structure content with clear headings and bullet points
+- Ensure all code examples are tested and functional

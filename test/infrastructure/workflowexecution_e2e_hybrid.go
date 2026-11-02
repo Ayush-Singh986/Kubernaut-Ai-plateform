@@ -1,0 +1,1363 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+const (
+	// WorkflowExecutionClusterName is the default Kind cluster name
+	WorkflowExecutionClusterName = "workflowexecution-e2e"
+
+	// TektonPipelinesVersion is the Tekton Pipelines version to install
+	// NOTE: v1.7.0+ uses ghcr.io which doesn't require auth (gcr.io requires auth since 2025)
+	TektonPipelinesVersion = "v1.7.0"
+
+	// WorkflowExecutionNamespace is where the controller runs
+	WorkflowExecutionNamespace = kubernautSystem
+
+	// ExecutionNamespace is where PipelineRuns are created
+	ExecutionNamespace = "kubernaut-workflows"
+
+	// WorkflowExecutionMetricsHostPort is the host port for metrics endpoint
+	// Mapped via Kind NodePort extraPortMappings (container: 30185 -> host: 9185)
+	WorkflowExecutionMetricsHostPort = 9185
+)
+
+// SetupWorkflowExecutionInfrastructureHybridWithCoverage implements DD-TEST-002 hybrid parallel strategy:
+// 1. Build images in parallel (FASTEST - before cluster creation)
+// 2. Create Kind cluster AFTER builds complete (NO IDLE TIMEOUT)
+// 3. Load images immediately into fresh cluster (RELIABLE)
+// 4. Deploy services in parallel
+//
+// This is the AUTHORITATIVE pattern per DD-TEST-002:
+// - Images build in parallel: ~2-3 minutes (not 7+ sequential minutes)
+// - Cluster created when ready: No idle time, no timeout risk
+// - Total time: ~5-6 minutes (faster AND more reliable)
+//
+// Per DD-TEST-007: E2E Coverage Capture Standard
+func SetupWorkflowExecutionInfrastructureHybridWithCoverage(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🚀 WorkflowExecution E2E Infrastructure (HYBRID PARALLEL + COVERAGE)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "  Strategy: Build parallel → Create cluster → Load → Deploy")
+	_, _ = fmt.Fprintln(writer, "  Standard: DD-TEST-002 (Parallel Test Execution Standard)")
+	_, _ = fmt.Fprintln(writer, "  Benefits: Fast builds + No cluster timeout + Reliable")
+	_, _ = fmt.Fprintln(writer, "  Per DD-TEST-007: Coverage instrumentation enabled")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// DD-TEST-007: Create coverdata directory BEFORE everything.
+	//
+	// kind-workflowexecution-config.yaml's extraMounts binds this host path
+	// into the control-plane container UNCONDITIONALLY -- Kind's static YAML
+	// config has no way to read E2E_COVERAGE at cluster-creation time. Gating
+	// this mkdir behind that env var (as before) meant a fresh checkout with
+	// E2E_COVERAGE unset would only work by accident, if a stale directory
+	// happened to survive from a prior coverage-enabled run; on a genuinely
+	// clean checkout, podman's bind-mount rejects the missing source path
+	// outright ("statfs ...: no such file or directory") before Kind even
+	// starts the container. Always creating it (empty, if coverage is off)
+	// is harmless and removes that footgun.
+	projectRoot, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+
+	coverdataPath := filepath.Join(projectRoot, "test/e2e/workflowexecution/coverdata")
+	_, _ = fmt.Fprintf(writer, "📁 Creating coverage directory: %s\n", coverdataPath)
+	if err := os.MkdirAll(coverdataPath, 0777); err != nil {
+		return fmt.Errorf("failed to create coverdata directory: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════════
+	builtImages, err := buildWorkflowExecutionImages(ctx, writer)
+	if err != nil {
+		return err
+	}
+
+	// PHASE 2: Create Kind cluster (now that images are ready)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 2: Creating Kind cluster...")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~15-20 seconds")
+
+	// Find Kind config file
+	configPath, err := findKindConfig("kind-workflowexecution-config.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to find Kind config: %w", err)
+	}
+
+	// Create Kind cluster (Issue #1769: retry on transient runtime errors)
+	err = retryTransientKindRuntimeError(writer, func() (string, error) {
+		var captured strings.Builder
+		createCmd := exec.CommandContext(ctx, "kind", "create", "cluster",
+			"--name", clusterName,
+			"--config", configPath,
+			"--kubeconfig", kubeconfigPath,
+		)
+		createCmd.Stdout = io.MultiWriter(writer, &captured)
+		createCmd.Stderr = io.MultiWriter(writer, &captured)
+		runErr := createCmd.Run()
+		return captured.String(), runErr
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create Kind cluster: %w", err)
+	}
+
+	// Deploy ALL kubernaut.ai CRDs (WorkflowExecution, RemediationWorkflow,
+	// ActionType, etc.), not just WorkflowExecution. Issue #1661
+	// (DD-WORKFLOW-018): DataStorage's workflow cache is a controller-runtime
+	// informer directly over RemediationWorkflow/ActionType CRDs, so its
+	// startup fails outright ("failed to build workflow cache: ... no
+	// matches for kind \"RemediationWorkflow\"") if those definitions aren't
+	// registered yet -- this suite deploys a real DataStorage instance
+	// (helpers_test.go) but, unlike authwebhook_shared.go, never applied the
+	// full CRD set itself.
+	_, _ = fmt.Fprintln(writer, "📋 Installing kubernaut.ai CRDs (WorkflowExecution, RemediationWorkflow, ActionType, ...)...")
+	if err := applyRemediationWorkflowCRDs(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to install kubernaut.ai CRDs: %w", err)
+	}
+
+	// Create namespaces (idempotent - ignore AlreadyExists errors)
+	_, _ = fmt.Fprintf(writer, "📁 Creating namespace %s...\n", WorkflowExecutionNamespace)
+	nsCmd := exec.CommandContext(ctx, "kubectl", "create", "namespace", WorkflowExecutionNamespace,
+		"--kubeconfig", kubeconfigPath)
+	nsOutput, nsErr := nsCmd.CombinedOutput()
+	if nsErr != nil && !strings.Contains(string(nsOutput), "AlreadyExists") {
+		_, _ = fmt.Fprintf(writer, "❌ Failed to create namespace %s: %s\n", WorkflowExecutionNamespace, string(nsOutput))
+		return fmt.Errorf("failed to create namespace %s: %w", WorkflowExecutionNamespace, nsErr)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Namespace %s ready\n", WorkflowExecutionNamespace)
+	// BR-SCOPE-002: Infrastructure namespace (kubernaut-system) must NOT be labeled as managed.
+	// Only application/workload namespaces should have kubernaut.ai/managed=true.
+
+	_, _ = fmt.Fprintf(writer, "📁 Creating namespace %s...\n", ExecutionNamespace)
+	execNsCmd := exec.CommandContext(ctx, "kubectl", "create", "namespace", ExecutionNamespace,
+		"--kubeconfig", kubeconfigPath)
+	execNsOutput, execNsErr := execNsCmd.CombinedOutput()
+	if execNsErr != nil && !strings.Contains(string(execNsOutput), "AlreadyExists") {
+		_, _ = fmt.Fprintf(writer, "❌ Failed to create namespace %s: %s\n", ExecutionNamespace, string(execNsOutput))
+		return fmt.Errorf("failed to create namespace %s: %w", ExecutionNamespace, execNsErr)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Namespace %s ready\n", ExecutionNamespace)
+	// BR-SCOPE-001: Label namespace as managed by Kubernaut
+	_ = exec.CommandContext(ctx, "kubectl", "label", "namespace", ExecutionNamespace,
+		"kubernaut.ai/managed=true", "--overwrite", "--kubeconfig", kubeconfigPath).Run()
+
+	_, _ = fmt.Fprintln(writer, "\n✅ Kind cluster ready!")
+
+	// ═══════════════════════════════════════════════════════════════════════
+	if err := loadWorkflowExecutionImages(ctx, clusterName, builtImages, writer); err != nil {
+		return err
+	}
+
+	if err := prepareWorkflowExecutionServices(ctx, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	if err := deployWorkflowExecutionServices(ctx, clusterName, kubeconfigPath, builtImages, writer); err != nil {
+		return err
+	}
+
+	if err := completeWorkflowExecutionPostDeployment(ctx, clusterName, kubeconfigPath, writer); err != nil {
+		return err
+	}
+	return nil
+}
+
+func buildWorkflowExecutionImages(ctx context.Context, writer io.Writer) (map[string]string, error) {
+	// PHASE 1: Build images IN PARALLEL (before cluster creation)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Per Consolidated API Migration (January 2026):
+	// - Uses BuildImageForKind() for all images
+	// - Returns dynamic image names for later use
+	// - No manual tag generation (PHASE 0 removed)
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 1: Building images in parallel...")
+	_, _ = fmt.Fprintln(writer, "  ├── WorkflowExecution controller (WITH COVERAGE)")
+	_, _ = fmt.Fprintln(writer, "  ├── DataStorage image")
+	_, _ = fmt.Fprintln(writer, "  └── AuthWebhook (FOR SOC2 CC8.1)")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~2-3 minutes (parallel)")
+
+	type buildResult struct {
+		name      string
+		imageName string
+		err       error
+	}
+
+	buildResults := make(chan buildResult, 3)
+	builtImages := make(map[string]string)
+
+	// Build WorkflowExecution controller with coverage in parallel
+	// TEMPORARY FIX (Jan 9, 2026): Disable coverage on ARM64 due to Go runtime crash
+	go func() {
+		// Disable coverage on ARM64 (Go runtime crash workaround)
+		enableCoverage := os.Getenv("E2E_COVERAGE") == trueFixture && runtime.GOARCH != archARM64
+		cfg := E2EImageConfig{
+			ServiceName:      "workflowexecution", // Operator SDK convention: no -controller suffix in image name
+			ImageName:        "kubernaut/workflowexecution",
+			DockerfilePath:   "docker/workflowexecution-controller.Dockerfile", // Dockerfile can have suffix
+			BuildContextPath: "",
+			EnableCoverage:   enableCoverage,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- buildResult{name: "WorkflowExecution (coverage)", imageName: imageName, err: err}
+	}()
+
+	// Build DataStorage in parallel
+	go func() {
+		cfg := E2EImageConfig{
+			ServiceName:      "datastorage",
+			ImageName:        "kubernaut/datastorage",
+			DockerfilePath:   "docker/data-storage.Dockerfile",
+			BuildContextPath: "",
+			EnableCoverage:   os.Getenv("E2E_COVERAGE") == trueFixture,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- buildResult{name: "DataStorage", imageName: imageName, err: err}
+	}()
+
+	// Build AuthWebhook in parallel
+	go func() {
+		cfg := E2EImageConfig{
+			ServiceName:      "authwebhook",
+			ImageName:        "authwebhook",
+			DockerfilePath:   "docker/authwebhook.Dockerfile",
+			BuildContextPath: "",
+			EnableCoverage:   os.Getenv("E2E_COVERAGE") == trueFixture,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- buildResult{name: "AuthWebhook", imageName: imageName, err: err}
+	}()
+
+	// Wait for all 4 builds to complete (TD-E2E-001: Now includes OAuth2-Proxy)
+	_, _ = fmt.Fprintln(writer, "\n⏳ Waiting for all builds to complete...")
+	var buildErrors []error
+	for i := 0; i < 3; i++ {
+		result := <-buildResults
+		if result.err != nil {
+			_, _ = fmt.Fprintf(writer, "  ❌ %s build failed: %v\n", result.name, result.err)
+			buildErrors = append(buildErrors, result.err)
+		} else {
+			_, _ = fmt.Fprintf(writer, "  ✅ %s build completed: %s\n", result.name, result.imageName)
+			builtImages[result.name] = result.imageName
+		}
+	}
+
+	if len(buildErrors) > 0 {
+		return nil, fmt.Errorf("image builds failed: %v", buildErrors)
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n✅ All images built successfully!")
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return builtImages, nil
+}
+
+func loadWorkflowExecutionImages(ctx context.Context, clusterName string, images map[string]string, writer io.Writer) error {
+	// PHASE 3: Load images into fresh cluster (parallel)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Per Consolidated API Migration (January 2026):
+	// - Uses LoadImageToKind() for all images
+	// - Uses image names from builtImages map
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 3: Loading images into Kind cluster...")
+	_, _ = fmt.Fprintln(writer, "  ├── WorkflowExecution controller (coverage)")
+	_, _ = fmt.Fprintln(writer, "  ├── DataStorage image")
+	_, _ = fmt.Fprintln(writer, "  └── AuthWebhook (SOC2)")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Expected: ~30-45 seconds")
+
+	type loadResult struct {
+		name string
+		err  error
+	}
+
+	loadResults := make(chan loadResult, 4)
+
+	// Load WorkflowExecution controller image
+	go func() {
+		wfeImage := images["WorkflowExecution (coverage)"]
+		err := LoadImageToKind(ctx, wfeImage, "workflowexecution-controller", clusterName, writer)
+		loadResults <- loadResult{name: "WorkflowExecution coverage", err: err}
+	}()
+
+	// Load DataStorage image
+	go func() {
+		dsImage := images["DataStorage"]
+		err := LoadImageToKind(ctx, dsImage, "datastorage", clusterName, writer)
+		loadResults <- loadResult{name: "DataStorage", err: err}
+	}()
+
+	// Load AuthWebhook image
+	go func() {
+		awImage := images["AuthWebhook"]
+		err := LoadImageToKind(ctx, awImage, "authwebhook", clusterName, writer)
+		loadResults <- loadResult{name: "AuthWebhook", err: err}
+	}()
+
+	// BR-WE-015: Pre-load AWX Operator and AWX images into Kind to prevent
+	// slow quay.io/docker.io pulls that cause AWX readiness timeouts in CI.
+	go func() {
+		thirdPartyImages := []string{
+			AWXOperatorImage, // quay.io/ansible/awx-operator:2.19.1
+			"registry.k8s.io/kubebuilder/kube-rbac-proxy:v0.15.0",
+			AWXImage,   // quay.io/ansible/awx:24.6.1
+			AWXEEImage, // quay.io/ansible/awx-ee:24.6.1
+			"docker.io/library/postgres:16-alpine",
+			"docker.io/redis:7",
+			"quay.io/centos/centos:stream9",
+		}
+		for _, img := range thirdPartyImages {
+			if preloadErr := PreloadExternalImage(ctx, img, clusterName, writer); preloadErr != nil {
+				loadResults <- loadResult{name: "AWX third-party images", err: fmt.Errorf("preload %s: %w", img, preloadErr)}
+				return
+			}
+		}
+		loadResults <- loadResult{name: "AWX third-party images", err: nil}
+	}()
+
+	// Wait for all loads to complete (service images + AWX third-party)
+	_, _ = fmt.Fprintln(writer, "\n⏳ Waiting for images to load...")
+	var loadErrors []error
+	for i := 0; i < 4; i++ {
+		result := <-loadResults
+		if result.err != nil {
+			_, _ = fmt.Fprintf(writer, "  ❌ %s load failed: %v\n", result.name, result.err)
+			loadErrors = append(loadErrors, result.err)
+		} else {
+			_, _ = fmt.Fprintf(writer, "  ✅ %s loaded\n", result.name)
+		}
+	}
+
+	if len(loadErrors) > 0 {
+		return fmt.Errorf("image loads failed: %v", loadErrors)
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n✅ All images loaded into cluster!")
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return nil
+}
+
+func prepareWorkflowExecutionServices(ctx context.Context, kubeconfigPath string, writer io.Writer) error {
+	// PHASE 3.5: Create DataStorage RBAC (DD-AUTH-014)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Step 0: Deploy data-storage-client ClusterRole (DD-AUTH-014)
+	// CRITICAL: This must be deployed BEFORE RoleBindings that reference it
+	_, _ = fmt.Fprintf(writer, "\n🔐 Deploying data-storage-client ClusterRole (DD-AUTH-014)...\n")
+	if err := deployDataStorageClientClusterRole(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to deploy client ClusterRole: %w", err)
+	}
+
+	// Step 1: Deploy DataStorage ServiceAccount + auth middleware RBAC
+	// Required for DataStorage to call TokenReview and SubjectAccessReview APIs
+	_, _ = fmt.Fprintf(writer, "🔐 Creating DataStorage ServiceAccount + auth middleware RBAC (DD-AUTH-014)...\n")
+	if err := deployDataStorageServiceRBAC(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create DataStorage ServiceAccount RBAC: %w", err)
+	}
+
+	// Step 2: Create RoleBinding for DataStorage to access its own service (client RBAC)
+	_, _ = fmt.Fprintf(writer, "🔐 Creating RoleBinding for DataStorage client access (DD-AUTH-014)...\n")
+	if err := CreateDataStorageAccessRoleBinding(ctx, WorkflowExecutionNamespace, kubeconfigPath, "data-storage-service", writer); err != nil {
+		return fmt.Errorf("failed to create DataStorage client RoleBinding: %w", err)
+	}
+
+	// Issue #785: Inter-service TLS (must exist before DataStorage pod starts)
+	_, _ = fmt.Fprintf(writer, "🔐 Generating inter-service TLS certificates (Issue #785)...\n")
+	if _, err := GenerateInterServiceTLS(ctx, kubeconfigPath, WorkflowExecutionNamespace, writer); err != nil {
+		return fmt.Errorf("failed to generate inter-service TLS: %w", err)
+	}
+
+	// AU-9: Generate RSA signing certificate for audit exports
+	if err := GenerateSigningCertSecret(ctx, kubeconfigPath, WorkflowExecutionNamespace, writer); err != nil {
+		return fmt.Errorf("failed to generate signing certificate: %w", err)
+	}
+
+	// Step 3: Create ServiceAccount + RBAC for WorkflowExecution controller audit writes (DD-AUTH-014)
+	// Per RCA (Jan 30, 2026): WE controller needs SA for DataStorage audit emission
+	// Pattern: Follow RemediationOrchestrator E2E infrastructure
+	_, _ = fmt.Fprintf(writer, "🔐 Creating ServiceAccount for WorkflowExecution controller audit writes (DD-AUTH-014)...\n")
+	if err := CreateE2EServiceAccountWithDataStorageAccess(ctx, WorkflowExecutionNamespace, kubeconfigPath, "workflowexecution-controller", writer); err != nil {
+		return fmt.Errorf("failed to create WorkflowExecution controller ServiceAccount: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return nil
+}
+
+func deployWorkflowExecutionServices(ctx context.Context, clusterName, kubeconfigPath string, images map[string]string, writer io.Writer) error {
+	// PHASE 4: Deploy services in PARALLEL (DD-TEST-002 MANDATE)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Per Consolidated API Migration (January 2026):
+	// - Use image names from builtImages map (built in Phase 1)
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 4: Deploying services in parallel...")
+	_, _ = fmt.Fprintln(writer, "  (Kubernetes will handle dependencies and reconciliation)")
+
+	type deployResult struct {
+		name string
+		err  error
+	}
+	deployResults := make(chan deployResult, 7)
+
+	// Launch ALL kubectl apply commands concurrently (including AWX — BR-WE-015)
+	go func() {
+		err := installTektonPipelines(ctx, kubeconfigPath, writer)
+		deployResults <- deployResult{"Tekton Pipelines", err}
+	}()
+	go func() {
+		err := deployPostgreSQLInNamespace(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer)
+		deployResults <- deployResult{"PostgreSQL", err}
+	}()
+	go func() {
+		err := deployRedisInNamespace(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer)
+		deployResults <- deployResult{"Redis", err}
+	}()
+	go func() {
+		err := ApplyAllMigrations(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer)
+		deployResults <- deployResult{"Migrations", err}
+	}()
+	go func() {
+		dsImage := images["DataStorage"]
+		err := deployDataStorageServiceInNamespace(ctx, WorkflowExecutionNamespace, kubeconfigPath, dsImage, writer)
+		deployResults <- deployResult{"DataStorage", err}
+	}()
+	go func() {
+		wfeImage := images["WorkflowExecution (coverage)"]
+		err := DeployWorkflowExecutionController(ctx, WorkflowExecutionNamespace, kubeconfigPath, wfeImage, writer)
+		deployResults <- deployResult{"WorkflowExecution", err}
+	}()
+	go func() {
+		// BR-WE-015: Deploy AWX via Operator (external PG, operator-managed Redis).
+		// Installs operator CRDs + controller, then creates AWX CR.
+		err := DeployAWXInNamespace(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer)
+		deployResults <- deployResult{"AWX", err}
+	}()
+
+	// Collect ALL results before proceeding (MANDATORY)
+	var deployErrors []error
+	for i := 0; i < 7; i++ {
+		result := <-deployResults
+		if result.err != nil {
+			_, _ = fmt.Fprintf(writer, "  ❌ %s deployment failed: %v\n", result.name, result.err)
+			deployErrors = append(deployErrors, result.err)
+		} else {
+			_, _ = fmt.Fprintf(writer, "  ✅ %s manifests applied\n", result.name)
+		}
+	}
+
+	if len(deployErrors) > 0 {
+		return fmt.Errorf("one or more service deployments failed: %v", deployErrors)
+	}
+	_, _ = fmt.Fprintln(writer, "  ✅ All manifests applied! (Kubernetes reconciling...)")
+
+	// Single wait for ALL services ready (Kubernetes handles dependencies)
+	_, _ = fmt.Fprintln(writer, "\n⏳ Waiting for all services to be ready (Kubernetes reconciling dependencies)...")
+	if err := waitForWEServicesReady(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("services not ready: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 4.5: Deploy AuthWebhook manifests (using pre-built + pre-loaded image)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Per DD-WEBHOOK-001: Required for WorkflowExecution block clearance
+	// Per SOC2 CC8.1: Captures WHO cleared execution blocks after failures
+	_, _ = fmt.Fprintln(writer, "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🔐 PHASE 4.5: Deploying AuthWebhook Manifests")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	awImage := images["AuthWebhook"]
+	if err := DeployAuthWebhookManifestsOnly(ctx, clusterName, WorkflowExecutionNamespace, kubeconfigPath, awImage, writer); err != nil {
+		return fmt.Errorf("failed to deploy AuthWebhook manifests: %w", err)
+	}
+	_, _ = fmt.Fprintln(writer, "✅ AuthWebhook deployed - SOC2 CC8.1 block clearance attribution enabled")
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return nil
+}
+
+// waitForWEServicesReady waits for DataStorage and WorkflowExecution pods to be ready
+// Per DD-TEST-002: Single readiness check after parallel deployment
+func waitForWEServicesReady(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	// Build Kubernetes clientset
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Wait for DataStorage pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for DataStorage pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=datastorage", 2*time.Minute, "DataStorage pod should become ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ DataStorage ready\n")
+
+	// Wait for WorkflowExecution controller pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for WorkflowExecution controller pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=workflowexecution-controller", 3*time.Minute, "WorkflowExecution controller pod should become ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ WorkflowExecution controller ready\n")
+
+	return nil
+}
+
+func completeWorkflowExecutionPostDeployment(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) error {
+	saToken, err := prepareWorkflowExecutionDependencies(ctx, kubeconfigPath, writer)
+	if err != nil {
+		return err
+	}
+
+	// POST-DEPLOYMENT PARALLEL: Workflow seeding + AWX config run concurrently.
+	// Workflow registration only needs DataStorage; AWX config only needs AWX.
+	// ═══════════════════════════════════════════════════════════════════════
+	dataStorageURL := "https://localhost:8092" // DD-TEST-001: WE → DataStorage dependency port
+
+	type postDeployResult struct {
+		name string
+		err  error
+	}
+	postDeployCh := make(chan postDeployResult, 2)
+
+	// Goroutine 1: Seed workflows in DataStorage (includes ansible workflows — BR-WE-015)
+	go func() {
+		if _, seedErr := BuildAndRegisterTestWorkflows(ctx, clusterName, kubeconfigPath, dataStorageURL, saToken, writer); seedErr != nil {
+			postDeployCh <- postDeployResult{"workflow seeding", seedErr}
+			return
+		}
+		postDeployCh <- postDeployResult{"workflow seeding", nil}
+	}()
+
+	// Goroutine 2: Configure AWX (project, inventory, templates, token) — BR-WE-015
+	var awxCfg *AWXConfig
+	go func() {
+		cfg, awxErr := SetupAWXPostDeployment(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer)
+		if awxErr != nil {
+			postDeployCh <- postDeployResult{"AWX configuration", awxErr}
+			return
+		}
+		awxCfg = cfg
+		postDeployCh <- postDeployResult{"AWX configuration", nil}
+	}()
+
+	// Collect both results
+	for i := 0; i < 2; i++ {
+		result := <-postDeployCh
+		if result.err != nil {
+			return fmt.Errorf("%s failed: %w", result.name, result.err)
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ %s complete\n", result.name)
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n🔑 Creating image pull secret...")
+	if err := createQuayPullSecret(ctx, kubeconfigPath, ExecutionNamespace, writer); err != nil {
+		_, _ = fmt.Fprintf(writer, "⚠️  Warning: Could not create quay.io pull secret: %v\n", err)
+	}
+
+	// BR-WE-015: After both workflow seeding and AWX config are done, patch WE
+	// controller with the ansible config and restart it to register the executor.
+	// This is the only truly sequential step — it needs the AWX token from above.
+	if awxCfg != nil {
+		if err := PatchWEControllerWithAnsibleConfig(ctx, WorkflowExecutionNamespace, kubeconfigPath, awxCfg, writer); err != nil {
+			return fmt.Errorf("failed to enable ansible executor on WE controller: %w", err)
+		}
+		// Verify AWX web + task pods have ALL containers healthy before tests
+		// start. The rsyslog sidecar can crash after initial readiness on
+		// constrained runners, making the ClusterIP service unreachable.
+		if err := EnsureAWXPodsHealthy(ctx, WorkflowExecutionNamespace, kubeconfigPath, writer); err != nil {
+			return fmt.Errorf("AWX pod health check failed: %w", err)
+		}
+		// Container readiness != API readiness. After pod heal (rsyslog CrashLoop
+		// recovery), AWX's internal job dispatcher needs time to reinitialize.
+		// Without this, the first ansible job launch can fail with a 500.
+		if err := WaitForAWXAPIReady(ctx, writer); err != nil {
+			return fmt.Errorf("AWX API warmup failed: %w", err)
+		}
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n✅ All services ready and configured!")
+
+	_, _ = fmt.Fprintln(writer, "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "✅ WorkflowExecution E2E Infrastructure Ready!")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "  🚀 Strategy: Hybrid parallel (build parallel → cluster → load)")
+	_, _ = fmt.Fprintln(writer, "  📊 Coverage: Enabled (GOCOVERDIR=/coverdata)")
+	_, _ = fmt.Fprintln(writer, "  🎯 DataStorage URL: https://localhost:8092")
+	_, _ = fmt.Fprintf(writer, "  🤖 AWX API: http://%s.kubernaut-system:%d\n", AWXServiceName, AWXServicePort)
+	_, _ = fmt.Fprintln(writer, "  📦 Namespace: kubernaut-system")
+	_, _ = fmt.Fprintln(writer, "  ⏱️  Total time: ~5-6 minutes (per DD-TEST-002)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	return nil
+}
+
+// BuildWorkflowExecutionImageWithCoverage builds the WorkflowExecution controller image with coverage instrumentation
+func BuildWorkflowExecutionImageWithCoverage(projectRoot string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "  🔨 Building WorkflowExecution controller image (with coverage)...")
+
+	dockerfilePath := filepath.Join(projectRoot, "docker/workflowexecution-controller.Dockerfile")
+	imageName := "localhost/kubernaut-workflowexecution:e2e-test-workflowexecution"
+
+	buildArgs := []string{
+		"build",
+		"--no-cache", // DD-TEST-002: Force fresh build to include latest code changes
+		"-t", imageName,
+		"-f", dockerfilePath,
+		"--build-arg", fmt.Sprintf("GOARCH=%s", runtime.GOARCH),
+	}
+
+	// DD-TEST-007: E2E Coverage Collection
+	// TEMPORARY FIX (Jan 9, 2026): Disable coverage on ARM64 due to Go runtime crash
+	// Root cause: taggedPointerPack fatal error in Go 1.25.3 (Red Hat) on ARM64
+	// TODO: Re-enable after switching to upstream Go builder (Solution B)
+	if os.Getenv("E2E_COVERAGE") == trueFixture && runtime.GOARCH != archARM64 {
+		buildArgs = append(buildArgs, "--build-arg", "GOFLAGS=-cover")
+		_, _ = fmt.Fprintln(writer, "     📊 Building with coverage instrumentation (GOFLAGS=-cover)")
+	} else if os.Getenv("E2E_COVERAGE") == trueFixture && runtime.GOARCH == archARM64 {
+		_, _ = fmt.Fprintln(writer, "     ⚠️  Coverage disabled on ARM64 (Go runtime crash workaround)")
+	}
+
+	buildArgs = append(buildArgs, projectRoot)
+
+	buildCmd := exec.CommandContext(context.Background(), "podman", buildArgs...)
+	buildCmd.Stdout = writer
+	buildCmd.Stderr = writer
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build WorkflowExecution controller image: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "     ✅ WorkflowExecution controller image built")
+	return nil
+}
+
+// LoadWorkflowExecutionCoverageImage loads the WorkflowExecution controller image into Kind cluster
+func LoadWorkflowExecutionCoverageImage(clusterName, projectRoot string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "  📦 Loading WorkflowExecution controller image into Kind...")
+
+	imageName := "localhost/kubernaut-workflowexecution:e2e-test-workflowexecution"
+
+	// Save image to tarball for Kind loading (Podman images need explicit save/load)
+	tarPath := filepath.Join(projectRoot, "workflowexecution-controller.tar")
+	saveCmd := exec.CommandContext(context.Background(), "podman", "save", "-o", tarPath, imageName)
+	saveCmd.Stdout = writer
+	saveCmd.Stderr = writer
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to save controller image: %w", err)
+	}
+	defer func() { _ = os.Remove(tarPath) }()
+
+	// Load image into Kind from tarball
+	loadCmd := exec.CommandContext(context.Background(), "kind", "load", "image-archive", tarPath,
+		"--name", clusterName,
+	)
+	loadCmd.Stdout = writer
+	loadCmd.Stderr = writer
+	if err := loadCmd.Run(); err != nil {
+		return fmt.Errorf("failed to load image into Kind: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "     ✅ WorkflowExecution controller image loaded")
+	return nil
+}
+
+func prepareWorkflowExecutionDependencies(ctx context.Context, kubeconfigPath string, writer io.Writer) (string, error) {
+	// POST-DEPLOYMENT: Build workflow bundles & create pipeline (requires DataStorage ready)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n🎯 Building and registering test workflow bundles...")
+
+	// DD-AUTH-014: Create ServiceAccount for workflow registration with DataStorage
+	workflowRegSAName := "workflow-registration-sa"
+	_, _ = fmt.Fprintf(writer, "🔐 Creating ServiceAccount for workflow registration (DD-AUTH-014)...\n")
+	if err := CreateE2EServiceAccountWithDataStorageAccess(ctx, WorkflowExecutionNamespace, kubeconfigPath, workflowRegSAName, writer); err != nil {
+		return "", fmt.Errorf("failed to create workflow registration ServiceAccount: %w", err)
+	}
+
+	// Get ServiceAccount token for authenticated workflow registration
+	saToken, err := GetServiceAccountToken(ctx, WorkflowExecutionNamespace, workflowRegSAName, kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get ServiceAccount token: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "✅ ServiceAccount token retrieved for authenticated workflow registration\n")
+
+	// DD-WE-006: Grant data-storage-sa permission to read secrets in the execution
+	// namespace so dependency validation (ValidateDependencies) can verify that
+	// declared secret dependencies exist at registration time.
+	_, _ = fmt.Fprintf(writer, "🔐 Granting data-storage-sa secret read access in %s (DD-WE-006)...\n", ExecutionNamespace)
+	depRBACYAML := fmt.Sprintf(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: data-storage-dep-validator
+  namespace: %[1]s
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: data-storage-dep-validator
+  namespace: %[1]s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: data-storage-dep-validator
+subjects:
+  - kind: ServiceAccount
+    name: data-storage-sa
+    namespace: %[2]s
+`, ExecutionNamespace, WorkflowExecutionNamespace)
+	depRBACCmd := exec.CommandContext(ctx, "kubectl", "apply", "--kubeconfig", kubeconfigPath,
+		"--server-side", "--field-manager=e2e-test", "-f", "-")
+	depRBACCmd.Stdin = strings.NewReader(depRBACYAML)
+	depRBACCmd.Env = append(os.Environ(), fmt.Sprintf("KUBECONFIG=%s", kubeconfigPath))
+	depRBACOut, depRBACErr := depRBACCmd.CombinedOutput()
+	if depRBACErr != nil {
+		return "", fmt.Errorf("failed to create DD-WE-006 dep validator RBAC: %s", string(depRBACOut))
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ data-storage-sa can read secrets/configmaps in %s\n", ExecutionNamespace)
+
+	// DD-WE-006: Create dependency Secret in execution namespace BEFORE workflow registration.
+	// DS validates that declared dependencies exist at registration time; the Secret must
+	// be present for the dep-secret-job workflow to register successfully.
+	_, _ = fmt.Fprintf(writer, "🔑 Creating DD-WE-006 dependency Secret in %s...\n", ExecutionNamespace)
+	depSecretCmd := exec.CommandContext(ctx, "kubectl", "create", "secret", "generic", "e2e-dep-secret",
+		"--from-literal=token=e2e-test-value",
+		"--namespace", ExecutionNamespace,
+		"--kubeconfig", kubeconfigPath)
+	depSecretOut, depSecretErr := depSecretCmd.CombinedOutput()
+	if depSecretErr != nil && !strings.Contains(string(depSecretOut), "AlreadyExists") {
+		_, _ = fmt.Fprintf(writer, "⚠️  Failed to create DD-WE-006 dep Secret (non-fatal): %s\n", string(depSecretOut))
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ✅ Secret e2e-dep-secret ready in %s\n", ExecutionNamespace)
+	}
+
+	// DD-WE-006: Separate secret for the Tekton dependency injection test so that
+	// the drift test (E2E-WE-006-002) can delete e2e-dep-secret without racing
+	// against E2E-WE-006-004 running in a parallel Ginkgo process.
+	depSecretTektonCmd := exec.CommandContext(ctx, "kubectl", "create", "secret", "generic", "e2e-dep-secret-tekton",
+		"--from-literal=token=e2e-test-value-tekton",
+		"--namespace", ExecutionNamespace,
+		"--kubeconfig", kubeconfigPath)
+	depSecretTektonOut, depSecretTektonErr := depSecretTektonCmd.CombinedOutput()
+	if depSecretTektonErr != nil && !strings.Contains(string(depSecretTektonOut), "AlreadyExists") {
+		_, _ = fmt.Fprintf(writer, "⚠️  Failed to create DD-WE-006 Tekton dep Secret (non-fatal): %s\n", string(depSecretTektonOut))
+	} else {
+		_, _ = fmt.Fprintf(writer, "   ✅ Secret e2e-dep-secret-tekton ready in %s\n", ExecutionNamespace)
+	}
+
+	// DD-WE-006: ConfigMap dependencies for Job and Tekton ConfigMap injection tests.
+	_, _ = fmt.Fprintf(writer, "📦 Creating DD-WE-006 dependency ConfigMaps and Ansible deps in %s...\n", ExecutionNamespace)
+	depResources := []struct {
+		args []string
+		desc string
+	}{
+		{[]string{"create", "configmap", "e2e-dep-configmap", "--from-literal=setting=e2e-configmap-value"}, "ConfigMap e2e-dep-configmap"},
+		{[]string{"create", "configmap", "e2e-dep-configmap-tekton", "--from-literal=setting=e2e-configmap-value-tekton"}, "ConfigMap e2e-dep-configmap-tekton"},
+		{[]string{"create", "secret", "generic", "e2e-dep-secret-ansible", "--from-literal=token=e2e-ansible-secret-value"}, "Secret e2e-dep-secret-ansible"},
+		{[]string{"create", "configmap", "e2e-dep-configmap-ansible", "--from-literal=setting=e2e-ansible-configmap-value"}, "ConfigMap e2e-dep-configmap-ansible"},
+	}
+	for _, res := range depResources {
+		fullArgs := append(res.args, "--namespace", ExecutionNamespace, "--kubeconfig", kubeconfigPath)
+		cmd := exec.CommandContext(ctx, "kubectl", fullArgs...)
+		out, err := cmd.CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "AlreadyExists") {
+			_, _ = fmt.Fprintf(writer, "⚠️  Failed to create %s (non-fatal): %s\n", res.desc, string(out))
+		} else {
+			_, _ = fmt.Fprintf(writer, "   ✅ %s ready in %s\n", res.desc, ExecutionNamespace)
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return saToken, nil
+}
+
+// buildDataStorageImageWithTag and loadDataStorageImageWithTag are defined in datastorage.go
+// and shared across all E2E infrastructure files in this package
+
+// findKindConfig locates Kind configuration files in standard test paths
+// Restored from git history: a906a3767~1:test/infrastructure/workflowexecution.go
+func findKindConfig(filename string) (string, error) {
+	projectRoot, err := findProjectRoot()
+	if err != nil {
+		return "", err
+	}
+	cwd, _ := os.Getwd()
+
+	// Try paths relative to project root
+	paths := []string{
+		filepath.Join(projectRoot, "test", "infrastructure", filename),
+		filepath.Join(cwd, "test", "infrastructure", filename),
+		filepath.Join(cwd, "..", "..", "test", "infrastructure", filename),
+		filepath.Join(cwd, "..", "infrastructure", filename),
+		filename,
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf("kind config file %s not found in any expected location (tried from %s)", filename, projectRoot)
+}
+func installTektonPipelines(ctx context.Context, kubeconfigPath string, output io.Writer) error {
+	// Install Tekton Pipelines from GitHub releases (v1.0+ use GitHub releases)
+	// NOTE: storage.googleapis.com/tekton-releases requires auth since 2025
+	releaseURL := fmt.Sprintf("https://github.com/tektoncd/pipeline/releases/download/%s/release.yaml", TektonPipelinesVersion)
+
+	_, _ = fmt.Fprintf(output, "  Applying Tekton release from: %s\n", releaseURL)
+
+	// Retry logic for transient GitHub CDN failures (503 Service Unavailable)
+	// GitHub's CDN occasionally returns 503 errors during high load
+	maxRetries := 3
+	backoffSeconds := []int{5, 10, 20} // Exponential backoff: 5s, 10s, 20s
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			_, _ = fmt.Fprintf(output, "  ⚠️  Attempt %d/%d failed, retrying in %ds...\n", attempt, maxRetries, backoffSeconds[attempt-1])
+			time.Sleep(time.Duration(backoffSeconds[attempt-1]) * time.Second)
+			_, _ = fmt.Fprintf(output, "  🔄 Retry attempt %d/%d...\n", attempt+1, maxRetries)
+		}
+
+		applyCmd := exec.CommandContext(ctx, "kubectl", "apply",
+			"-f", releaseURL,
+			"--kubeconfig", kubeconfigPath,
+		)
+		applyCmd.Stdout = output
+		applyCmd.Stderr = output
+
+		if err := applyCmd.Run(); err != nil {
+			lastErr = err
+			continue // Retry
+		}
+
+		// Success!
+		if attempt > 0 {
+			_, _ = fmt.Fprintf(output, "  ✅ Tekton release applied successfully on attempt %d\n", attempt+1)
+		}
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("failed to apply Tekton release after %d attempts: %w", maxRetries, lastErr)
+	}
+
+	// Wait for Tekton controller to be ready
+	// Phase 1 E2E Stabilization: Increased timeout to 1 hour (3600s) to prevent timeout failures
+	// Root cause: Slow Tekton image pulls in Kind cluster (see WE_E2E_INFRASTRUCTURE_STABILIZATION_PLAN.md)
+	_, _ = fmt.Fprintf(output, "  ⏳ Waiting for Tekton Pipelines controller (up to 1 hour)...\n")
+	waitCmd := exec.CommandContext(ctx, "kubectl", "wait",
+		"-n", "tekton-pipelines",
+		"--for=condition=available",
+		"deployment/tekton-pipelines-controller",
+		"--timeout=3600s",
+		"--kubeconfig", kubeconfigPath,
+	)
+	waitCmd.Stdout = output
+	waitCmd.Stderr = output
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("tekton controller did not become ready: %w", err)
+	}
+
+	// Wait for Tekton webhook to be ready
+	// Phase 1 E2E Stabilization: Increased timeout to 1 hour (3600s)
+	_, _ = fmt.Fprintf(output, "  ⏳ Waiting for Tekton webhook (up to 1 hour)...\n")
+	webhookWaitCmd := exec.CommandContext(ctx, "kubectl", "wait",
+		"-n", "tekton-pipelines",
+		"--for=condition=available",
+		"deployment/tekton-pipelines-webhook",
+		"--timeout=3600s",
+		"--kubeconfig", kubeconfigPath,
+	)
+	webhookWaitCmd.Stdout = output
+	webhookWaitCmd.Stderr = output
+	if err := webhookWaitCmd.Run(); err != nil {
+		return fmt.Errorf("tekton webhook did not become ready: %w", err)
+	}
+
+	return nil
+}
+
+func DeployWorkflowExecutionController(ctx context.Context, namespace, kubeconfigPath, imageName string, output io.Writer) error {
+	_, _ = fmt.Fprintf(output, "\n🚀 Deploying WorkflowExecution Controller to %s...\n", namespace)
+	_, _ = fmt.Fprintf(output, "  Using pre-built image: %s\n", imageName)
+
+	projectRoot, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+
+	// CRDs must exist before any CR can be created
+	crdPath := filepath.Join(projectRoot, "config/crd/bases/kubernaut.ai_workflowexecutions.yaml")
+	_, _ = fmt.Fprintf(output, "  Applying WorkflowExecution CRDs...\n")
+	crdCmd := exec.CommandContext(ctx, "kubectl", "apply",
+		"-f", crdPath,
+		"--kubeconfig", kubeconfigPath,
+	)
+	crdCmd.Stdout = output
+	crdCmd.Stderr = output
+	if err := crdCmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply CRDs: %w", err)
+	}
+
+	// All remaining resources (Namespaces, RBAC, ConfigMap, Deployment, Service)
+	// are applied in a single kubectl apply call.
+	_, _ = fmt.Fprintf(output, "  Applying all controller resources (single kubectl apply)...\n")
+	if err := deployWorkflowExecutionControllerDeployment(ctx, namespace, kubeconfigPath, imageName, output); err != nil {
+		return fmt.Errorf("failed to deploy controller: %w", err)
+	}
+
+	// Create quay.io pull secret in execution namespace so Job pods can pull
+	// the placeholder-execution image used by workflow schemas.
+	if err := createQuayPullSecret(ctx, kubeconfigPath, ExecutionNamespace, output); err != nil {
+		_, _ = fmt.Fprintf(output, "⚠️  Warning: Could not create quay.io pull secret in %s: %v\n", ExecutionNamespace, err)
+	}
+
+	// Create ServiceAccount + RBAC for Job pods that need cross-namespace
+	// resource access (e.g., oomkill-increase-memory-job patches Deployments).
+	// DD-WE-005 v2.0: Operators pre-create SAs; workflows reference them via
+	// execution.serviceAccountName. The mock LLM returns service_account_name
+	// in selected_workflow so the AA→RO→WFE chain propagates it to the Job pod.
+	if err := createWorkflowJobExecutorRBAC(ctx, kubeconfigPath, ExecutionNamespace, output); err != nil {
+		return fmt.Errorf("failed to create workflow-job-executor RBAC: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(output, "✅ WorkflowExecution Controller deployed\n")
+	return nil
+}
+
+// createWorkflowJobExecutorRBAC creates a ServiceAccount, ClusterRole, and
+// ClusterRoleBinding so Job pods spawned by the WE controller can get/patch
+// workload resources (Deployments, StatefulSets, DaemonSets, Pods) in any
+// namespace. Used by oomkill-increase-memory-job's remediate.sh.
+func createWorkflowJobExecutorRBAC(ctx context.Context, kubeconfigPath, namespace string, output io.Writer) error {
+	_, _ = fmt.Fprintf(output, "  🔐 Creating workflow-job-executor SA + RBAC in %s...\n", namespace)
+
+	rbacYAML := fmt.Sprintf(`---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflow-job-executor
+  namespace: %[1]s
+  labels:
+    app: workflowexecution
+    component: job-executor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workflow-job-executor
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  # Issue #1542: crashloop-config-fix-v1 patches the offending ConfigMap key
+  # back to a known-good value as part of the real (non-simulated) fix.
+  resources: ["configmaps"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workflow-job-executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workflow-job-executor
+subjects:
+- kind: ServiceAccount
+  name: workflow-job-executor
+  namespace: %[1]s
+`, namespace)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(rbacYAML)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply workflow-job-executor RBAC: %w", err)
+	}
+	_, _ = fmt.Fprintf(output, "  ✅ workflow-job-executor SA + RBAC created\n")
+	return nil
+}
+
+func createQuayPullSecret(ctx context.Context, kubeconfigPath, namespace string, output io.Writer) error {
+	_, _ = fmt.Fprintf(output, "🔐 Creating quay.io pull secret...\n")
+
+	// Get the auth config from podman
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	authFile := filepath.Join(homeDir, ".config/containers/auth.json")
+	if _, err := os.Stat(authFile); os.IsNotExist(err) {
+		return fmt.Errorf("podman auth file not found at %s", authFile)
+	}
+
+	// Create the secret in the execution namespace
+	secretCmd := exec.CommandContext(ctx, "kubectl", "create", "secret", "docker-registry", "quay-pull-secret",
+		"--from-file=.dockerconfigjson="+authFile,
+		"--namespace", namespace,
+		"--kubeconfig", kubeconfigPath,
+	)
+	secretCmd.Stdout = output
+	secretCmd.Stderr = output
+	if err := secretCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create pull secret: %w", err)
+	}
+
+	// Create the secret in tekton-pipelines-resolvers namespace for bundle resolver
+	secretResolverCmd := exec.CommandContext(ctx, "kubectl", "create", "secret", "docker-registry", "quay-pull-secret",
+		"--from-file=.dockerconfigjson="+authFile,
+		"--namespace", "tekton-pipelines-resolvers",
+		"--kubeconfig", kubeconfigPath,
+	)
+	secretResolverCmd.Stdout = output
+	secretResolverCmd.Stderr = output
+	_ = secretResolverCmd.Run() // Ignore error if namespace doesn't exist
+
+	// Patch the default service account in execution namespace (DD-WE-005 v2: no platform workflow-runner SA)
+	patchDefaultCmd := exec.CommandContext(ctx, "kubectl", "patch", "serviceaccount", "default",
+		"-n", namespace,
+		"--kubeconfig", kubeconfigPath,
+		"-p", `{"imagePullSecrets": [{"name": "quay-pull-secret"}]}`,
+	)
+	patchDefaultCmd.Stdout = output
+	patchDefaultCmd.Stderr = output
+	_ = patchDefaultCmd.Run()
+
+	// Patch the tekton-pipelines-resolvers service account
+	patchResolverCmd := exec.CommandContext(ctx, "kubectl", "patch", "serviceaccount", "tekton-pipelines-resolvers",
+		"-n", "tekton-pipelines-resolvers",
+		"--kubeconfig", kubeconfigPath,
+		"-p", `{"imagePullSecrets": [{"name": "quay-pull-secret"}]}`,
+	)
+	patchResolverCmd.Stdout = output
+	patchResolverCmd.Stderr = output
+	_ = patchResolverCmd.Run()
+
+	_, _ = fmt.Fprintf(output, "✅ Pull secret created and linked to service accounts\n")
+	return nil
+}
+
+func deployWorkflowExecutionControllerDeployment(ctx context.Context, namespace, kubeconfigPath, imageName string, output io.Writer) error {
+	coverageEnabled := os.Getenv("E2E_COVERAGE") == trueFixture
+	_, _ = fmt.Fprintf(output, "   DD-TEST-007: E2E_COVERAGE=%s (enabled=%v)\n", os.Getenv("E2E_COVERAGE"), coverageEnabled)
+
+	// DD-TEST-007: Coverage-conditional sections injected into the YAML template
+	var coverageEnv, coverageVolumeMount, coverageVolume, securityContext string
+	if coverageEnabled {
+		coverageEnv = `
+        - name: GOCOVERDIR
+          value: /coverdata`
+		coverageVolumeMount = `
+        - name: coverage
+          mountPath: /coverdata`
+		coverageVolume = `
+      - name: coverage
+        hostPath:
+          path: /coverdata
+          type: DirectoryOrCreate`
+		securityContext = `
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0`
+	}
+
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %[1]s
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: %[2]s
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflowexecution-controller
+  namespace: %[1]s
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workflowexecution-controller
+rules:
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["workflowexecutions/finalizers"]
+  verbs: ["update"]
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["tekton.dev"]
+  resources: ["taskruns"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  # BR-WORKFLOW-008 (Issue #1481): "watch" is required even though the
+  # reconciler only calls List() on Events -- the manager's cached client
+  # establishes an Informer for any type it reads, and that Informer needs
+  # list+watch to sync regardless of which verb application code exercises.
+  resources: ["events"]
+  verbs: ["create", "patch", "get", "list", "watch"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workflowexecution-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workflowexecution-controller
+subjects:
+- kind: ServiceAccount
+  name: workflowexecution-controller
+  namespace: %[1]s
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflowexecution-secret-reader
+  namespace: %[1]s
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflowexecution-secret-reader
+  namespace: %[1]s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflowexecution-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: workflowexecution-controller
+  namespace: %[1]s
+---
+# BR-WORKFLOW-008 (Issue #1481): the Ansible engine reads schema-declared
+# Secret/ConfigMap dependencies from the execution namespace to build
+# ephemeral AWX credentials and extra_vars. Independent of the removed
+# pre-flight DependencyValidator. list+watch are required because the
+# manager's cached client establishes a namespace-scoped Informer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflowexecution-dependency-reader
+  namespace: %[2]s
+rules:
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflowexecution-dependency-reader
+  namespace: %[2]s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflowexecution-dependency-reader
+subjects:
+- kind: ServiceAccount
+  name: workflowexecution-controller
+  namespace: %[1]s
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflowexecution-config
+  namespace: %[1]s
+data:
+  workflowexecution.yaml: |
+    controller:
+      metricsAddr: ":9090"
+      healthProbeAddr: ":8081"
+      leaderElection: false
+      leaderElectionId: workflowexecution.kubernaut.ai
+    execution:
+      namespace: %[2]s
+      cooldownPeriod: 1m
+    datastorage:
+      url: "https://data-storage-service.%[1]s:8080"
+      healthUrl: "https://data-storage-service.%[1]s:8080/readyz"
+      timeout: 10s
+      buffer:
+        bufferSize: 10000
+        batchSize: 50
+        flushInterval: 100ms
+        maxRetries: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflowexecution-controller
+  namespace: %[1]s
+  labels:
+    app: workflowexecution-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workflowexecution-controller
+  template:
+    metadata:
+      labels:
+        app: workflowexecution-controller
+    spec:
+      serviceAccountName: workflowexecution-controller%[5]s
+      containers:
+      - name: controller
+        image: %[3]s
+        imagePullPolicy: %[4]s
+        args:
+        - --config=/etc/config/workflowexecution.yaml
+        ports:
+        - containerPort: 9090
+          name: metrics
+        - containerPort: 8081
+          name: health
+        env:%[6]s
+        - name: TLS_CA_FILE
+          value: /etc/tls-ca/ca.crt
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+          readOnly: true%[7]s
+        - name: tls-ca
+          mountPath: /etc/tls-ca
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+      volumes:
+      - name: config
+        configMap:
+          name: workflowexecution-config
+      - name: tls-ca
+        configMap:
+          name: inter-service-ca
+%[8]s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workflowexecution-controller-metrics
+  namespace: %[1]s
+spec:
+  type: NodePort
+  selector:
+    app: workflowexecution-controller
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    nodePort: 30185
+`,
+		namespace,            // [1] controller namespace (kubernaut-system)
+		ExecutionNamespace,   // [2] execution namespace (kubernaut-workflows)
+		imageName,            // [3] controller image
+		GetImagePullPolicy(), // [4] pull policy
+		securityContext,      // [5] pod security context (coverage only)
+		coverageEnv,          // [6] GOCOVERDIR env var (coverage only)
+		coverageVolumeMount,  // [7] /coverdata volume mount (coverage only)
+		coverageVolume,       // [8] hostPath volume (coverage only)
+	)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "--server-side", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply WorkflowExecution controller resources: %w", err)
+	}
+
+	return nil
+}
+
+func waitForDeploymentReady(ctx context.Context, kubeconfigPath, deploymentName string, output io.Writer) error {
+	waitCmd := exec.CommandContext(ctx, "kubectl", "wait",
+		"-n", WorkflowExecutionNamespace,
+		"--for=condition=available",
+		"deployment/"+deploymentName,
+		"--timeout=3600s",
+		"--kubeconfig", kubeconfigPath,
+	)
+	waitCmd.Stdout = output
+	waitCmd.Stderr = output
+	if err := waitCmd.Run(); err != nil {
+		return fmt.Errorf("deployment %s did not become available: %w", deploymentName, err)
+	}
+	return nil
+}
+func DeleteWorkflowExecutionCluster(clusterName string, testsFailed bool, output io.Writer) error {
+	// Use shared cleanup function with log export on failure
+	// Note: WorkflowExecution has history of hung deletions, but DeleteCluster doesn't have timeout
+	// If this becomes an issue again, we may need to add timeout support to shared function
+	return DeleteCluster(clusterName, "workflowexecution", testsFailed, output)
+}

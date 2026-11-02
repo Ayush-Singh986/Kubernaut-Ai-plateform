@@ -1,0 +1,494 @@
+# Kubernaut Agent configuration reference
+
+Authoritative mapping of kubernaut-agent configuration to YAML, runtime behavior, environment variables, and Helm values. Derived from:
+
+- `internal/kubernautagent/config/config.go` (structs, defaults, `Validate`)
+- `cmd/kubernautagent/main.go` (flags, wiring, transports)
+- `cmd/kubernautagent/llm_builder.go` (LLM HTTP client and hot reload)
+- `cmd/kubernautagent/agentsession_wiring.go` (AgentSession dispatcher construction and startup — see §3.5)
+- `internal/kubernautagent/agentsession/dispatcher.go` (dispatch Lease/resync constants — see §3.5)
+- `internal/kubernautagent/credentials/resolver.go` (credential file resolution)
+- `pkg/kubernautagent/config` (custom header validation)
+- `pkg/shared/tls` (TLS defaults and profiles)
+- `charts/kubernaut/templates/kubernaut-agent/kubernaut-agent.yaml`
+
+## 1. Overview
+
+Configuration is split into two files plus optional CLI overrides:
+
+| Layer | Reload | Purpose |
+|-------|--------|---------|
+| Static YAML (`Config`) | Requires process restart | Runtime, AI (except hot LLM knobs), integrations |
+| LLM runtime YAML (`LLMRuntimeConfig`) | File watcher reload, **except LLM identity** | Endpoint, API key placeholder, tuning, custom headers, per-phase overrides — see §6 |
+
+> **LLM identity (`model`, and `phaseModels.<phase>.provider`/`.model`) requires a
+> process restart to change** — [#1599](https://github.com/jordigilh/kubernaut/issues/1599) /
+> [DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md).
+> A hot-reload attempt that changes identity is rejected in full (the whole
+> candidate reload, including any otherwise-safe tuning changes in the same
+> payload) and the previous configuration keeps running. See §6 for the full
+> field-by-field breakdown and §13 for the operational implications of this
+> across deployment topologies (Operator, Helm-only, GitOps).
+
+CLI flags only select paths or override the main HTTP listen socket; they do not replace the YAML surface.
+
+Root YAML keys:
+
+| Key | Go type | Purpose |
+|-----|---------|---------|
+| `runtime` | `RuntimeConfig` | Logging, servers, sessions, audit buffer |
+| `ai` | `AIConfig` | Provider, investigation, summarizer, enrichment, alignment, safety |
+| `integrations` | `IntegrationsConfig` | Data Storage, Prometheus tool, MCP (schema only) |
+
+## 2. Configuration Files
+
+### 2.1 Static configuration
+
+| Item | Detail |
+|------|--------|
+| Flag | `-config` |
+| Default path | `/etc/kubernautagent/config.yaml` |
+| Format | YAML |
+| Reload | Not hot-reloaded |
+
+The Helm chart invokes the binary with `-config /etc/kubernaut-agent/config.yaml` (path differs from the binary default).
+
+### 2.2 LLM runtime configuration
+
+| Item | Detail |
+|------|--------|
+| Flag | `-llm-runtime` |
+| Default path | `/etc/kubernautagent/llm-runtime.yaml` |
+| Format | YAML |
+| Reload | Hot reload via file watcher on the configured path |
+
+Helm mounts the runtime file at `/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml` and passes that path on the command line.
+
+### 2.3 CLI flags
+
+| Flag | Effect |
+|------|--------|
+| `-config PATH` | Static YAML path |
+| `-llm-runtime PATH` | Hot-reloadable LLM YAML path |
+| `-addr ADDRESS` | If non-empty, used as `http.Server.Addr` for the main API server (otherwise `runtime.server.address` + `:` + `runtime.server.port`). Help text refers to port override; the implementation supplies a full listen address string. |
+
+## 3. Runtime configuration
+
+YAML path: `runtime`
+
+### 3.1 `runtime.logging`
+
+Implements shared `internal/config.LoggingConfig`.
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `level` | string | `INFO` | If non-empty, must be `DEBUG`, `INFO`, `WARN`, or `ERROR` (case-insensitive input normalized for zap). Empty string passes validation and falls through to INFO when mapping to zap. | Log level for the process logger. |
+
+### 3.2 `runtime.server`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `address` | string | `0.0.0.0` | None | Bind address used with `port` when `-addr` is unset. |
+| `port` | int | `8080` | `1`–`65535` | Main API port (with `address`) when `-addr` is unset. |
+| `healthAddr` | string | `:8081` | None | Listen address for health/OpenAPI/admin endpoints (plain HTTP, not covered by server TLS). |
+| `metricsAddr` | string | `:9090` | None | Prometheus metrics listen address. |
+| `tls.certDir` | string | (empty) | None | If non-empty and `tls.crt` / `tls.key` exist under this directory, main API server uses TLS with cert hot-reload. Empty disables server TLS. |
+| `tls.caFile` | string | (empty) | None | **Server block field**; not used for outbound trust in the agent’s current wiring. Prefer nested TLS under integrations for client trust. |
+| `tlsProfile` | string | (empty) | Non-empty values must resolve via `SetDefaultSecurityProfileFromConfig` | Process-wide TLS profile for services using shared TLS helpers: `Old`, `Intermediate`, `Modern`. `Custom` and other unknown values return an error at startup; startup logs a fallback message and default TLS 1.2 behavior applies (profile not applied). |
+
+### 3.3 `runtime.session`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `ttl` | duration | `30m` | Must be positive | Session store TTL. |
+| `maxConcurrentInvestigations` | int | `10` | Must be positive | Cap on concurrent investigations. |
+
+### 3.4 `runtime.audit`
+
+Buffered audit is implemented only when **both** `enabled` is true **and** `integrations.dataStorage.url` is non-empty. Otherwise a no-op store is used.
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `enabled` | bool | `true` | When true, `bufferSize` and `batchSize` must be positive | Master switch; without Data Storage URL, store is still no-op. |
+| `endpoint` | string | (empty) | None | **Not referenced** by current kubernaut-agent wiring; audit client base URL is `integrations.dataStorage.url`. |
+| `flushIntervalSeconds` | float64 | `0` | None | If `> 0`, passed as flush interval to the buffered store; otherwise library default applies. |
+| `bufferSize` | int | `100` | Positive when `enabled` | Async buffer capacity. |
+| `batchSize` | int | `10` | Positive when `enabled` | Batch size for writes. |
+| `verbosity` | string | `full` | Must be `full`, `standard`, `minimal`, or empty (treated as allowed) | **Parsed and validated only**; kubernaut-agent does not pass this field into investigation or `pkg/audit` stores in the current codebase. |
+
+### 3.5 AgentSession dispatch (DD-AA-KA-001) — not YAML-configurable
+
+The `AgentSession` CRD dispatch channel — how AIAnalysis hands investigations to KA, replacing
+the deleted HTTP submit/poll API ([DD-AA-KA-001](../../architecture/decisions/DD-AA-KA-001-agentsession-crd-http-removal.md)) — is **not** exposed anywhere in `Config` /
+`config.yaml`. It is started unconditionally at boot by `startAgentSessionDispatcher`
+(`cmd/kubernautagent/agentsession_wiring.go`) with no functional options applied in production,
+so every value below is a fixed Go constant in `internal/kubernautagent/agentsession/dispatcher.go`,
+not a tunable:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `dispatchLeaseDuration` | `15m` | `coordination/v1.Lease` duration for the per-`AgentSession` dispatch Lease (`dispatch-<agentsession-name>`) that arbitrates exactly-once dispatch across KA replicas. |
+| `dispatchLeaseRenewInterval` | `dispatchLeaseDuration / 3` (5m) | Fixed period on which the owning replica refreshes `RenewTime` while investigating; a Lease not renewed within `dispatchLeaseDuration` is reclaimable by another replica. |
+| `defaultResyncInterval` | `30s` | `ctrl.Result{RequeueAfter: ...}` period for the Dispatcher `Reconciler`'s own delete-detection resync (replaces the retired ticker-driven blanket List — see DD-AA-KA-001 Amendment #2231). Overridable only via the unexported `WithResyncInterval` functional option, used exclusively by tests (e.g. integration tests set `20ms`–`200ms` for fast `Eventually` polling); no wiring path in `cmd/` applies it. |
+
+`runtime.session.maxConcurrentInvestigations` (§3.3) still governs the separate concern of how
+many investigations `session.Manager` runs concurrently once dispatched — it is unrelated to the
+Lease/resync mechanics above and remains the only investigation-volume knob exposed via YAML.
+
+There is currently no Helm value, ConfigMap key, or CLI flag for any of the three dispatch
+constants above; changing them requires a code change and rebuild, not a config edit.
+
+## 4. AI configuration
+
+YAML path: `ai`
+
+### 4.1 `ai.llm` (static)
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `provider` | string | `openai` | Used with `LLMRuntimeConfig.Validate`; rejected at client construction (`os.Exit` at startup) unless one of `openai`, `anthropic`, `vertex_ai`, `openai_compatible` | Provider id. **`bedrock` is NOT currently supported** (tracked in #1582 — do not configure it). Mistral, Ollama, HuggingFace TGI, and self-hosted vLLM/LlamaStack are reached via `openai_compatible` + `endpoint`, not a dedicated provider string. Azure OpenAI is reached via `openai`/`openai_compatible` + `azureApiVersion` below — there is no dedicated `azure` provider string (#1600). |
+| `azureApiVersion` | string | (empty) | None | Azure OpenAI API version (e.g. `2024-10-21`). When non-empty, switches the outgoing request to Azure's deployment-scoped URL (`model` above doubles as the Azure deployment ID) and `api-key` header auth instead of `Authorization: Bearer` (#1600). |
+| `reasoning` | object (`LLMReasoningConfig`) | `null` | `effort` must be `""`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; `none` with `enabled: true` is rejected for Anthropic-family providers | Opt-in reasoning configuration. OpenAI/Azure GPT-5 models (including GPT-5.6+), and `o1`/`o3`/`o4` families use Chat Completions `reasoning_effort`; custom OpenAI-compatible models require an explicit `capabilityOverride` when their endpoint supports the field. |
+| `vertexProject` | string | (empty) | None | GCP project for the `vertex_ai` provider. |
+| `vertexLocation` | string | (empty) | None | GCP region for the `vertex_ai` provider. |
+| `bedrockRegion` | string | (empty) | None | Reserved for future Bedrock support (#1582). **Not currently consumed by any code path.** |
+| `tlsCaFile` | string | (empty) | None | PEM CA for **LLM** HTTPS client trust when building a custom transport chain. Does not enable `TLS_CA_FILE` fallback for the LLM client. |
+| `oauth2.enabled` | bool | `false` | If true, `tokenURL` and `credentialsDir` required | Client-credentials OAuth2 for enterprise LLM gateways. |
+| `oauth2.tokenURL` | string | (empty) | Required if OAuth2 enabled | Token endpoint. |
+| `oauth2.scopes` | []string | `nil` | None | Optional OAuth2 scopes. |
+| `oauth2.credentialsDir` | string | (empty) | Required if OAuth2 enabled | Directory containing files `client-id` and `client-secret` (read at startup). |
+| `oauth2.clientId` | — | resolved | Not in YAML (`yaml:"-"`) | Populated from `credentialsDir/client-id`. |
+| `oauth2.clientSecret` | — | resolved | Not in YAML (`yaml:"-"`) | Populated from `credentialsDir/client-secret`. |
+| `circuitBreaker.enabled` | bool | `false` | None | Enable gobreaker circuit breaker for LLM HTTP client. |
+| `circuitBreaker.maxRequests` | uint32 | `3` | None | Requests allowed in half-open state before deciding to close or re-open. |
+| `circuitBreaker.interval` | duration | `10s` | None | Cyclic period of closed state for clearing internal counts. `0` means never clear. |
+| `circuitBreaker.timeout` | duration | `30s` | None | Duration the circuit stays open before transitioning to half-open. |
+| `circuitBreaker.failureThreshold` | uint32 | `10` | None | Minimum request count before failure ratio is evaluated. |
+| `circuitBreaker.failureRatio` | float64 | `0.5` | `0.0`–`1.0` | Failure ratio that triggers the circuit to open. |
+
+### 4.2 `ai.investigation`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `maxTurns` | int | `40` | Positive | Maximum investigator turns per session. |
+
+### 4.3 `ai.summarizer`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `threshold` | int | `8000` | Not validated for positivity | Tool output summarizer activation threshold (character-oriented). **`<= 0` disables the summarizer** at startup (not an error in `Validate()`). |
+| `maxToolOutputSize` | int | `100000` | Positive | Hard cap on tool output before LLM context; constant `DefaultMaxToolOutputSize` in code. |
+
+### 4.4 `ai.enrichment`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `maxRetries` | int | `3` | `>= 0` | Retries for K8s owner-chain enrichment. |
+| `baseBackoff` | duration | `1s` | None | Base backoff between enrichment retries. |
+
+### 4.5 `ai.safety.sanitization`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `injectionPatternsEnabled` | bool | `true` | None | Enables injection-pattern sanitization stage when building the pipeline. |
+| `credentialScrubEnabled` | bool | `true` | None | Enables credential scrub stage. |
+
+### 4.6 `ai.safety.anomaly`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `maxToolCallsPerTool` | int | `10` | Positive | Per-tool call budget for anomaly detection. |
+| `maxTotalToolCalls` | int | `30` | Positive | Total tool call budget. |
+| `maxRepeatedFailures` | int | `3` | Positive | Repeated failure threshold. |
+| `exemptPrefixes` | []string | `["todo_"]` | None | Tool name prefixes exempt from anomaly checks. |
+
+## 5. LLM configuration
+
+### 5.1 Provider-specific notes
+
+**Supported today**: `openai`, `anthropic`, `gemini`, `vertex_ai`, `openai_compatible`.
+
+**Not currently supported** (accepted by `LLMRuntimeConfig.Validate` below but rejected at client construction, causing `os.Exit` at startup — do not configure): `bedrock` (tracked in #1582). `vertex` (Google-native Gemini/PaLM via Vertex, distinct from the Anthropic-on-Vertex `vertex_ai` path below) was a `langchaingo`-only provider with no current replacement.
+
+**No dedicated provider string** — reached via `openai_compatible` + `endpoint` pointing at the provider's own OpenAI-Chat-Completions-compatible base URL instead: Mistral, Ollama, HuggingFace TGI, self-hosted vLLM/LlamaStack, **and Azure OpenAI** (`openai`/`openai_compatible` + `azureApiVersion` set — #1600).
+
+| Provider strings | Endpoint required in runtime YAML? | Notes |
+|------------------|-----------------------------------|--------|
+| `anthropic` | No | If set, **honored** (#2255, BR-AI-089): `buildAnthropicNativeClient` passes it through to the Anthropic SDK via `anthropicfamily.WithBaseURL`, so native-auth traffic can be routed through an AI gateway/private proxy instead of `https://api.anthropic.com`. If unset, SDK default applies (unchanged). Satisfies `LLMRuntimeConfig.Validate` without `endpoint`. |
+| `gemini` | **Yes** — pre-existing asymmetry, not changed by #2255/BR-AI-089 | `gemini` is not in `providersWithoutEndpointRequirement`, so `LLMRuntimeConfig.Validate` requires a non-empty `endpoint` even though `types.LLMConfig.Validate` (static config layer) treats it as optional. Whatever value is set **is now honored** (#2255, BR-AI-089) via `geminifamily.WithHTTPOptions(genai.HTTPOptions{BaseURL: ...})` — previously it passed validation but was silently ignored at client construction. **Upgrade note**: if your existing `endpoint` value was a placeholder (harmless while inert), confirm it's the intended target — or the real `https://generativelanguage.googleapis.com` — before/while upgrading, since requests will now actually go there. |
+| `vertex_ai` | No | SDK resolves the endpoint implicitly (GCP project+location via Vertex middleware). Explicitly **not** wired to an endpoint override — see BR-AI-089 AC5. Satisfies `LLMRuntimeConfig.Validate` without `endpoint`. |
+| `openai` | Yes (#2258) | The underlying `openaicompat` client has no default base URL. `LLMRuntimeConfig.Validate` now fails closed at startup on an empty `endpoint`, matching the client's real requirement instead of only failing at request time. |
+| `openai_compatible` | Yes | Validation error if `endpoint` empty. |
+| `vertex` | No (per `providersWithoutEndpointRequirement`) | Stale legacy entry from the pre-#1598 `langchaingo` dispatch, intentionally retained (#2258) — still documented/tested as endpoint-optional even though rejected downstream. |
+| `bedrock`, `huggingface` | Yes (no longer exempt, #2258) | Not supported providers; removed from `providersWithoutEndpointRequirement` since the exemption was dead code (both are rejected downstream regardless of endpoint). |
+
+`vertex_ai` selects the Anthropic-on-Vertex client path in code (`anthropicfamily`).
+
+### 5.2 API key resolution (runtime)
+
+When `LLMRuntimeConfig.apiKey` is empty after parsing YAML, startup and hot reload call `credentials.ResolveCredentialsFile(provider, "/etc/kubernaut-agent/credentials", logger)`:
+
+| Provider | Preferred secret key file under credentials dir |
+|----------|------------------------------------------------|
+| `openai` | `OPENAI_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `vertex`, `vertex_ai` | `GOOGLE_APPLICATION_CREDENTIALS` (JSON or path indirection; see resolver) |
+
+`mistral` and `huggingface` entries were removed from `providerKeyFiles` (#2258) — neither is a supported provider, so they got no preferential file lookup in practice (any credentials file for them would only ever be found via the generic fallback below anyway).
+
+If the preferred file is missing, the first non-empty file in the directory may be used as fallback.
+
+## 6. LLM runtime configuration (hot-reloadable)
+
+Top-level YAML (not nested under `runtime`/`ai` in file). Mapped by `LLMRuntimeConfig`.
+
+| YAML key | Type | Default | Validation / behavior | Description |
+|----------|------|---------|------------------------|-------------|
+| `model` | string | (empty) | **Required**; **immutable after boot — see below** | Model id for the provider. |
+| `endpoint` | string | (empty) | Required for non-standard providers (see section 5.1) | API base / proxy URL. |
+| `apiKey` | string | (empty) | If empty, resolved from credential files (section 5.2) | Inline key material (sensitive). |
+| `temperature` | float64 | `0` if omitted | None in `Validate` | Passed to `RuntimeParams`. **Omitted YAML fields decode as Go zero values** (`0`); they are **not** merged with `DefaultLLMRuntime()` in `LoadLLMRuntime`. |
+| `maxRetries` | int | `0` if omitted | None in `Validate` | Retry attempts = `maxAttempts = 1 + maxRetries`; if `maxAttempts < 1` it is clamped to `1` in chat helper. Applies uniformly to both the non-streaming (`ChatWithParams`) and streaming (`chatOrStream`, used whenever an SSE observer is attached) call paths — the streaming path previously made exactly one attempt regardless of this setting ([#1612](https://github.com/jordigilh/kubernaut/issues/1612)). Retries are skipped early once a permanent client error (400/401/403/404-class) is classified ([#1585](https://github.com/jordigilh/kubernaut/issues/1585)) or, on the streaming path only, once any token has already been delivered to the observer for the current attempt. |
+| `timeoutSeconds` | int | `0` if omitted | None | If `<= 0`, per-chat wrapper does not add `context.WithTimeout` (relies on parent context). The `anthropicfamily`/`openai` clients still use a **120s** default HTTP client timeout when a custom transport stack is built. |
+| `customHeaders` | array | `nil` | Each entry validated; see below | Extra outbound headers on LLM HTTP stack. |
+| `phaseModels` | map of complete `types.LLMConfig`, keyed by phase name | `nil` | See §6.1 | Independent per-phase LLM profiles (#1470, #2515). Provider/model identity remains subject to the restart-required rule. |
+
+**`model` is immutable after process start** ([#1599](https://github.com/jordigilh/kubernaut/issues/1599) /
+[DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md)):
+`ai.llm.provider` (static config) combined with runtime `model` form the LLM's
+"identity". A hot-reload attempt where the new `model` differs from the model
+the process booted with is rejected in full — the reload callback returns an
+error, the FileWatcher keeps the previous configuration running, and no field
+in that reload payload is applied (not even otherwise-safe tuning changes
+bundled in the same file). This is enforced against the boot-time snapshot,
+not the most-recently-accepted reload — since accepted reloads can never
+actually change `model`, these are equivalent in practice. To change the
+model or provider, edit the config and restart the pod (see §13 for how that
+restart is triggered, or isn't, depending on deployment topology).
+
+### 6.1 `phaseModels.<phase>` (complete per-phase LLM profile, #1470, #2515)
+
+Each key under `phaseModels` must be a valid phase name (`workflow_discovery`,
+`rca`, `validation`, ...). The value is a **complete** `types.LLMConfig`, not
+a partial override. Every provider, endpoint, credential, OAuth2, TLS/mTLS,
+Vertex, reasoning, retry, and timeout field belongs to the selected phase.
+Unset fields are not inherited from `ai.llm`.
+
+A profile intentionally shared with investigation may repeat the same values and
+mounted credential paths. That is explicit sharing, not zero-value inheritance.
+
+| YAML key | Type | Description |
+|----------|------|-------------|
+| `provider` | string | Required provider identity. |
+| `model` | string | Required model identity. Provider/model changes require restart. |
+| `endpoint` | string | Profile endpoint; it does not inherit the investigation endpoint. |
+| `apiKeyFile` | string | Profile credential file; it does not inherit the investigation key. |
+| `vertexProject`, `vertexLocation` | string | Vertex profile settings. |
+| `azureApiVersion`, `bedrockRegion` | string | Provider-specific profile settings. |
+| `tlsCaFile`, `tlsCertFile`, `tlsKeyFile` | string | Profile TLS/mTLS settings. |
+| `oauth2` | object | Profile token URL, scopes, and mounted credentials directory. |
+| `temperature`, `maxRetries`, `timeoutSeconds` | scalar | Profile runtime tuning. |
+| `reasoning` | object | Profile reasoning/thinking configuration. |
+
+The complete profile is validated with the same `types.LLMConfig.Validate`
+contract as investigation. Its API-key and OAuth2 credentials are resolved
+independently before the phase client is built or reloaded.
+
+A hot reload is rejected if the effective provider/model changes. Endpoint,
+credentials, OAuth2, TLS/mTLS, reasoning, retry, timeout, and header changes
+remain reloadable when the resulting complete profile validates.
+
+### 6.2 `customHeaders[]`
+
+| Field | Type | Sources | Validation | Description |
+|-------|------|---------|------------|-------------|
+| `name` | string | Required | Must not be reserved (`content-type`, `accept`, `host`, `user-agent`) | Header name. |
+| `value` | string | Mutually exclusive with others | Exactly one source | Inline static value (sensitive). |
+| `secretKeyRef` | string | Mutually exclusive | Name of env var; must be **non-empty at process startup** when headers are validated | Reads `os.Getenv(secretKeyRef)` during `ValidateHeaderSources`. |
+| `filePath` | string | Mutually exclusive | Exists at validation time only for structural checks in `ValidateSource`; file read occurs when transport issues requests | Reads header value from file at use time. |
+
+Header names must be unique case-insensitively.
+
+Reload failures leave the previously swapped client in place; reload rejects empty file content.
+
+## 7. Alignment checker
+
+YAML path: `ai.alignmentCheck`
+
+**Static configuration — not hot-reloadable.** Unlike `phaseModels` (§6.1), `ai.alignmentCheck` (including its optional `llm` override) lives entirely in the static config file and is read once at startup. There is no restart-required *identity lock* to reason about here specifically because nothing in this section is ever hot-swapped in the first place — changing anything under `ai.alignmentCheck`, including its shadow-model override, always requires a process restart.
+
+When `enabled` is true and `llm` is nil, startup logs **error-level** diagnostics that shadow traffic shares the primary instrumented LLM client ( contention risk ). When `enabled` is true and dedicated shadow client creation fails (non-nil `ai.alignmentCheck.llm` configured but client build fails), the **process exits** (fail-closed).
+
+| YAML key | Type | Default | Validation when enabled | Description |
+|----------|------|---------|-------------------------|-------------|
+| `enabled` | bool | `false` | — | Enables wrapper + evaluator. |
+| `mode` | string | `enforce` | Must be `enforce` or `monitor` | Enforcement vs observability-only behavior. |
+| `llm` | object (`types.LLMConfig`) | `null` | Complete shadow profile validated at startup when present | Independent profile; unset fields do not inherit from investigation. |
+| `timeout` | duration | `10s` | Positive | Evaluator/step timeout budget. |
+| `verdictTimeout` | duration | `30s` | Positive | Verdict aggregation timeout used by investigator wrapper. |
+| `maxStepTokens` | int | `500` | Positive | Cap for alignment step payloads. |
+| `maxRetries` | int | `1` | `>= 0` | Evaluator retries. |
+| `canary.forceEscalation` | bool | `true` | None | Passed to investigator wrapper (`CanaryForceEscalation`). |
+
+### 7.1 `ai.alignmentCheck.llm` (complete dedicated LLM profile, #2515)
+
+When present, `ai.alignmentCheck.llm` is a complete `types.LLMConfig`. It does
+not inherit provider, model, endpoint, credentials, OAuth2, TLS/mTLS, Vertex,
+reasoning, retry, or timeout fields from `ai.llm`. When absent, the existing
+intentional shared-client behavior is used.
+
+The profile is validated and its API-key/OAuth2 credentials are resolved at
+startup. Configuration errors fail closed when alignment is enabled. Secret
+contents are never written to logs.
+
+### 7.2 Enforcement modes and circuit breaker
+
+The `mode` field controls how suspicious verdicts affect the investigation:
+
+| Mode | Suspicious verdict behavior | Circuit breaker | Use case |
+|------|-----------------------------|-----------------|----------|
+| `enforce` | Sets `HumanReviewNeeded=true`, `HumanReviewReason="alignment_check_failed"`, appends warning. Circuit breaker cancels the primary LLM context mid-investigation when the first suspicious step is detected. | Active | Production environments where prompt injection must be blocked. |
+| `monitor` | Logs verdict, emits audit events and Prometheus metrics. Investigation proceeds normally. | Inactive | Initial rollout, false-positive tuning, observability-only deployment. |
+
+The alignment circuit breaker is distinct from the Data Storage circuit breaker (§8.1). The DS circuit breaker protects against backend failures using request-count thresholds, while the alignment circuit breaker is a per-investigation safety mechanism that cancels the primary LLM on detected prompt injection. The alignment circuit breaker has no configurable thresholds — it fires on the first suspicious evaluation in `enforce` mode.
+
+For the complete shadow agent operational guide, see [shadow-agent-configuration.md](shadow-agent-configuration.md).
+
+## 8. Integrations
+
+YAML path: `integrations`
+
+### 8.1 `integrations.dataStorage`
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `url` | string | (empty) | None | Data Storage OpenAPI base. **Empty disables** DS clients, workflow catalog fetching, DS-backed custom tools, and buffered audit (no-op audit). |
+| `saTokenPath` | string | `/var/run/secrets/kubernetes.io/serviceaccount/token` | None | Bearer token file for DS client; audit client reuses token path logic. |
+| `tls.caFile` | string | (empty) | None | If set, DS ogen client uses dedicated TLS transport with this CA. If unset, DS client uses `DefaultBaseTransportWithRetry()` which honors `TLS_CA_FILE`. |
+| `circuitBreaker.enabled` | bool | `false` | None | Enable gobreaker circuit breaker for Data Storage HTTP client. |
+| `circuitBreaker.maxRequests` | uint32 | `3` | None | Requests allowed in half-open state. |
+| `circuitBreaker.interval` | duration | `10s` | None | Cyclic period for clearing closed-state counts. |
+| `circuitBreaker.timeout` | duration | `30s` | None | Duration the circuit stays open before half-open probe. |
+| `circuitBreaker.failureThreshold` | uint32 | `10` | None | Minimum requests before ratio check. |
+| `circuitBreaker.failureRatio` | float64 | `0.5` | `0.0`–`1.0` | Failure ratio threshold. |
+
+Nested `integrations.dataStorage.tls.certDir` parses but is **unused** by current DS outbound client construction (`buildDSBaseTransport` only reads `TLS.CAFile`).
+
+### 8.2 `integrations.tools.prometheus`
+
+Registration runs only when `url` non-empty.
+
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `url` | string | (empty) | None | Prometheus / Thanos querier HTTP base for tools package. |
+| `timeout` | duration | Client defaults to **30s** when `<= 0` | None before client | Passed into `promtools`; non-positive overridden inside `promtools.NewClient`. |
+| `sizeLimit` | int | **`30000` when `<= 0`** | None before client | Max response slice size handled in client. |
+| `tlsCaFile` | string | (empty) | None | When set, builds `NewTLSTransport` plus SA bearer transport for tool calls; when unset, `Transport` stays nil and `http.Client` uses default transport (**not** `TLS_CA_FILE` unless the default chain is patched elsewhere — it is plain `DefaultTransport`). |
+
+### 8.3 `integrations.mcp`
+
+| YAML path | Contents |
+|-----------|----------|
+| `integrations.mcp.servers` | List of `{ name, url, transport }` (`MCPServerEntry`) |
+
+All fields strings. **Present in config schema only:** no reference to `integrations.mcp` appears in `cmd/kubernautagent` today; MCP tooling stubs live under `pkg/kubernautagent/tools/mcp/` but registration is not driven from agent config in the bundled binary paths found at time of writing.
+
+## 9. Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `TLS_CA_FILE` | When set to a PEM file path, `DefaultBaseTransport` / `DefaultBaseTransportWithRetry` load a reloadable CA pool. Used by the **audit** HTTP client base and **Data Storage** client base **when no** `integrations.dataStorage.tls.caFile`. **Not** consulted for the LLM client when `ai.llm.tlsCaFile` is empty (that path uses `http.DefaultTransport`). |
+| Names referenced by `customHeaders[].secretKeyRef` | Required to be populated at startup for validation to pass. |
+
+Kubernetes additionally injects standard ServiceAccount projection paths independent of YAML.
+
+## 10. Helm mapping
+
+Source: `charts/kubernaut/templates/kubernaut-agent/kubernaut-agent.yaml`.
+
+### 10.1 Rendered ConfigMap (`config.yaml`)
+
+| Helm value(s) | Config field |
+|----------------|--------------|
+| `kubernautAgent.logging.level` | `runtime.logging.level` |
+| `kubernautAgent.llm.provider` | `ai.llm.provider` |
+| `kubernautAgent.llm.oauth2.*` (+ secret mount) | `ai.llm.oauth2` (`credentialsDir` forced to `/etc/kubernaut-agent/oauth2`) |
+| `kubernautAgent.llm.tlsCaFile` | `ai.llm.tlsCaFile` |
+| `kubernautAgent.alignmentCheck.*` subset | Partial `ai.alignmentCheck`: `enabled`, `timeout`, `maxStepTokens`, optional nested `llm` |
+| Include `kubernaut.datastorage.url` | `integrations.dataStorage.url` |
+| Conditional TLS helpers | `integrations.dataStorage.tls.caFile` |
+
+Helm-rendered snippets also emit fixed or defaulted values for `investigation.maxTurns`, audit buffer tuning, optional Prometheus tool URL (`kubernaut.monitoring.prometheus.url`), and TLS cert dir on the server — see the template for exact literals.
+
+### 10.2 LLM runtime ConfigMap (`llm-runtime.yaml`)
+
+Helm emits `model`, `endpoint`, `temperature`, `maxRetries`, `timeoutSeconds` from `kubernautAgent.llm`. Custom headers remain YAML-only unless the template or operators extend them.
+
+### 10.3 Not exposed via primary Helm knobs (supply via extra ConfigMap patching or forks)
+
+Including but not limited to: alignment `mode`, `maxRetries`, `verdictTimeout`, full `canary`, `runtime.audit.verbosity`, `runtime.audit.endpoint` (unused), `runtime.session.*` (chart hardcodes ports; session TTL/max concurrent not parameterized in template), `circuitBreaker.*` (both LLM and DS), finer `investigation`/ `summarizer`/`enrichment`/`safety`/`mcp` trees, Prometheus `timeout`/`sizeLimit`/`tlsCaFile`.
+
+## 11. Sensitive fields
+
+Store in Kubernetes **Secrets** (or equivalent vault-backed mounts), never in plain ConfigMaps:
+
+| Location | Sensitive material |
+|----------|-------------------|
+| `LLMRuntimeConfig.apiKey` | API key inline |
+| Complete sibling `types.LLMConfig.apiKeyFile` / resolved `APIKey` | Per-agent provider key material |
+| `oauth2.credentialsDir` files `client-id`, `client-secret` | OAuth2 client credentials |
+| `customHeaders[].value`, `secretKeyRef` backing env, `filePath` targets | Bearer tokens / static secrets |
+| `integrations.dataStorage.saTokenPath` file | ServiceAccount JWT |
+| Helm `credentialsSecretName` volume (`/etc/kubernaut-agent/credentials`) | Provider key files referenced in section 5.2 |
+
+## 12. Troubleshooting
+
+| Symptom | Likely cause |
+|---------|----------------|
+| “DataStorage URL not configured” / no catalog / no DS tools | `integrations.dataStorage.url` empty or K8s clients unavailable (`ctrl.GetConfig()` failed). |
+| Audit always no-op despite `audit.enabled: true` | Same as above: **`integrations.dataStorage.url` empty** skips buffered audit wiring. Audit transport also ignores `integrations.dataStorage.tls.caFile` and uses **`TLS_CA_FILE`** only via `DefaultBaseTransport`. Mis-matched DS TLS trust manifests as failed audit batches or TLS errors. |
+| Prometheus tools missing | `integrations.tools.prometheus.url` empty. |
+| LLM TLS verify failures with private CA | Set **`ai.llm.tlsCaFile`**. Expecting **`TLS_CA_FILE`** alone **does not** fix LLM outbound trust. |
+| `vertex` provider configured | `vertex` (Gemini-focused, `langchaingo`-only) has no replacement post-#1598 and is rejected at startup. Use `vertex_ai` (Claude-on-Anthropic-Vertex, via `anthropicfamily`) instead if that's the backend you deployed. |
+| `bedrock` provider configured | Rejected at startup (`os.Exit`) post-#1598 — see #1582. Without an explicit `endpoint`, fails `LLMRuntimeConfig.Validate` directly (#2258); with one, still rejected at client construction. Not yet supported either way; do not upgrade past this chart version until it lands. |
+| `azure` provider configured (i.e. `provider: azure`) | Rejected at startup — there is no `azure` provider string, before or after #1598/#1600. Use `provider: openai`/`openai_compatible` with `azureApiVersion` set instead. |
+| Summarizer never runs | `ai.summarizer.threshold <= 0` disables it without validation error. |
+| Startup exit with alignment enabled | Process exits when `alignmentCheck` is enabled **and** a dedicated shadow LLM fails to construct when `alignmentCheck.llm` is configured; sharing primary client when `llm` nil does **not** exit. |
+| Custom header validation fails | `secretKeyRef` env unset at startup or multiple of `value`/`secretKeyRef`/`filePath` set.
+
+## 13. Deployment topology and restart triggers for LLM identity changes
+
+Per §1 and §6, changing `ai.llm.provider` (static) or `model`/`phaseModels.<phase>.provider`/`phaseModels.<phase>.model` (runtime) requires a **pod restart** — a hot-reload attempt that changes any of these is rejected outright (#1599 / DD-LLM-008). Editing the ConfigMap alone does **not** restart anything; whether an edit actually reaches a running pod depends entirely on how kubernaut-agent is deployed:
+
+| Deployment path | Restarts on `llm-runtime` ConfigMap change? | Notes |
+|------------------|:---:|-------|
+| **Kubernaut Operator** | ✅ Yes, automatically | The operator hashes the `llm-runtime` ConfigMap's contents and stamps the hash into the Deployment's pod template annotations, forcing a rolling restart on *any* change to that ConfigMap — identity or tuning field alike. No action needed; this was already the behavior before #1599 and required no operator change. |
+| **Helm chart only (no operator)** | ❌ No | Helm renders the ConfigMap but does not itself trigger a restart when its contents change on a subsequent `helm upgrade` — this is a standard Helm limitation, not specific to this chart. If you need `model`/`provider`/phase-identity changes to take effect, you must manually restart the deployment (`kubectl rollout restart deployment/<name>`) after upgrading. |
+| **GitOps (e.g. ArgoCD) managing the Helm chart or raw manifests** | ❌ No, by default | Same limitation as raw Helm — GitOps tooling syncs the ConfigMap but does not restart pods on its own. If you want identity changes (or any config change) to restart the pod automatically, use [`stakater/Reloader`](https://github.com/stakater/Reloader) with an annotation on the Deployment (e.g. `configmap.reloader.stakater.com/reload: "kubernaut-agent-llm-runtime"`). When using ArgoCD, also add an `ignoreDifferences` rule for the pod-template annotation Reloader injects, so ArgoCD doesn't report perpetual drift against the last-applied manifest. |
+
+This table is a deployment-topology reference, not a promise this chart implements restart-on-change itself outside the Operator path — the Helm chart's responsibility ends at rendering the ConfigMap/Deployment; triggering a restart on a subsequent content change is a deployment-topology concern that the tools above already solve well, and duplicating that logic in the chart was deliberately avoided (see DD-LLM-008's Deployment Note for the alternatives considered).
+
+## Appendix A: TLS trust precedence (independent stacks)
+
+Clients do **not** stack **`TLS_CA_FILE`** with YAML CA paths; each outbound client selects one path:
+
+| Client | YAML CA respected | Else |
+|--------|-------------------|------|
+| LLM client HTTP (`anthropicfamily`/`openai`) | `ai.llm.tlsCaFile` → custom pool | `http.DefaultTransport` |
+| DS ogen (`buildDSBaseTransport`) | `integrations.dataStorage.tls.caFile` → custom pool | `DefaultBaseTransportWithRetry` → **`TLS_CA_FILE`** |
+| Audit → DS (`buildAuditStore`) | **`integrations.dataStorage.tls.caFile` NOT used** (`DefaultBaseTransport` only) | **`TLS_CA_FILE`** if env set; else defaults |
+| Prometheus tools | `integrations.tools.prometheus.tlsCaFile` → custom stack + SA bearer | `http.Transport` defaults via nil `Transport` |
+
+## Appendix B: Known documentation errata
+
+Cross-check lower-level drafts against this file:
+
+| Source | Incorrect / stale claim | Correct per code |
+|--------|-------------------------|------------------|
+| `docs/operations/configuration/CONFIG_STANDARDS.md` | Example `session.ttl` default `10m` | Default `30m` (`DefaultConfig`) |
+| `docs/operations/configuration/CONFIG_STANDARDS.md` | References `logging.format` | Field does **not exist** (`LoggingConfig` only has `level`) |
+| `docs/operations/configuration/CONFIG_STANDARDS.md` | `LLM_API_KEY` environment variable shorthand | Agents resolve **`apiKey`** from YAML or **credential files under `/etc/kubernaut-agent/credentials`** (+ optional inline YAML); **`TLS_CA_FILE` and header `secretKeyRef` envs** documented in section 9 |
+
+---
+
+Treat this reference as authoritative for YAML keys, defaults from `internal/kubernautagent/config/config.go` `DefaultConfig` / validators, agent wiring from `cmd/kubernautagent`, and Helm template mapping.

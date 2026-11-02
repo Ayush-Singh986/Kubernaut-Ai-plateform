@@ -1,0 +1,564 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tls_test
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+)
+
+var _ = Describe("Shared TLS Helper (#493)", func() {
+
+	var (
+		certDir  string
+		certPath string
+		keyPath  string
+	)
+
+	BeforeEach(func() {
+		var err error
+		certDir, err = os.MkdirTemp("", "tls-test-*")
+		Expect(err).ToNot(HaveOccurred())
+		certPath = filepath.Join(certDir, "tls.crt")
+		keyPath = filepath.Join(certDir, "tls.key")
+	})
+
+	AfterEach(func() {
+		_ = os.RemoveAll(certDir)
+	})
+
+	// Helper: generate self-signed cert for tests
+	generateSelfSignedCert := func(certFile, keyFile string) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).ToNot(HaveOccurred())
+
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "localhost"},
+			NotBefore:    time.Now().Add(-1 * time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+			DNSNames:     []string{"localhost"},
+		}
+
+		certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		Expect(err).ToNot(HaveOccurred())
+
+		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+		Expect(os.WriteFile(certFile, certPEM, 0644)).To(Succeed())
+
+		keyDER, err := x509.MarshalECPrivateKey(key)
+		Expect(err).ToNot(HaveOccurred())
+		keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+		Expect(os.WriteFile(keyFile, keyPEM, 0600)).To(Succeed())
+	}
+
+	Describe("RequiredTLS", func() {
+
+		// UT-TLS-493-001: ConditionalTLS starts HTTPS when cert files exist
+		It("UT-TLS-493-001: should start HTTPS when cert files exist", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			server := &http.Server{Addr: ":0"}
+			isTLS, _, err := sharedtls.ConfigureRequiredTLS(server, certDir)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(isTLS).To(BeTrue(), "should detect TLS certs and configure TLS")
+
+			cert, certErr := server.TLSConfig.GetCertificate(&tls.ClientHelloInfo{})
+			Expect(certErr).ToNot(HaveOccurred())
+			Expect(cert.Certificate).To(HaveLen(1), "TLS cert chain should contain exactly one certificate")
+		})
+
+		// UT-TLS-493-002: RequiredTLS fails when cert files don't exist
+		It("UT-TLS-493-002: should fail when cert files don't exist", func() {
+			server := &http.Server{Addr: ":0"}
+			isTLS, _, err := sharedtls.ConfigureRequiredTLS(server, certDir)
+			Expect(err).To(HaveOccurred())
+			Expect(isTLS).To(BeFalse())
+			Expect(server.TLSConfig).To(BeNil(), "failed TLS setup must not leave a partially configured server")
+		})
+
+		// UT-TLS-493-003: ConditionalTLS fails gracefully on invalid cert
+		It("UT-TLS-493-003: should return error on invalid cert content", func() {
+			Expect(os.WriteFile(certPath, []byte("not-a-cert"), 0644)).To(Succeed())
+			Expect(os.WriteFile(keyPath, []byte("not-a-key"), 0600)).To(Succeed())
+
+			server := &http.Server{Addr: ":0"}
+			_, _, err := sharedtls.ConfigureRequiredTLS(server, certDir)
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("LoadCACert", func() {
+
+		// UT-TLS-493-004: LoadCACert loads valid PEM file
+		It("UT-TLS-493-004: should load a valid CA PEM file", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			pool, err := sharedtls.LoadCACert(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(pool.Subjects()).ToNot(BeEmpty(), "CA pool should contain at least one certificate subject") //nolint:staticcheck // no alternative for validating cert pool content
+		})
+
+		// UT-TLS-493-005: LoadCACert returns error on missing file
+		It("UT-TLS-493-005: should return error for missing CA file", func() {
+			_, err := sharedtls.LoadCACert("/nonexistent/ca.crt")
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("NewTLSTransport", func() {
+
+		// UT-TLS-493-006: NewTLSTransport builds transport with custom CA pool
+		It("UT-TLS-493-006: should build transport with custom CA pool", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			transport, err := sharedtls.NewTLSTransport(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(transport.TLSClientConfig.RootCAs.Subjects()).ToNot(BeEmpty(), //nolint:staticcheck // no alternative for validating cert pool content
+				"transport CA pool should contain the loaded CA certificate")
+		})
+
+		// UT-TLS-1342-001: WithClientCert loads client certificate into transport
+		// BR-NET-002: Certificate-based authentication for enterprise LLM gateways
+		It("UT-TLS-1342-001: should load client certificate when WithClientCert is provided", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			transport, err := sharedtls.NewTLSTransport(certPath,
+				sharedtls.WithClientCert(certPath, keyPath),
+			)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(transport.TLSClientConfig.Certificates).To(HaveLen(1),
+				"mTLS transport must contain exactly one client certificate")
+			Expect(transport.TLSClientConfig.RootCAs.Subjects()).ToNot(BeEmpty(), //nolint:staticcheck // no alternative for validating cert pool content
+				"mTLS transport must still have CA pool for server verification")
+		})
+
+		// UT-TLS-1342-002: WithClientCert returns error for invalid cert file
+		It("UT-TLS-1342-002: should return error when client cert file is invalid", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			_, err := sharedtls.NewTLSTransport(certPath,
+				sharedtls.WithClientCert("/nonexistent/client.crt", "/nonexistent/client.key"),
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("client certificate"))
+		})
+
+		// UT-TLS-1342-003: WithClientCert returns error for mismatched cert/key pair
+		It("UT-TLS-1342-003: should return error when client cert and key do not match", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			otherCertPath := filepath.Join(certDir, "other.crt")
+			otherKeyPath := filepath.Join(certDir, "other.key")
+			generateSelfSignedCert(otherCertPath, otherKeyPath)
+
+			_, err := sharedtls.NewTLSTransport(certPath,
+				sharedtls.WithClientCert(certPath, otherKeyPath),
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("client certificate"))
+		})
+
+		// UT-TLS-1342-004: NewTLSTransport without options is backward-compatible
+		It("UT-TLS-1342-004: should work without options (backward-compatible)", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			transport, err := sharedtls.NewTLSTransport(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(transport.TLSClientConfig.Certificates).To(BeEmpty(),
+				"transport without WithClientCert must have no client certificates")
+		})
+
+		// UT-TLS-1342-005: Security profile is applied to mTLS transport
+		// BR-ENC-001: FIPS 140-2 approved algorithms
+		It("UT-TLS-1342-005: should apply security profile to mTLS transport", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			transport, err := sharedtls.NewTLSTransport(certPath,
+				sharedtls.WithClientCert(certPath, keyPath),
+			)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(transport.TLSClientConfig.MinVersion).To(BeNumerically(">=", tls.VersionTLS12),
+				"mTLS transport must enforce TLS 1.2+ (SC-8)")
+		})
+	})
+
+	// DD-PLATFORM-006 DA9: BuildTLSConfig is the *tls.Config-returning building
+	// block NewTLSTransport wraps in an *http.Transport -- non-HTTP clients
+	// (e.g. go-redis's redis.Options.TLSConfig for the APIFrontend replay-cache
+	// Valkey connection) need the *tls.Config directly, with the exact same
+	// CA verification, optional mTLS, and security-profile hardening every
+	// other outbound TLS client in the fleet already gets via NewTLSTransport.
+	Describe("BuildTLSConfig", func() {
+
+		// UT-TLS-DA9-001: BuildTLSConfig builds a *tls.Config with custom CA pool
+		It("UT-TLS-DA9-001: should build a tls.Config with custom CA pool", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			cfg, err := sharedtls.BuildTLSConfig(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.RootCAs.Subjects()).ToNot(BeEmpty(), //nolint:staticcheck // no alternative for validating cert pool content
+				"tls.Config CA pool should contain the loaded CA certificate")
+		})
+
+		// UT-TLS-DA9-002: BuildTLSConfig returns error for missing CA file
+		It("UT-TLS-DA9-002: should return error for missing CA file", func() {
+			_, err := sharedtls.BuildTLSConfig("/nonexistent/ca.crt")
+			Expect(err).To(HaveOccurred())
+		})
+
+		// UT-TLS-DA9-003: WithClientCert loads client certificate into the tls.Config (mTLS)
+		It("UT-TLS-DA9-003: should load client certificate when WithClientCert is provided", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			cfg, err := sharedtls.BuildTLSConfig(certPath, sharedtls.WithClientCert(certPath, keyPath))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.Certificates).To(HaveLen(1),
+				"mTLS tls.Config must contain exactly one client certificate")
+		})
+
+		// UT-TLS-DA9-004: WithClientCert returns error for invalid cert file
+		It("UT-TLS-DA9-004: should return error when client cert file is invalid", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			_, err := sharedtls.BuildTLSConfig(certPath,
+				sharedtls.WithClientCert("/nonexistent/client.crt", "/nonexistent/client.key"),
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("client certificate"))
+		})
+
+		// UT-TLS-DA9-005: Security profile (min TLS version) is applied
+		// BR-ENC-001: FIPS 140-2 approved algorithms
+		It("UT-TLS-DA9-005: should apply security profile enforcing TLS 1.2+", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			cfg, err := sharedtls.BuildTLSConfig(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.MinVersion).To(BeNumerically(">=", tls.VersionTLS12),
+				"tls.Config must enforce TLS 1.2+ (SC-8)")
+		})
+
+		// UT-TLS-DA9-006: NewTLSTransport delegates to BuildTLSConfig (no behavior
+		// drift from the refactor -- same RootCAs/Certificates end up on the
+		// wrapping http.Transport).
+		It("UT-TLS-DA9-006: NewTLSTransport's TLSClientConfig matches BuildTLSConfig's output", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			builtCfg, err := sharedtls.BuildTLSConfig(certPath, sharedtls.WithClientCert(certPath, keyPath))
+			Expect(err).ToNot(HaveOccurred())
+
+			transport, err := sharedtls.NewTLSTransport(certPath, sharedtls.WithClientCert(certPath, keyPath))
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(transport.TLSClientConfig.MinVersion).To(Equal(builtCfg.MinVersion))
+			Expect(transport.TLSClientConfig.Certificates).To(HaveLen(len(builtCfg.Certificates)))
+		})
+	})
+
+	Describe("BuildClientTLSConfig (GAP-14 / Issue #1519)", func() {
+
+		// UT-TLS-1519-001: empty caFile trusts the system CA pool instead of
+		// erroring -- needed by pkg/shared/telemetry's BYO-collector OTLP
+		// exporter, which may point at a publicly-trusted vendor collector
+		// with no custom CA to load.
+		It("UT-TLS-1519-001: should trust the system CA pool when caFile is empty", func() {
+			cfg, err := sharedtls.BuildClientTLSConfig("")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.RootCAs).To(BeNil(), "nil RootCAs means Go falls back to the system trust store")
+		})
+
+		// UT-TLS-1519-002: non-empty caFile still loads a custom CA pool,
+		// preserving the existing mandatory-inter-service-TLS behavior.
+		It("UT-TLS-1519-002: should load a custom CA pool when caFile is set", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			cfg, err := sharedtls.BuildClientTLSConfig(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.RootCAs.Subjects()).ToNot(BeEmpty()) //nolint:staticcheck // no alternative for validating cert pool content
+		})
+
+		// UT-TLS-1519-003: an invalid caFile surfaces a clear error naming
+		// the file, even with no client cert options set.
+		It("UT-TLS-1519-003: should return an error naming the unreadable caFile", func() {
+			_, err := sharedtls.BuildClientTLSConfig("/nonexistent/ca.pem")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("/nonexistent/ca.pem"))
+		})
+
+		// UT-TLS-1519-004: WithClientCert still works via BuildClientTLSConfig
+		// directly (not just through NewTLSTransport), for callers -- like
+		// pkg/shared/telemetry -- that need a *tls.Config rather than a
+		// full *http.Transport.
+		It("UT-TLS-1519-004: should load a client certificate when WithClientCert is provided", func() {
+			generateSelfSignedCert(certPath, keyPath)
+
+			cfg, err := sharedtls.BuildClientTLSConfig("", sharedtls.WithClientCert(certPath, keyPath))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.Certificates).To(HaveLen(1))
+		})
+
+		// UT-TLS-1519-005: the process-wide SecurityProfile (cipher suites,
+		// TLS version floor) is applied to BuildClientTLSConfig's output,
+		// same as NewTLSTransport -- callers must not bypass fleet-wide TLS
+		// hardening just because they only need a *tls.Config.
+		It("UT-TLS-1519-005: should apply the process-wide security profile, including cipher suites", func() {
+			sharedtls.SetDefaultSecurityProfile(sharedtls.IntermediateProfile())
+			defer sharedtls.ResetDefaultSecurityProfileForTesting()
+
+			cfg, err := sharedtls.BuildClientTLSConfig("")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.MinVersion).To(Equal(uint16(tls.VersionTLS12)))
+			Expect(cfg.CipherSuites).To(HaveLen(6), "Intermediate profile must set its 6 AEAD ECDHE cipher suites")
+		})
+	})
+
+	Describe("DefaultBaseTransport (#753)", func() {
+
+		AfterEach(func() {
+			sharedtls.ResetDefaultTransportForTesting()
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+		})
+
+		// UT-TLS-753-002: DefaultBaseTransport retries after initial failure
+		// BR-SECURITY-753: Transient CA file unavailability must not cause permanent failure
+		It("UT-TLS-753-002: should retry after initial CA file failure", func() {
+			Expect(os.Setenv("TLS_CA_FILE", "/nonexistent/ca.crt")).To(Succeed())
+
+			_, err := sharedtls.DefaultBaseTransport()
+			Expect(err).To(HaveOccurred(), "first call must fail when CA file is missing")
+
+			generateSelfSignedCert(certPath, keyPath)
+			Expect(os.Setenv("TLS_CA_FILE", certPath)).To(Succeed())
+
+			rt, err := sharedtls.DefaultBaseTransport()
+			Expect(err).ToNot(HaveOccurred(), "second call must succeed after CA file becomes available")
+			_, isCAReloader := rt.(*sharedtls.CAReloader)
+			Expect(isCAReloader).To(BeTrue(), "must return *CAReloader when TLS_CA_FILE is valid")
+		})
+
+		// UT-TLS-753-003: DefaultBaseTransport returns plain transport when TLS_CA_FILE unset
+		It("UT-TLS-753-003: should return plain transport when TLS_CA_FILE is unset", func() {
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+
+			rt, err := sharedtls.DefaultBaseTransport()
+			Expect(err).ToNot(HaveOccurred())
+			_, isPlain := rt.(*http.Transport)
+			Expect(isPlain).To(BeTrue(), "must return plain *http.Transport when no CA file")
+		})
+	})
+
+	Describe("Config Parsing", func() {
+
+		// UT-TLS-493-007: TLSConfig accessors (Enabled, CertPath, KeyPath)
+		It("UT-TLS-493-007: should report Enabled and return correct CertPath/KeyPath", func() {
+			cfg := sharedtls.TLSConfig{
+				CertDir: "/etc/kubernaut-tls",
+			}
+			Expect(cfg.Enabled()).To(BeTrue())
+			Expect(cfg.CertPath()).To(Equal("/etc/kubernaut-tls/tls.crt"))
+			Expect(cfg.KeyPath()).To(Equal("/etc/kubernaut-tls/tls.key"))
+		})
+
+		// UT-TLS-493-008: TLSConfig with empty CertDir means disabled
+		It("UT-TLS-493-008: should report disabled when CertDir is empty", func() {
+			cfg := sharedtls.TLSConfig{}
+			Expect(cfg.Enabled()).To(BeFalse())
+		})
+	})
+
+	// Issue #853: IdleConnTimeout reduction from 90s to 15s
+	Describe("IdleConnTimeout (#853)", func() {
+		It("UT-RT-853-011: DefaultBaseTransport returns IdleConnTimeout=15s (non-TLS)", func() {
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+			sharedtls.ResetDefaultTransportForTesting()
+
+			rt, err := sharedtls.DefaultBaseTransport()
+			Expect(err).ToNot(HaveOccurred())
+
+			plainTransport, ok := rt.(*http.Transport)
+			Expect(ok).To(BeTrue(), "non-TLS path must return *http.Transport")
+			Expect(plainTransport.IdleConnTimeout).To(Equal(15*time.Second),
+				"Issue #853: IdleConnTimeout must be 15s to prevent stale connection reuse after pod rescheduling")
+		})
+	})
+
+	Describe("InjectAmbientCACerts (#2545)", func() {
+
+		AfterEach(func() {
+			Expect(os.Unsetenv("SSL_CERT_FILE")).To(Succeed())
+			Expect(os.Unsetenv("SSL_CERT_DIR")).To(Succeed())
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+		})
+
+		// UT-TLS-2545-004: empty caFile is a no-op (fail-open, matching
+		// BuildClientTLSConfig's empty-caFile precedent) -- must not touch
+		// either env var.
+		It("UT-TLS-2545-004: should no-op when caFile is empty", func() {
+			Expect(os.Unsetenv("SSL_CERT_FILE")).To(Succeed())
+			Expect(os.Unsetenv("SSL_CERT_DIR")).To(Succeed())
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+
+			err := sharedtls.InjectAmbientCACerts(logr.Discard(), "")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(BeEmpty())
+			Expect(os.Getenv("TLS_CA_FILE")).To(BeEmpty())
+		})
+
+		// UT-TLS-2545-001: ambient injection must not require a writable temp
+		// directory or create a generated trust file.
+		It("UT-TLS-2545-001: should use the read-only CA directory without writing to TMPDIR", func() {
+			generateSelfSignedCert(certPath, keyPath)
+			tmpDir, err := os.MkdirTemp("", "ambient-ca-read-only-tmp-*")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(os.Chmod(tmpDir, 0555)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(os.Chmod(tmpDir, 0755)).To(Succeed())
+				Expect(os.RemoveAll(tmpDir)).To(Succeed())
+			})
+
+			originalTMPDIR, hadTMPDIR := os.LookupEnv("TMPDIR")
+			Expect(os.Setenv("TMPDIR", tmpDir)).To(Succeed())
+			DeferCleanup(func() {
+				if hadTMPDIR {
+					Expect(os.Setenv("TMPDIR", originalTMPDIR)).To(Succeed())
+				} else {
+					Expect(os.Unsetenv("TMPDIR")).To(Succeed())
+				}
+			})
+
+			Expect(sharedtls.InjectAmbientCACerts(logr.Discard(), certPath)).To(Succeed())
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(ContainSubstring(certDir))
+			Expect(os.Getenv("TLS_CA_FILE")).To(Equal(certPath))
+		})
+
+		// UT-TLS-2545-002: the runtime owns ambient environment variables;
+		// legacy static values must not survive bootstrap.
+		It("UT-TLS-2545-002: should replace inherited ambient environment overrides", func() {
+			generateSelfSignedCert(certPath, keyPath)
+			Expect(os.Setenv("SSL_CERT_FILE", "/legacy/combined-ca.pem")).To(Succeed())
+			Expect(os.Setenv("SSL_CERT_DIR", "/legacy/certs")).To(Succeed())
+
+			Expect(sharedtls.InjectAmbientCACerts(logr.Discard(), certPath)).To(Succeed())
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(ContainSubstring(certDir))
+			Expect(os.Getenv("SSL_CERT_DIR")).NotTo(ContainSubstring("/legacy/certs"))
+			Expect(os.Getenv("TLS_CA_FILE")).To(Equal(certPath))
+		})
+
+		// UT-TLS-2545-003: supported system certificate directories remain in
+		// the owned path list while the private CA directory is added.
+		It("UT-TLS-2545-003: should retain supported system CA directories", func() {
+			generateSelfSignedCert(certPath, keyPath)
+			Expect(sharedtls.InjectAmbientCACerts(logr.Discard(), certPath)).To(Succeed())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(ContainSubstring("/etc/ssl/certs"))
+			Expect(os.Getenv("SSL_CERT_DIR")).To(ContainSubstring("/etc/pki/tls/certs"))
+			Expect(os.Getenv("SSL_CERT_DIR")).To(ContainSubstring(certDir))
+		})
+
+		// UT-TLS-2545-005: unreadable caFile surfaces a clear error naming
+		// the file, and must not partially set either env var.
+		It("UT-TLS-2545-005: should return an error naming the unreadable caFile", func() {
+			err := sharedtls.InjectAmbientCACerts(logr.Discard(), "/nonexistent/ca.pem")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("/nonexistent/ca.pem"))
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(BeEmpty())
+			Expect(os.Getenv("TLS_CA_FILE")).To(BeEmpty())
+		})
+
+		// UT-TLS-2545-006: relative paths are rejected before any env var is
+		// touched, preventing the working directory from becoming a trust root.
+		It("UT-TLS-2545-006: should reject relative CA paths", func() {
+			err := sharedtls.InjectAmbientCACerts(logr.Discard(), "relative-ca.pem")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("absolute"))
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(BeEmpty())
+			Expect(os.Getenv("TLS_CA_FILE")).To(BeEmpty())
+		})
+
+		// UT-TLS-2545-007: invalid PEM content in caFile is rejected before
+		// any env var is touched, same fail-fast contract as LoadCACert.
+		It("UT-TLS-2545-007: should return an error for invalid PEM content", func() {
+			invalidPath := filepath.Join(certDir, "invalid.pem")
+			Expect(os.WriteFile(invalidPath, []byte("not-a-cert"), 0644)).To(Succeed())
+
+			err := sharedtls.InjectAmbientCACerts(logr.Discard(), invalidPath)
+			Expect(err).To(HaveOccurred())
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(BeEmpty())
+			Expect(os.Getenv("TLS_CA_FILE")).To(BeEmpty())
+		})
+
+		It("UT-TLS-2545-008: should reject CA directories containing the path-list separator", func() {
+			generateSelfSignedCert(certPath, keyPath)
+			separatorDir := filepath.Join(certDir, "ca"+string(filepath.ListSeparator)+"directory")
+			Expect(os.Mkdir(separatorDir, 0755)).To(Succeed())
+			caPEM, err := os.ReadFile(certPath)
+			Expect(err).ToNot(HaveOccurred())
+			separatorCAPath := filepath.Join(separatorDir, "ca.crt")
+			Expect(os.WriteFile(separatorCAPath, caPEM, 0444)).To(Succeed())
+
+			err = sharedtls.InjectAmbientCACerts(logr.Discard(), separatorCAPath)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("path-list separator"))
+			Expect(os.Getenv("SSL_CERT_FILE")).To(BeEmpty())
+			Expect(os.Getenv("SSL_CERT_DIR")).To(BeEmpty())
+			Expect(os.Getenv("TLS_CA_FILE")).To(BeEmpty())
+		})
+	})
+
+	Describe("DefaultBaseTransportWithRetry (#853)", func() {
+		It("UT-RT-853-016: wraps DefaultBaseTransport with RetryTransport", func() {
+			Expect(os.Unsetenv("TLS_CA_FILE")).To(Succeed())
+			sharedtls.ResetDefaultTransportForTesting()
+
+			rt, err := sharedtls.DefaultBaseTransportWithRetry()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(rt).ToNot(BeNil(), "must return a non-nil RoundTripper")
+
+			// The returned transport should NOT be a plain *http.Transport
+			// (it should be wrapped by RetryTransport)
+			_, isPlain := rt.(*http.Transport)
+			Expect(isPlain).To(BeFalse(),
+				"DefaultBaseTransportWithRetry must wrap with RetryTransport, not return plain transport")
+		})
+	})
+})

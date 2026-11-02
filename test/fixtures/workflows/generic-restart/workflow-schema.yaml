@@ -1,0 +1,51 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: generic-restart-v1
+spec:
+  # Generic Restart Workflow Schema (BR-WORKFLOW-004)
+  # Used by: AIAnalysis E2E, HolmesGPT-API E2E
+  version: "1.0.0"
+  description:
+    what: "Restarts a pod as a generic recovery action"
+    whenToUse: "When a pod needs a restart and no specific remediation applies"
+    whenNotToUse: "When root cause is known and a targeted fix exists"
+    preconditions: "Pod is managed by a controller"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [info, warning, high]
+    environment: [production, staging, test, development]
+    # #2478: generic RCA fallback remains available for both common target
+    # shapes and all priorities; management-aware ranking is advisory, not an
+    # exclusion gate.
+    component: [v1/Pod, apps/v1/Deployment]
+    priority: "*"
+    cluster: ["*"]
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to restart"

@@ -1,0 +1,238 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package registry
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+)
+
+func newTestWatcher() *EAIGWRegistry {
+	logger := zap.New(zap.UseDevMode(true))
+	return NewEAIGWRegistry(nil, EAIGWRegistryConfig{
+		ChannelSize:  8,
+		ResyncPeriod: time.Minute,
+	}, nil, logger)
+}
+
+func newBackendUnstructured(name, endpoint string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.envoyproxy.io/v1alpha1",
+			"kind":       "Backend",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": "kubernaut-system",
+				"labels": map[string]interface{}{
+					ManagedLabel: "true",
+				},
+			},
+			"status": map[string]interface{}{
+				"endpoint": endpoint,
+			},
+		},
+	}
+}
+
+// UT-REG-EAIGW: EAIGWRegistry lifecycle unit tests
+// Authority: BR-INTEGRATION-065 (Multi-Cluster Fleet Registry)
+// FedRAMP: SI-4 (Information System Monitoring) -- cluster event tracking
+var _ = Describe("UT-REG-EAIGW: EAIGWRegistry lifecycle", func() {
+	var w *EAIGWRegistry
+
+	BeforeEach(func() {
+		w = newTestWatcher()
+	})
+
+	AfterEach(func() {
+		w.Stop()
+	})
+
+	Describe("Initial state", func() {
+		It("UT-REG-EAIGW-002: should start with empty cluster list and not ready", func() {
+			Expect(w.List()).To(BeEmpty())
+			Expect(w.Ready()).To(BeFalse())
+		})
+	})
+
+	Describe("Probe", func() {
+		It("UT-REG-EAIGW-012 [BR-INTEGRATION-065, SI-4]: rejects a probe before initial sync", func() {
+			Expect(w.Probe(context.Background())).To(MatchError("fleet cluster registry has not completed initial sync"))
+			Expect(w.Ready()).To(BeFalse())
+		})
+
+		It("UT-REG-EAIGW-013 [BR-INTEGRATION-065, SI-4]: rejects a probe after the registry stops", func() {
+			w.Stop()
+
+			Expect(w.Probe(context.Background())).To(MatchError("fleet cluster registry stopped"))
+		})
+
+		It("UT-REG-EAIGW-010 [SI-4]: refreshes from the authoritative API and restores readiness", func() {
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), newBackendUnstructured("prod-east", "https://mcp.example.com/prod-east"))
+			w = NewEAIGWRegistry(client, EAIGWRegistryConfig{ResyncPeriod: time.Minute}, nil, zap.New(zap.UseDevMode(true)))
+			w.started = true
+
+			Expect(w.Probe(context.Background())).To(Succeed())
+			Expect(w.Ready()).To(BeTrue())
+			info, found := w.Get("prod-east")
+			Expect(found).To(BeTrue())
+			Expect(info.MCPEndpoint).To(Equal("https://mcp.example.com/prod-east"))
+		})
+
+		It("UT-REG-EAIGW-011 [SI-4]: marks readiness false when the authoritative API is unavailable", func() {
+			w.started = true
+			w.ready = true
+			client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+				runtime.NewScheme(),
+				map[schema.GroupVersionResource]string{BackendGVR: "BackendList"},
+			)
+			client.PrependReactor("list", "backends", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("api unavailable")
+			})
+			w.client = client
+
+			Expect(w.Probe(context.Background())).To(MatchError(ContainSubstring("refresh fleet cluster registry")))
+			Expect(w.Ready()).To(BeFalse())
+		})
+
+		It("UT-REG-EAIGW-014 [SI-4]: installs the informer watch error handler during startup wiring", func() {
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), newBackendUnstructured("prod-east", "https://mcp.example.com/prod-east"))
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err := startInformerAndSeed(ctx, client, EAIGWRegistryConfig{
+				ResyncPeriod: time.Minute,
+				onWatchError: func(error) {},
+			}, BackendGVR, cache.ResourceEventHandlerFuncs{}, stopCh, w.trackableClusterInfo)
+			Expect(err).ToNot(HaveOccurred())
+		})
+	})
+
+	Describe("onAdd", func() {
+		It("UT-REG-EAIGW-003: should add cluster to registry and emit Added event", func() {
+			u := newBackendUnstructured("prod-east",
+				"https://mcp.example.com/prod-east")
+
+			w.onAdd(u)
+
+			clusters := w.List()
+			Expect(clusters).To(HaveLen(1))
+			Expect(clusters[0].ID).To(Equal("prod-east"))
+			Expect(clusters[0].MCPEndpoint).To(Equal("https://mcp.example.com/prod-east"))
+
+			info, found := w.Get("prod-east")
+			Expect(found).To(BeTrue())
+			Expect(info.ID).To(Equal("prod-east"))
+
+			Eventually(w.WatchClusters()).Should(Receive(Equal(ClusterEvent{
+				Type:    EventAdded,
+				Cluster: info,
+			})))
+		})
+
+		It("UT-REG-EAIGW-004: should ignore non-Unstructured objects", func() {
+			w.onAdd("not-an-unstructured")
+			Expect(w.List()).To(BeEmpty())
+		})
+	})
+
+	Describe("onUpdate", func() {
+		It("UT-REG-EAIGW-005: should update existing cluster and emit Updated event", func() {
+			u1 := newBackendUnstructured("staging",
+				"https://old-endpoint.com/staging")
+			w.onAdd(u1)
+			// Drain the add event
+			Eventually(w.WatchClusters()).Should(Receive())
+
+			u2 := newBackendUnstructured("staging",
+				"https://new-endpoint.com/staging")
+			w.onUpdate(u1, u2)
+
+			info, found := w.Get("staging")
+			Expect(found).To(BeTrue())
+			Expect(info.MCPEndpoint).To(Equal("https://new-endpoint.com/staging"))
+
+			Eventually(w.WatchClusters()).Should(Receive(Equal(ClusterEvent{
+				Type:    EventUpdated,
+				Cluster: info,
+			})))
+		})
+	})
+
+	Describe("onDelete", func() {
+		It("UT-REG-EAIGW-006: should remove cluster from registry and emit Deleted event", func() {
+			u := newBackendUnstructured("dev-west",
+				"https://mcp.example.com/dev-west")
+			w.onAdd(u)
+			Eventually(w.WatchClusters()).Should(Receive())
+
+			w.onDelete(u)
+
+			Expect(w.List()).To(BeEmpty())
+			_, found := w.Get("dev-west")
+			Expect(found).To(BeFalse())
+
+			Eventually(w.WatchClusters()).Should(Receive(WithTransform(
+				func(e ClusterEvent) EventType { return e.Type },
+				Equal(EventDeleted),
+			)))
+		})
+
+		It("UT-REG-EAIGW-007: should handle tombstone objects on delete", func() {
+			u := newBackendUnstructured("tombstone-cluster",
+				"https://mcp.example.com/tombstone")
+			w.onAdd(u)
+			Eventually(w.WatchClusters()).Should(Receive())
+
+			tombstone := cache.DeletedFinalStateUnknown{
+				Key: "kubernaut-system/tombstone-cluster",
+				Obj: u,
+			}
+			w.onDelete(tombstone)
+
+			Expect(w.List()).To(BeEmpty())
+		})
+
+		It("UT-REG-EAIGW-008: should no-op when deleting unknown cluster", func() {
+			u := newBackendUnstructured("unknown", "")
+			w.onDelete(u)
+			Expect(w.List()).To(BeEmpty())
+		})
+	})
+
+	Describe("emit", func() {
+		It("UT-REG-EAIGW-009: should not panic after Stop is called", func() {
+			w.Stop()
+			Expect(func() {
+				w.emit(ClusterEvent{Type: EventAdded, Cluster: ClusterInfo{ID: "post-stop"}})
+			}).ToNot(Panic())
+		})
+	})
+})

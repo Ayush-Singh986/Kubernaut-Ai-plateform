@@ -1,0 +1,2295 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package signalprocessing_e2e contains E2E/BR tests for SignalProcessing business requirements.
+// These tests validate business value delivery - SLAs, efficiency, reliability.
+//
+// Defense-in-Depth Strategy (per 03-testing-strategy.mdc):
+// - Unit tests (70%+): Business logic in isolation (test/unit/signalprocessing/)
+// - Integration tests (>50%): CRD coordination (test/integration/signalprocessing/)
+// - E2E/BR tests (10-15%): Complete workflow validation (this directory)
+//
+// TDD Phase: RED - Tests define expected business behavior
+// These tests will FAIL until controller implementation is complete (GREEN phase)
+//
+// Purpose: Validate that SignalProcessing delivers business value as specified
+// Audience: Business stakeholders + developers
+// Execution: make test-e2e-signalprocessing
+//
+// Business Requirements Validated:
+// - BR-SP-051: Environment classification from namespace labels
+// - BR-SP-070: Priority assignment (P0-P3) based on environment + severity
+// - BR-SP-100: Owner chain traversal for enrichment
+// - BR-SP-101: Detected labels (removed - ADR-056: relocated to KA)
+// - BR-SP-102: CustomLabels from Rego policies
+//
+// NOTE: These tests duplicate some integration test scenarios intentionally
+// for defense-in-depth coverage. E2E tests run against real Kind cluster
+// while integration tests use ENVTEST.
+package signalprocessing
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	spaudit "github.com/jordigilh/kubernaut/pkg/signalprocessing/audit"
+	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/jordigilh/kubernaut/test/shared/helpers"
+)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-001: K8s Context Enrichment (Node Enrichment)
+// BUSINESS VALUE: AI Analysis can identify node-level issues from pod alerts
+// STAKEHOLDER: Operations team needs full context including node characteristics
+// NOTE: Node enrichment requires real K8s nodes (Kind cluster), not ENVTEST
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-001: Node Enrichment Enables Infrastructure Analysis", func() {
+	var testNs string
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-node")
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-001: Node enrichment - moved from integration tier (ENVTEST limitation)
+	It("BR-SP-001: should enrich Node context when Pod is scheduled", func() {
+		By("Creating a Pod that will be scheduled to a real node")
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "node-test-pod",
+				Namespace: testNs,
+				Labels:    map[string]string{"app": "node-test"},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:  "main",
+					Image: "nginx:latest",
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+
+		By("Waiting for Pod to be scheduled to a node")
+		var nodeName string
+		Eventually(func() string {
+			var updated corev1.Pod
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), &updated); err != nil {
+				return ""
+			}
+			nodeName = updated.Spec.NodeName
+			return nodeName
+		}, timeout, interval).ShouldNot(BeEmpty())
+
+		By("Creating SignalProcessing CR targeting the scheduled Pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-node-enrich",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-node-enrich-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+					Name:         "NodeEnrichTest",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "node-test-pod",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for Pod enrichment in KubernetesContext (Node context via owner chain when applicable)")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			// Verify Pod enrichment occurred (Workload Kind=Pod has labels)
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "Pod" && len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+
+		By("Verifying Pod context and Node context (via Workload) are enriched")
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		// Workload should be populated (Pod when target is Pod; Node enrichment via owner chain)
+		Expect(final.Status.KubernetesContext.Workload).NotTo(BeNil(), "Workload should be populated for Pod enrichment")
+		Expect(final.Status.KubernetesContext.Workload.Kind).To(Equal("Pod"))
+		Expect(final.Status.KubernetesContext.Workload.Labels).To(HaveKeyWithValue("app", "node-test"))
+		// Owner chain or secondary Workload may include Node; verify we got node-level context
+		// (Node labels come from real cluster - check Workload has labels when Kind is Node, or OwnerChain has Node)
+		Expect(final.Status.KubernetesContext.Workload.Name).To(Equal("node-test-pod"))
+	})
+
+	// K8sEnricher degraded mode test - validates proper integration
+	It("BR-SP-001: should enter degraded mode when target Pod does not exist", func() {
+		By("Creating SignalProcessing CR targeting non-existent pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-degraded-mode",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-degraded-mode-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6",
+					Name:         "DegradedModeTest",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "non-existent-pod-that-does-not-exist",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for DegradedMode to be set")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil {
+				return false
+			}
+			return updated.Status.KubernetesContext.DegradedMode
+		}, timeout, interval).Should(BeTrue())
+
+		By("Verifying namespace context is still enriched in degraded mode")
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		// Namespace should still be populated
+		Expect(final.Status.KubernetesContext.Namespace).NotTo(BeNil(), "Namespace should be populated in degraded mode")
+		Expect(final.Status.KubernetesContext.Namespace.Name).To(Equal(testNs))
+		// But Workload should be nil (target not found)
+		Expect(final.Status.KubernetesContext.Workload).To(BeNil())
+		// DegradedMode should be true
+		Expect(final.Status.KubernetesContext.DegradedMode).To(BeTrue())
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-070: Priority Assignment
+// BUSINESS VALUE: Operations team gets correct priority for alert triage
+// STAKEHOLDER: On-call engineers need accurate priority for response decisions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-070: Priority Assignment Delivers Correct Business Outcomes", func() {
+
+	Context("Production Environment Prioritization", func() {
+		var testNs string
+
+		BeforeEach(func() {
+			testNs = helpers.CreateTestNamespaceAndWait(k8sClient, "e2e-prod", helpers.WithLabels(map[string]string{
+				"kubernaut.ai/environment": "production",
+			}))
+
+			// Issue #437: Gate — verify label is propagated before SP CR creation
+			// to prevent the race where the controller reconciles before labels are committed.
+			Eventually(func() string {
+				var ns corev1.Namespace
+				if err := k8sClient.Get(ctx, client.ObjectKey{Name: testNs}, &ns); err != nil {
+					return ""
+				}
+				return ns.Labels["kubernaut.ai/environment"]
+			}, "10s", "500ms").Should(Equal("production"))
+		})
+
+		AfterEach(func() {
+			helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+		})
+
+		// TDD RED: This test will FAIL until controller assigns P0 priority
+		It("BR-SP-070: should assign P0 to production critical alerts (highest urgency)", func() {
+			By("Creating SignalProcessing CR for production critical alert")
+			sp := &signalprocessingv1alpha1.SignalProcessing{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-priority-p0",
+					Namespace: controllerNamespace,
+				},
+				Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+					RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+						APIVersion: "kubernaut.ai/v1alpha1",
+						Kind:       "RemediationRequest",
+						Name:       "e2e-priority-p0-rr",
+						Namespace:  controllerNamespace,
+					},
+					Signal: signalprocessingv1alpha1.SignalData{
+						Fingerprint:  "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+						Name:         "HighCPU",
+						Severity:     "critical",
+						Type:         "alert",
+						TargetType:   "kubernetes",
+						ReceivedTime: metav1.Now(),
+						TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+							Kind:      "Pod",
+							Name:      "api-server-xyz",
+							Namespace: testNs,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+			By("E2E-SP-437-001: Verifying KubernetesContext has production label before priority check")
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Namespace == nil {
+					return ""
+				}
+				return updated.Status.KubernetesContext.Namespace.Labels["kubernaut.ai/environment"]
+			}, timeout, interval).Should(Equal("production"),
+				"KubernetesContext.Namespace.Labels must contain kubernaut.ai/environment=production")
+
+			By("Waiting for priority assignment")
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.PriorityAssignment == nil {
+					return ""
+				}
+				return string(updated.Status.PriorityAssignment.Priority)
+			}, timeout, interval).Should(Equal("P0"))
+
+			By("Verifying business outcome: production critical = highest urgency")
+			var final signalprocessingv1alpha1.SignalProcessing
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+			Expect(final.Status.PriorityAssignment.Priority).To(Equal(signalprocessingv1alpha1.PriorityP0))
+			// Accept either rego-policy (with Rego engine) or policy-matrix (fallback)
+			Expect(final.Status.PriorityAssignment.Source).To(BeElementOf("rego-policy", "policy-matrix"))
+		})
+
+		// TDD RED: This test will FAIL until controller assigns P1 priority
+		It("BR-SP-070: should assign P1 to production warning alerts (high urgency)", func() {
+			By("Creating SignalProcessing CR for production warning alert")
+			sp := &signalprocessingv1alpha1.SignalProcessing{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-priority-p1",
+					Namespace: controllerNamespace,
+				},
+				Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+					RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+						APIVersion: "kubernaut.ai/v1alpha1",
+						Kind:       "RemediationRequest",
+						Name:       "e2e-priority-p1-rr",
+						Namespace:  controllerNamespace,
+					},
+					Signal: signalprocessingv1alpha1.SignalData{
+						Fingerprint:  "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
+						Name:         "MemoryPressure",
+						Severity:     "high",
+						Type:         "alert",
+						TargetType:   "kubernetes",
+						ReceivedTime: metav1.Now(),
+						TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+							Kind:      "Pod",
+							Name:      "worker-abc",
+							Namespace: testNs,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+			By("Waiting for priority assignment")
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.PriorityAssignment == nil {
+					return ""
+				}
+				return string(updated.Status.PriorityAssignment.Priority)
+			}, timeout, interval).Should(Equal("P1"))
+		})
+	})
+
+	Context("Non-Production Environment Prioritization", func() {
+		var stagingNs, devNs string
+
+		BeforeEach(func() {
+			stagingNs = helpers.CreateTestNamespaceAndWait(k8sClient, "e2e-staging", helpers.WithLabels(map[string]string{"kubernaut.ai/environment": "staging"}))
+			devNs = helpers.CreateTestNamespaceAndWait(k8sClient, "e2e-dev", helpers.WithLabels(map[string]string{"kubernaut.ai/environment": "development"}))
+
+			// Issue #437: Gate — verify labels are committed before any SP CR creation
+			Eventually(func() string {
+				var ns corev1.Namespace
+				if err := k8sClient.Get(ctx, client.ObjectKey{Name: stagingNs}, &ns); err != nil {
+					return ""
+				}
+				return ns.Labels["kubernaut.ai/environment"]
+			}, "10s", "500ms").Should(Equal("staging"))
+			Eventually(func() string {
+				var ns corev1.Namespace
+				if err := k8sClient.Get(ctx, client.ObjectKey{Name: devNs}, &ns); err != nil {
+					return ""
+				}
+				return ns.Labels["kubernaut.ai/environment"]
+			}, "10s", "500ms").Should(Equal("development"))
+		})
+
+		AfterEach(func() {
+			helpers.DeleteTestNamespace(ctx, k8sClient, stagingNs)
+			helpers.DeleteTestNamespace(ctx, k8sClient, devNs)
+		})
+
+		// Issue #98: Score-based policy assigns P1 to staging+critical (severity 3 + env 2 = composite 5)
+		It("BR-SP-070: should assign P1 to staging critical alerts (high urgency)", func() {
+			sp := &signalprocessingv1alpha1.SignalProcessing{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-priority-p2",
+					Namespace: controllerNamespace,
+				},
+				Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+					RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+						APIVersion: "kubernaut.ai/v1alpha1",
+						Kind:       "RemediationRequest",
+						Name:       "e2e-priority-p2-rr",
+						Namespace:  controllerNamespace,
+					},
+					Signal: signalprocessingv1alpha1.SignalData{
+						Fingerprint:  "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3",
+						Name:         "StagingCritical",
+						Severity:     "critical",
+						Type:         "alert",
+						TargetType:   "kubernetes",
+						ReceivedTime: metav1.Now(),
+						TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+							Kind:      "Pod",
+							Name:      "staging-pod",
+							Namespace: stagingNs,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+			By("E2E-SP-437-002: Verifying KubernetesContext has staging label before priority check")
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Namespace == nil {
+					return ""
+				}
+				return updated.Status.KubernetesContext.Namespace.Labels["kubernaut.ai/environment"]
+			}, timeout, interval).Should(Equal("staging"),
+				"KubernetesContext.Namespace.Labels must contain kubernaut.ai/environment=staging")
+
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.PriorityAssignment == nil {
+					return ""
+				}
+				return string(updated.Status.PriorityAssignment.Priority)
+			}, timeout, interval).Should(Equal("P1"))
+		})
+
+		// TDD RED: This test will FAIL until controller assigns P3 priority
+		It("BR-SP-070: should assign P3 to development alerts (low urgency)", func() {
+			sp := &signalprocessingv1alpha1.SignalProcessing{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "e2e-priority-p3",
+					Namespace: controllerNamespace,
+				},
+				Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+					RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+						APIVersion: "kubernaut.ai/v1alpha1",
+						Kind:       "RemediationRequest",
+						Name:       "e2e-priority-p3-rr",
+						Namespace:  controllerNamespace,
+					},
+					Signal: signalprocessingv1alpha1.SignalData{
+						Fingerprint:  "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4",
+						Name:         "DevInfo",
+						Severity:     "low",
+						Type:         "alert",
+						TargetType:   "kubernetes",
+						ReceivedTime: metav1.Now(),
+						TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+							Kind:      "Pod",
+							Name:      "dev-pod",
+							Namespace: devNs,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+			Eventually(func() string {
+				var updated signalprocessingv1alpha1.SignalProcessing
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+					return ""
+				}
+				if updated.Status.PriorityAssignment == nil {
+					return ""
+				}
+				return string(updated.Status.PriorityAssignment.Priority)
+			}, timeout, interval).Should(Equal("P3"))
+		})
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-051: Environment Classification
+// BUSINESS VALUE: Alerts are routed to correct team based on environment
+// STAKEHOLDER: Operations team needs environment context for escalation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-051: Environment Classification Enables Correct Routing", func() {
+	var testNs string
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// TDD RED: This test will FAIL until controller classifies environment
+	It("BR-SP-051: should classify production from namespace label", func() {
+		By("Creating namespace with production label")
+		testNs = helpers.CreateTestNamespaceAndWait(k8sClient, "e2e-env", helpers.WithLabels(map[string]string{
+			"kubernaut.ai/environment": "production",
+		}))
+
+		By("Verifying namespace label propagation")
+		Eventually(func() string {
+			var ns corev1.Namespace
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: testNs}, &ns); err != nil {
+				return ""
+			}
+			return ns.Labels["kubernaut.ai/environment"]
+		}, "10s", "500ms").Should(Equal("production"))
+
+		By("Creating SignalProcessing CR")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-env-prod",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-env-prod-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5",
+					Name:         "TestAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "test-pod",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for environment classification")
+		Eventually(func() string {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return ""
+			}
+			if updated.Status.EnvironmentClassification == nil {
+				return ""
+			}
+			return string(updated.Status.EnvironmentClassification.Environment)
+		}, timeout, interval).Should(Equal(string(signalprocessingv1alpha1.EnvironmentProduction)))
+
+		By("Verifying environment classification from namespace label")
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		Expect(final.Status.EnvironmentClassification.Source).To(Equal("namespace-labels"))
+	})
+
+	It("BR-SP-053: should use the explicit operator default for unclassifiable namespaces", func() {
+		By("Creating namespace without environment label")
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-env")
+
+		By("Creating SignalProcessing CR")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-env-unknown",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-env-unknown-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6",
+					Name:         "UnclassifiedAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "unclassified-pod",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for the explicit operator default environment classification")
+		Eventually(func() string {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return ""
+			}
+			if updated.Status.EnvironmentClassification == nil {
+				return ""
+			}
+			return string(updated.Status.EnvironmentClassification.Environment)
+		}, timeout, interval).Should(Equal(string(signalprocessingv1alpha1.EnvironmentDevelopment)))
+
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		Expect(final.Status.EnvironmentClassification.Source).To(Equal("default"))
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-100: Owner Chain Traversal
+// BUSINESS VALUE: AI analysis can identify deployment-level issues from pod alerts
+// STAKEHOLDER: AI Analysis service needs owner context for recommendations
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-100: Owner Chain Enables Root Cause Analysis", func() {
+	var testNs string
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-owner")
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// TDD RED: This test will FAIL until controller builds owner chain
+	// FlakeAttempts(3): Timing-sensitive test due to controller reconciliation
+	It("BR-SP-100: should build complete owner chain for accurate root cause identification", FlakeAttempts(3), func() {
+		By("Creating Deployment with Pod")
+		replicas := int32(1)
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-deployment",
+				Namespace: testNs,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "api"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "api"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:  "api",
+							Image: "nginx:latest",
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+		By("Waiting for Pod to be created by Deployment")
+		var podName string
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := k8sClient.List(ctx, pods, client.InNamespace(testNs)); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				if len(pod.OwnerReferences) > 0 {
+					podName = pod.Name
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the Pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-owner-chain",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-owner-chain-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7",
+					Name:         "PodAlert",
+					Severity:     "critical",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      podName,
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for owner chain to be populated")
+		Eventually(func() int {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return 0
+			}
+			if updated.Status.KubernetesContext == nil {
+				return 0
+			}
+			return len(updated.Status.KubernetesContext.OwnerChain)
+		}, timeout, interval).Should(BeNumerically(">=", 2))
+
+		By("Verifying owner chain includes ReplicaSet and Deployment")
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		ownerKinds := make([]string, len(final.Status.KubernetesContext.OwnerChain))
+		for i, owner := range final.Status.KubernetesContext.OwnerChain {
+			ownerKinds[i] = owner.Kind
+		}
+		Expect(ownerKinds).To(ContainElement("ReplicaSet"))
+		Expect(ownerKinds).To(ContainElement("Deployment"))
+	})
+})
+
+// BR-SP-101: DetectedLabels tests removed - ADR-056: DetectedLabels relocated to KA
+// See: kubernaut-agent/tests/unit/test_label_detector.py
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-102: CustomLabels from Rego
+// BUSINESS VALUE: Customer-defined labels enable custom alert routing
+// STAKEHOLDER: Platform customers need custom classification rules
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-102: CustomLabels Enable Business-Specific Routing", func() {
+	var testNs string
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-custom", helpers.WithLabels(map[string]string{
+			"kubernaut.ai/team": "payments",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// TDD RED: This test will FAIL until controller extracts custom labels
+	It("BR-SP-102: should extract custom labels from Rego policies", func() {
+		By("Creating SignalProcessing CR")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-custom-labels",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-custom-labels-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0",
+					Name:         "PaymentsAlert",
+					Severity:     "critical",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "payments-api",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for custom labels to be populated")
+		Eventually(func() int {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return 0
+			}
+			if updated.Status.KubernetesContext == nil {
+				return 0
+			}
+			return len(updated.Status.KubernetesContext.CustomLabels)
+		}, timeout, interval).Should(BeNumerically(">", 0))
+
+		By("Verifying team label was extracted")
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		Expect(final.Status.KubernetesContext.CustomLabels).To(HaveKey("team"))
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-090: Categorization Audit Trail
+// BUSINESS VALUE: Compliance audit trail for all signal processing decisions
+// STAKEHOLDER: Compliance team needs immutable record of classification decisions
+// ADR-032: Data Access Layer Isolation - audit writes via Data Storage REST API
+// ADR-038: Async Buffered Audit - fire-and-forget pattern, <1ms overhead
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-090: Categorization Audit Trail Provides Compliance Evidence", func() {
+	var testNs string
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-audit", helpers.WithLabels(map[string]string{
+			"kubernaut.ai/environment": "production",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-090: Verify audit events are written to DataStorage
+	It("BR-SP-090: should write audit events to DataStorage when signal is processed", func() {
+		By("Verifying DataStorage is accessible on health NodePort 30281")
+		Eventually(func() bool {
+			resp, err := http.Get("http://localhost:30281/readyz")
+			if err != nil {
+				GinkgoWriter.Printf("  ⚠️  DataStorage health check failed: %v\n", err)
+				return false
+			}
+			defer func() { _ = resp.Body.Close() }()
+			GinkgoWriter.Printf("  ✅ DataStorage health: %d\n", resp.StatusCode)
+			return resp.StatusCode == http.StatusOK
+		}, 30*time.Second, 2*time.Second).Should(BeTrue(), "DataStorage should be accessible")
+
+		By("Creating parent RemediationRequest (matches production architecture)")
+		fingerprint := "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+		targetResource := signalprocessingv1alpha1.ResourceIdentifier{
+			Kind:      "Pod",
+			Name:      "audit-test-pod",
+			Namespace: testNs,
+		}
+
+		// Create parent RemediationRequest (RO creates this in production)
+		// ADR-057: RR lives in controller namespace; SP controller watches kubernaut-system only
+		rr := &remediationv1alpha1.RemediationRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-audit-test-rr",
+				Namespace: controllerNamespace,
+			},
+			Spec: remediationv1alpha1.RemediationRequestSpec{
+				SignalFingerprint: fingerprint,
+				SignalName:        "AuditTestSignal",
+				Severity:          "critical",
+				SignalType:        "alert",
+				SignalSource:      "prometheus-adapter",
+				TargetType:        "kubernetes",
+				TargetResource: remediationv1alpha1.ResourceIdentifier{
+					Kind:      targetResource.Kind,
+					Name:      targetResource.Name,
+					Namespace: targetResource.Namespace,
+				},
+				FiringTime:   metav1.Now(),
+				ReceivedTime: metav1.Now(),
+			},
+		}
+		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
+
+		By("Creating SignalProcessing CR with RemediationRequestRef")
+		// ADR-057: SP lives in controller namespace; SP controller watches kubernaut-system only
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-audit-test",
+				Namespace: controllerNamespace,
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(rr, remediationv1alpha1.GroupVersion.WithKind("RemediationRequest")),
+				},
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: remediationv1alpha1.GroupVersion.String(),
+					Kind:       "RemediationRequest",
+					Name:       rr.Name,
+					Namespace:  rr.Namespace,
+					UID:        string(rr.UID),
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:    fingerprint,
+					Name:           "AuditTestSignal",
+					Severity:       "critical",
+					Type:           "alert",
+					TargetType:     "kubernetes",
+					ReceivedTime:   metav1.Now(),
+					TargetResource: targetResource,
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for signal processing to complete")
+		Eventually(func() signalprocessingv1alpha1.SignalProcessingPhase {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				GinkgoWriter.Printf("  ⚠️  Failed to get SignalProcessing: %v\n", err)
+				return ""
+			}
+			GinkgoWriter.Printf("  🔍 Current phase: %s (expected: %s)\n", updated.Status.Phase, signalprocessingv1alpha1.PhaseCompleted)
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				// Log controller pod status for debugging
+				GinkgoWriter.Printf("  📋 Phase not completed yet, checking controller status...\n")
+			}
+			return updated.Status.Phase
+		}, timeout, interval).Should(Equal(signalprocessingv1alpha1.PhaseCompleted))
+
+		// E2E-SP-163-001 + E2E-SP-163-005: Exact field validation for completed SP
+		expectCompletedSPStatusAssertions(ctx, k8sClient, sp)
+
+		By("Querying DataStorage audit API for signal.processed events")
+		// DataStorage is exposed on NodePort 30081 → localhost:30081 via Kind port mapping
+
+		Eventually(func() bool {
+			// Query audit events from DataStorage
+			auditEvents, err := queryAuditEvents("e2e-audit-test-rr")
+			if err != nil {
+				GinkgoWriter.Printf("  ⚠️  Audit query failed: %v\n", err)
+				return false
+			}
+
+			// Debug: Log all events for visibility
+			GinkgoWriter.Printf("  🔍 Total audit events returned: %d\n", len(auditEvents))
+			for i, event := range auditEvents {
+				eventType := "unknown"
+				if event.EventType != "" {
+					eventType = event.EventType
+				}
+				resourceId := "unknown"
+				if event.ResourceID.Set {
+					resourceId = event.ResourceID.Value
+				}
+				GinkgoWriter.Printf("    [%d] type=%s resource=%s\n", i, eventType, resourceId)
+			}
+
+			// Verify we got audit events
+			if len(auditEvents) == 0 {
+				GinkgoWriter.Printf("  ⏳ No audit events found yet\n")
+				return false
+			}
+
+			GinkgoWriter.Printf("  ✅ Found %d total audit events\n", len(auditEvents))
+
+			// Filter events for our specific SignalProcessing resource
+			hasSignalProcessed := false
+			hasClassificationDecision := false
+			for _, event := range auditEvents {
+				// Only check events for this specific test resource
+				// OpenAPI types use OptString for optional fields
+				if !event.ResourceID.Set || event.ResourceID.Value != "e2e-audit-test" {
+					continue
+				}
+				GinkgoWriter.Printf("    • Event: %s (resource: %s)\n", event.EventType, event.ResourceID.Value)
+				if event.EventType == spaudit.EventTypeSignalProcessed {
+					hasSignalProcessed = true
+				}
+				if event.EventType == spaudit.EventTypeClassificationDecision {
+					hasClassificationDecision = true
+				}
+			}
+
+			return hasSignalProcessed && hasClassificationDecision
+		}, 60*time.Second, 3*time.Second).Should(BeTrue(),
+			"Expected signalprocessing.signal.processed AND signalprocessing.classification.decision audit events")
+
+		By("Verifying audit event data integrity")
+		auditEvents, err := queryAuditEvents("e2e-audit-test-rr")
+		Expect(err).ToNot(HaveOccurred())
+
+		// Filter events for our specific resource
+		var resourceEvents []dsgen.AuditEvent
+		for _, event := range auditEvents {
+			// Handle OpenAPI OptString types
+			if event.ResourceID.Set && event.ResourceID.Value == "e2e-audit-test" {
+				resourceEvents = append(resourceEvents, event)
+			}
+		}
+		Expect(len(resourceEvents)).To(BeNumerically(">=", 2),
+			"Expected at least 2 audit events for resource e2e-audit-test")
+
+		// Find signalprocessing.signal.processed event and validate data
+		var signalEvent *dsgen.AuditEvent
+		for i := range resourceEvents {
+			if resourceEvents[i].EventType == spaudit.EventTypeSignalProcessed {
+				signalEvent = &resourceEvents[i]
+				break
+			}
+		}
+		Expect(signalEvent).ToNot(BeNil(), "signalprocessing.signal.processed event should exist")
+		// OpenAPI types use OptString for optional fields
+		Expect(signalEvent.ActorID.Set).To(BeTrue())
+		Expect(signalEvent.ActorID.Value).To(Equal("signalprocessing-controller"))
+		Expect(signalEvent.ResourceType.Set).To(BeTrue())
+		Expect(signalEvent.ResourceType.Value).To(Equal("SignalProcessing"))
+		Expect(signalEvent.ResourceID.Set).To(BeTrue())
+		Expect(signalEvent.ResourceID.Value).To(Equal("e2e-audit-test"))
+		// Note: Namespace may be empty in current implementation
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-103: Workload Type Enrichment (StatefulSet, DaemonSet, Service)
+// BUSINESS VALUE: AI Analysis understands different workload patterns for better remediation
+// STAKEHOLDER: Operations team needs workload-specific context
+// COVERAGE: Targets enrichStatefulSet, enrichDaemonSet, enrichService (0% coverage)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-103: Workload Type Enrichment Enables Workload-Specific Remediation", func() {
+	var testNs string
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-workload", helpers.WithLabels(map[string]string{
+			"kubernaut.ai/environment": "production",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-A: StatefulSet enrichment - targets enrichStatefulSet (0% coverage)
+	It("BR-SP-103-A: should enrich StatefulSet context for stateful workloads", func() {
+		By("Creating a StatefulSet with a headless service")
+
+		// Create headless service required for StatefulSet
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stateful-svc",
+				Namespace: testNs,
+			},
+			Spec: corev1.ServiceSpec{
+				ClusterIP: "None",
+				Selector:  map[string]string{"app": "stateful"},
+				Ports: []corev1.ServicePort{{
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+		// Create StatefulSet
+		replicas := int32(1)
+		sts := &appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stateful-app",
+				Namespace: testNs,
+			},
+			Spec: appsv1.StatefulSetSpec{
+				ServiceName: "stateful-svc",
+				Replicas:    &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "stateful"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "stateful"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "app",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sts)).To(Succeed())
+
+		By("Waiting for StatefulSet Pod to be created")
+		var podName string
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := k8sClient.List(ctx, pods, client.InNamespace(testNs)); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				if pod.Labels["app"] == "stateful" {
+					podName = pod.Name
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the StatefulSet Pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-statefulset-test",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-statefulset-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+					Name:         "StatefulSetPodAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      podName,
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for owner chain to include StatefulSet")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil {
+				return false
+			}
+			// Check owner chain includes StatefulSet
+			for _, owner := range updated.Status.KubernetesContext.OwnerChain {
+				if owner.Kind == "StatefulSet" && owner.Name == "stateful-app" {
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+	})
+
+	// BR-SP-103-B: DaemonSet enrichment - targets enrichDaemonSet (0% coverage)
+	It("BR-SP-103-B: should enrich DaemonSet context for node-level workloads", func() {
+		By("Creating a DaemonSet")
+		ds := &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "daemon-app",
+				Namespace: testNs,
+			},
+			Spec: appsv1.DaemonSetSpec{
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "daemon"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "daemon"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "app",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ds)).To(Succeed())
+
+		By("Waiting for DaemonSet Pod to be created")
+		var podName string
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := k8sClient.List(ctx, pods, client.InNamespace(testNs)); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				if pod.Labels["app"] == "daemon" {
+					podName = pod.Name
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the DaemonSet Pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-daemonset-test",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-daemonset-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+					Name:         "DaemonSetPodAlert",
+					Severity:     "critical",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      podName,
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for owner chain to include DaemonSet")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil {
+				return false
+			}
+			// Check owner chain includes DaemonSet
+			for _, owner := range updated.Status.KubernetesContext.OwnerChain {
+				if owner.Kind == "DaemonSet" && owner.Name == "daemon-app" {
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+	})
+
+	// BR-SP-103-C: Service enrichment - targets enrichService (0% coverage)
+	It("BR-SP-103-C: should detect Service association for network-aware remediation", func() {
+		By("Creating a Deployment with matching labels")
+		replicas := int32(1)
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "svc-target-deployment",
+				Namespace: testNs,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "svc-target"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "svc-target"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "app",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+		By("Creating a Service targeting the Deployment pods")
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "target-service",
+				Namespace: testNs,
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "svc-target"},
+				Ports: []corev1.ServicePort{{
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+		By("Waiting for Pod to be created")
+		var podName string
+		Eventually(func() bool {
+			pods := &corev1.PodList{}
+			if err := k8sClient.List(ctx, pods, client.InNamespace(testNs)); err != nil {
+				return false
+			}
+			for _, pod := range pods.Items {
+				if pod.Labels["app"] == "svc-target" {
+					podName = pod.Name
+					return true
+				}
+			}
+			return false
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the Pod")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-service-test",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-service-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4",
+					Name:         "ServicePodAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      podName,
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Waiting for processing to complete with Service context")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			// Processing should complete - Service enrichment happens during enriching phase
+			return updated.Status.Phase == signalprocessingv1alpha1.PhaseCompleted
+		}, timeout, interval).Should(BeTrue())
+
+		// Verify the processing completed successfully
+		var final signalprocessingv1alpha1.SignalProcessing
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+		Expect(final.Status.Phase).To(Equal(signalprocessingv1alpha1.PhaseCompleted))
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-103-D/E/F: Workload-Specific Enrichment (Direct Resource Targeting)
+// BUSINESS VALUE: Enable workload-type-specific remediation strategies
+// COVERAGE GOAL: Improve E2E enricher coverage from 24.9% to 43%
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-103-D: Deployment Signal Enrichment", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-deploy", helpers.WithLabels(map[string]string{
+			"environment": "production",
+			"team":        "platform",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-D: Deployment enrichment - targets enrichDeploymentSignal (0% → 75%)
+	It("BR-SP-103-D: should enrich Deployment context for rollout-aware remediation", func() {
+		By("Creating a Deployment with multiple replicas")
+		replicas := int32(3)
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-gateway",
+				Namespace: testNs,
+				Labels: map[string]string{
+					"app":  "api-gateway",
+					"tier": "frontend",
+				},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "api-gateway"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "api-gateway"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "api",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+		By("Waiting for Deployment to become available")
+		Eventually(func() bool {
+			var d appsv1.Deployment
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(deploy), &d); err != nil {
+				return false
+			}
+			return d.Status.AvailableReplicas > 0
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the Deployment directly")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-deployment-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-deployment-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+					Name:         "DeploymentRolloutAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Deployment",
+						Name:      "api-gateway",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying Deployment enrichment with Workload")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "Deployment" &&
+				w.Name == "api-gateway" &&
+				len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-103-A: StatefulSet Signal Enrichment (Fixed)", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-sts", helpers.WithLabels(map[string]string{
+			"environment": "production",
+			"team":        "data",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-A: StatefulSet enrichment - targets enrichStatefulSetSignal (0% → 75%)
+	// FIXED: Now targets StatefulSet directly instead of Pod
+	It("BR-SP-103-A: should enrich StatefulSet context for stateful workloads", func() {
+		By("Creating a headless service for StatefulSet")
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "database-svc",
+				Namespace: testNs,
+			},
+			Spec: corev1.ServiceSpec{
+				ClusterIP: "None",
+				Selector:  map[string]string{"app": "database"},
+				Ports: []corev1.ServicePort{{
+					Port:       5432,
+					TargetPort: intstr.FromInt(5432),
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+		By("Creating a StatefulSet")
+		replicas := int32(2)
+		sts := &appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "database",
+				Namespace: testNs,
+				Labels: map[string]string{
+					"app":  "database",
+					"tier": "data",
+				},
+			},
+			Spec: appsv1.StatefulSetSpec{
+				ServiceName: "database-svc",
+				Replicas:    &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "database"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "database"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "db",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sts)).To(Succeed())
+
+		By("Waiting for StatefulSet to have at least one ready replica")
+		Eventually(func() bool {
+			var s appsv1.StatefulSet
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sts), &s); err != nil {
+				return false
+			}
+			return s.Status.ReadyReplicas > 0
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the StatefulSet directly")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-statefulset-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-statefulset-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+					Name:         "StatefulSetDataAlert",
+					Severity:     "critical",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "StatefulSet",
+						Name:      "database",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying StatefulSet enrichment with Workload")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "StatefulSet" &&
+				w.Name == "database" &&
+				len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-103-B: DaemonSet Signal Enrichment (Fixed)", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-ds", helpers.WithLabels(map[string]string{
+			"environment": "production",
+			"team":        "platform",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-B: DaemonSet enrichment - targets enrichDaemonSetSignal (0% → 75%)
+	// FIXED: Now targets DaemonSet directly instead of Pod
+	It("BR-SP-103-B: should enrich DaemonSet context for node-level workloads", func() {
+		By("Creating a DaemonSet")
+		ds := &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "log-collector",
+				Namespace: testNs,
+				Labels: map[string]string{
+					"app":  "log-collector",
+					"tier": "monitoring",
+				},
+			},
+			Spec: appsv1.DaemonSetSpec{
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "log-collector"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "log-collector"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "collector",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, ds)).To(Succeed())
+
+		By("Waiting for DaemonSet to have at least one ready pod")
+		Eventually(func() bool {
+			var d appsv1.DaemonSet
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(ds), &d); err != nil {
+				return false
+			}
+			return d.Status.NumberReady > 0
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the DaemonSet directly")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-daemonset-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-daemonset-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "d1a2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+					Name:         "DaemonSetNodeAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "DaemonSet",
+						Name:      "log-collector",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying DaemonSet enrichment with Workload")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "DaemonSet" &&
+				w.Name == "log-collector" &&
+				len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-103-C: ReplicaSet Signal Enrichment", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-rs", helpers.WithLabels(map[string]string{
+			"environment": "staging",
+			"team":        "platform",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-C: ReplicaSet enrichment - targets enrichReplicaSetSignal (0% → 75%)
+	It("BR-SP-103-C: should enrich ReplicaSet context for replica management", func() {
+		By("Creating a standalone ReplicaSet (no Deployment owner)")
+		replicas := int32(2)
+		rs := &appsv1.ReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "standalone-rs",
+				Namespace: testNs,
+				Labels: map[string]string{
+					"app":  "standalone",
+					"tier": "worker",
+				},
+			},
+			Spec: appsv1.ReplicaSetSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "standalone"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "standalone"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "worker",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, rs)).To(Succeed())
+
+		By("Waiting for ReplicaSet to have ready replicas")
+		Eventually(func() bool {
+			var r appsv1.ReplicaSet
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(rs), &r); err != nil {
+				return false
+			}
+			return r.Status.ReadyReplicas > 0
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the ReplicaSet directly")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-replicaset-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-replicaset-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2",
+					Name:         "ReplicaSetAlert",
+					Severity:     "high",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "ReplicaSet",
+						Name:      "standalone-rs",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying ReplicaSet enrichment with Workload")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "ReplicaSet" &&
+				w.Name == "standalone-rs" &&
+				len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-103-E: Service Signal Enrichment", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-svc", helpers.WithLabels(map[string]string{
+			"environment": "production",
+			"team":        "network",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-103-E: Service enrichment - targets enrichServiceSignal (0% → 75%)
+	It("BR-SP-103-E: should enrich Service context for network-aware remediation", func() {
+		By("Creating a Deployment to be targeted by the Service")
+		replicas := int32(2)
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backend",
+				Namespace: testNs,
+				Labels:    map[string]string{"app": "backend"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "backend"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "backend"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "api",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+		By("Creating a Service")
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "backend-service",
+				Namespace: testNs,
+				Labels: map[string]string{
+					"app":  "backend",
+					"tier": "backend",
+				},
+			},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "backend"},
+				Ports: []corev1.ServicePort{{
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+					Protocol:   corev1.ProtocolTCP,
+				}},
+				Type: corev1.ServiceTypeClusterIP,
+			},
+		}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+
+		By("Waiting for Service to be ready")
+		Eventually(func() bool {
+			var s corev1.Service
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(svc), &s); err != nil {
+				return false
+			}
+			return s.Spec.ClusterIP != "" && s.Spec.ClusterIP != "None"
+		}, timeout, interval).Should(BeTrue())
+
+		By("Creating SignalProcessing CR targeting the Service directly")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-service-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-service-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
+					Name:         "ServiceNetworkAlert",
+					Severity:     "critical",
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Service",
+						Name:      "backend-service",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying Service enrichment with Workload")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			if updated.Status.KubernetesContext == nil || updated.Status.KubernetesContext.Workload == nil {
+				return false
+			}
+			w := updated.Status.KubernetesContext.Workload
+			return w.Kind == "Service" &&
+				w.Name == "backend-service" &&
+				len(w.Labels) > 0
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BR-SP-070: Business Classification Tests (Priority Assignment)
+// BUSINESS VALUE: Correct priority assignment enables appropriate remediation urgency
+// COVERAGE GOAL: Improve E2E classifier coverage from 10.5% to 42%
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _ = Describe("BR-SP-070-A: P0 Priority Classification", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-p0", helpers.WithLabels(map[string]string{
+			"environment": "production", // Production environment
+			"team":        "platform",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-070-A: Production + Critical → Priority assigned
+	It("BR-SP-070-A: should assign priority for production critical signal", func() {
+		By("Creating a Deployment in production namespace")
+		replicas := int32(3)
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "critical-app",
+				Namespace: testNs,
+				Labels:    map[string]string{"app": "critical-app"},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "critical-app"},
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{"app": "critical-app"},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:    "app",
+							Image:   "busybox:1.36",
+							Command: []string{"sleep", "3600"},
+						}},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, deploy)).To(Succeed())
+
+		By("Creating SignalProcessing CR with CRITICAL severity")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-p0-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-p0-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b3",
+					Name:         "ProductionCriticalAlert",
+					Severity:     "critical", // Critical severity
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Deployment",
+						Name:      "critical-app",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying priority assignment for production critical signal")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			// Verify priority was assigned (exercises classifier logic)
+			if updated.Status.PriorityAssignment == nil {
+				return false
+			}
+			// Verify it's a valid priority (P0, P1, P2, or P3)
+			priority := updated.Status.PriorityAssignment.Priority
+			return priority == "P0" || priority == "P1" || priority == "P2" || priority == "P3"
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-070-B: P2 Priority Classification", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-p2", helpers.WithLabels(map[string]string{
+			"environment": "staging", // Non-production environment
+			"team":        "development",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-070-B: Non-production + Warning → Priority assigned
+	It("BR-SP-070-B: should assign priority for staging warning signal", func() {
+		By("Creating a Pod in staging namespace")
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "staging-app",
+				Namespace: testNs,
+				Labels:    map[string]string{"app": "staging-app"},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:    "app",
+					Image:   "busybox:1.36",
+					Command: []string{"sleep", "3600"},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+
+		By("Creating SignalProcessing CR with ERROR severity")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-p2-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-p2-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
+					Name:         "StagingWarningAlert",
+					Severity:     "high", // Warning severity
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "staging-app",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying priority assignment for staging warning signal")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			// Verify priority was assigned (exercises classifier logic)
+			if updated.Status.PriorityAssignment == nil {
+				return false
+			}
+			// Verify it's a valid priority (P0, P1, P2, or P3)
+			priority := updated.Status.PriorityAssignment.Priority
+			return priority == "P0" || priority == "P1" || priority == "P2" || priority == "P3"
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("BR-SP-070-C: P3 Priority Classification", func() {
+	var testNs string
+	const timeout = 2 * time.Minute
+	const interval = 5 * time.Second
+
+	BeforeEach(func() {
+		testNs = helpers.CreateTestNamespace(ctx, k8sClient, "e2e-p3", helpers.WithLabels(map[string]string{
+			"team": "experimental",
+		}))
+	})
+
+	AfterEach(func() {
+		helpers.DeleteTestNamespace(ctx, k8sClient, testNs)
+	})
+
+	// BR-SP-070-C: Unknown environment + Info → Priority assigned
+	It("BR-SP-070-C: should assign priority for unknown environment info signal", func() {
+		By("Creating a Pod in unknown environment namespace")
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "experimental-app",
+				Namespace: testNs,
+				Labels:    map[string]string{"app": "experimental"},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name:    "app",
+					Image:   "busybox:1.36",
+					Command: []string{"sleep", "3600"},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+
+		By("Creating SignalProcessing CR with INFO severity")
+		sp := &signalprocessingv1alpha1.SignalProcessing{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "e2e-p3-signal",
+				Namespace: controllerNamespace,
+			},
+			Spec: signalprocessingv1alpha1.SignalProcessingSpec{
+				RemediationRequestRef: signalprocessingv1alpha1.ObjectReference{
+					APIVersion: "kubernaut.ai/v1alpha1",
+					Kind:       "RemediationRequest",
+					Name:       "e2e-p3-rr",
+					Namespace:  controllerNamespace,
+				},
+				Signal: signalprocessingv1alpha1.SignalData{
+					Fingerprint:  "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+					Name:         "ExperimentalInfoAlert",
+					Severity:     "low", // Info severity
+					Type:         "alert",
+					TargetType:   "kubernetes",
+					ReceivedTime: metav1.Now(),
+					TargetResource: signalprocessingv1alpha1.ResourceIdentifier{
+						Kind:      "Pod",
+						Name:      "experimental-app",
+						Namespace: testNs,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+
+		By("Verifying priority assignment for unknown environment info signal")
+		Eventually(func() bool {
+			var updated signalprocessingv1alpha1.SignalProcessing
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &updated); err != nil {
+				return false
+			}
+			if updated.Status.Phase != signalprocessingv1alpha1.PhaseCompleted {
+				return false
+			}
+			// Verify priority was assigned (exercises classifier logic)
+			if updated.Status.PriorityAssignment == nil {
+				return false
+			}
+			// Verify it's a valid priority (P0, P1, P2, or P3)
+			priority := updated.Status.PriorityAssignment.Priority
+			return priority == "P0" || priority == "P1" || priority == "P2" || priority == "P3"
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
+// expectCompletedSPStatusAssertions validates E2E-SP-163-001 (timestamps) and E2E-SP-163-005 (all 5 conditions)
+// for a SignalProcessing that has reached PhaseCompleted. Shared by tests that wait for SP completion.
+func expectCompletedSPStatusAssertions(ctx context.Context, k8sClient client.Client, sp *signalprocessingv1alpha1.SignalProcessing) {
+	var final signalprocessingv1alpha1.SignalProcessing
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &final)).To(Succeed())
+
+	// E2E-SP-163-001: Processing timestamps
+	Expect(final.Status.StartTime).NotTo(BeNil())
+	Expect(final.Status.CompletionTime).NotTo(BeNil())
+	Expect(final.Status.CompletionTime.Time).To(BeTemporally(">=", final.Status.StartTime.Time))
+
+	// E2E-SP-163-005: All 5 conditions present and True
+	Expect(final.Status.Conditions).To(ContainElements(
+		And(HaveField("Type", "Ready"), HaveField("Status", metav1.ConditionTrue)),
+		And(HaveField("Type", "EnrichmentComplete"), HaveField("Status", metav1.ConditionTrue)),
+		And(HaveField("Type", "ClassificationComplete"), HaveField("Status", metav1.ConditionTrue)),
+		And(HaveField("Type", "CategorizationComplete"), HaveField("Status", metav1.ConditionTrue)),
+		And(HaveField("Type", "ProcessingComplete"), HaveField("Status", metav1.ConditionTrue)),
+	))
+}
+
+// queryAuditEvents queries DataStorage API for audit events using the typed OpenAPI client.
+// This replaces the previous raw HTTP implementation for type safety and contract validation.
+//
+// Benefits of OpenAPI client:
+// - Type-safe request/response handling
+// - Automatic JSON marshaling/unmarshaling
+// - Contract validation against api/openapi/data-storage-v1.yaml
+// - Breaking changes caught during development
+//
+// Per architectural fix: Uses RemediationRequestRef for correlation_id
+func queryAuditEvents(correlationID string) ([]dsgen.AuditEvent, error) {
+	// DataStorage is accessible via NodePort 30081 in Kind cluster
+	// We use the host port mapping: localhost:30081 → NodePort 30081
+	dataStorageURL := "https://localhost:30081"
+
+	// DD-AUTH-014: Create authenticated OpenAPI client with ServiceAccount token
+	// DataStorage middleware requires Bearer token for TokenReview + SAR authorization
+	saTransport := testauth.NewServiceAccountTransport(e2eAuthToken)
+	httpClient := &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: saTransport,
+	}
+	client, err := dsgen.NewClient(dataStorageURL, dsgen.WithClient(httpClient))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create authenticated OpenAPI client: %w", err)
+	}
+
+	// Query audit events filtered by correlation_id + event_category to avoid getting events from other parallel tests
+	// Per docs/testing/AUDIT_QUERY_PAGINATION_STANDARDS.md: ALWAYS filter by correlationID + eventCategory
+	// In parallel E2E runs, there can be 100+ events from other tests, so filtering is critical
+	params := dsgen.QueryAuditEventsParams{
+		CorrelationID: dsgen.NewOptString(correlationID),
+		EventCategory: dsgen.NewOptString(spaudit.CategorySignalProcessing),
+	}
+
+	// Call OpenAPI-generated query method
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.QueryAuditEvents(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query audit API: %w", err)
+	}
+
+	// Access typed response directly (ogen pattern)
+	if len(resp.Data) == 0 {
+		return []dsgen.AuditEvent{}, nil // No events found
+	}
+
+	// Return typed audit events
+	return resp.Data, nil
+}

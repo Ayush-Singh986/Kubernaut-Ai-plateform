@@ -1,0 +1,431 @@
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	host2 = "host"
+)
+
+// ============================================================================
+// Generic Container Management (Reusable for Any Service)
+// ============================================================================
+//
+// This file provides generic container start/stop abstractions that work with
+// any container image (DataStorage, KA, Mock LLM, etc.). It implements the
+// DD-TEST-002 sequential container orchestration pattern.
+//
+// Key Features:
+// - Optional image building (if BuildContext + BuildDockerfile provided)
+// - Health check support (HTTP endpoint polling)
+// - Automatic cleanup of existing containers
+// - Background log streaming for debugging
+//
+// Related:
+// - datastorage_bootstrap.go: DataStorage-specific infrastructure
+// - aianalysis_e2e.go / kubernautagent.go: service-specific image building
+// - e2e_images.go: E2E/Kind image management
+// ============================================================================
+
+// GenericContainerConfig defines configuration for starting any container
+// This abstraction allows services to bootstrap custom dependencies (e.g., KA for AIAnalysis)
+// while reusing the proven sequential startup pattern from DD-TEST-002.
+//
+// Image Naming (DD-TEST-001 v1.3):
+//
+//	Use GenerateInfraImageName() helper for consistent tag generation:
+//	Image: infrastructure.GenerateInfraImageName("kubernaut-agent", "aianalysis")
+//	→ "kubernaut-agent:kubernaut-agent-aianalysis-1734278400-a1b2c3d4"
+//
+// Example Usage (AIAnalysis starting KA):
+//
+//	kaConfig := infrastructure.GenericContainerConfig{
+//	    Name:    "aianalysis_ka_test",
+//	    Image:   infrastructure.GenerateInfraImageName("kubernaut-agent", "aianalysis"), // DD-TEST-001 v1.3
+//	    Network: "aianalysis_test_network",
+//	    Ports:   map[int]int{8080: 18120}, // container:host
+//	    Env: map[string]string{
+//	        "LLM_PROVIDER": "mock",
+//	        "MOCK_LLM":     "true",
+//	    },
+//	    BuildContext:    ".",                     // Optional: build if needed
+//	    BuildDockerfile: "kubernaut-agent/Dockerfile.e2e", // Use E2E Dockerfile (minimal deps, faster builds)
+//	    HealthCheck: &HealthCheckConfig{
+//	        URL:     "http://127.0.0.1:18120/health",
+//	        Timeout: 30 * time.Second,
+//	    },
+//	}
+//	kaContainer, err := infrastructure.StartGenericContainer(kaConfig, writer)
+type GenericContainerConfig struct {
+	// Container Configuration
+	Name       string            // Container name (e.g., "aianalysis_ka_test")
+	Image      string            // Container image
+	Network    string            // Network to attach to (e.g., "aianalysis_test_network")
+	Ports      map[int]int       // Port mappings: container_port -> host_port
+	Env        map[string]string // Environment variables
+	Volumes    map[string]string // Volume mounts: host_path -> container_path
+	ExtraHosts []string          // Extra host entries (e.g., "host.containers.internal:host-gateway")
+	Cmd        []string          // Command arguments appended after the image name
+
+	// Build Configuration (optional, if image needs to be built)
+	BuildContext    string            // Build context directory (e.g., project root)
+	BuildDockerfile string            // Path to Dockerfile (relative to BuildContext)
+	BuildArgs       map[string]string // Build arguments
+
+	// Health Check Configuration (optional)
+	HealthCheck *HealthCheckConfig
+}
+
+// HealthCheckConfig defines how to verify container health
+type HealthCheckConfig struct {
+	URL     string        // HTTP endpoint to check (e.g., "http://127.0.0.1:8080/health")
+	Timeout time.Duration // Maximum time to wait for health check to pass
+}
+
+// ContainerInstance holds runtime information about a started container
+type ContainerInstance struct {
+	Name   string                 // Container name
+	ID     string                 // Container ID from podman
+	Ports  map[int]int            // Port mappings (container -> host)
+	Config GenericContainerConfig // Original configuration
+}
+
+// StartGenericContainer starts a container using DD-TEST-002 sequential pattern
+//
+// Process:
+// 0. Try to pull from registry if IMAGE_REGISTRY + IMAGE_TAG set (CI/CD optimization)
+// 1. Check if image exists, build if necessary (and BuildContext provided)
+// 2. Stop and remove existing container with same name
+// 3. Start container with specified configuration
+// 4. Wait for health check to pass (if HealthCheck provided)
+//
+// CI/CD Optimization (ghcr.io):
+//   - If IMAGE_REGISTRY + IMAGE_TAG env vars are set, pulls from registry first
+//   - Falls back to local build if pull fails or env vars not set
+//   - Saves ~70% disk space and ~30% time in CI/CD
+//   - Local dev unchanged (no env vars → builds as before)
+//
+// Returns:
+// - *ContainerInstance: Runtime information about started container
+// - error: Any errors during container startup
+func StartGenericContainer(cfg GenericContainerConfig, writer io.Writer) (*ContainerInstance, error) {
+	_, _ = fmt.Fprintf(writer, "🚀 Starting container: %s\n", cfg.Name)
+
+	prepareGenericContainerImage(&cfg, writer)
+
+	// Step 1: Build image if needed (fallback if registry pull failed/disabled)
+	if cfg.BuildContext != "" && cfg.BuildDockerfile != "" {
+		checkCmd := exec.CommandContext(context.Background(), "podman", "image", "exists", cfg.Image)
+		if checkCmd.Run() != nil {
+			_, _ = fmt.Fprintf(writer, "   📦 Building image locally: %s\n", cfg.Image)
+			if err := buildContainerImage(cfg, writer); err != nil {
+				return nil, fmt.Errorf("failed to build image: %w", err)
+			}
+			_, _ = fmt.Fprintf(writer, "   ✅ Image built: %s\n", cfg.Image)
+		} else {
+			_, _ = fmt.Fprintf(writer, "   ✅ Image already exists (using cached): %s\n", cfg.Image)
+		}
+	}
+
+	// Step 2: Cleanup existing container
+	_, _ = fmt.Fprintf(writer, "   🧹 Cleaning up existing container (if any)...\n")
+	stopCmd := exec.CommandContext(context.Background(), "podman", "stop", cfg.Name)
+	_ = stopCmd.Run() // Ignore errors
+
+	rmCmd := exec.CommandContext(context.Background(), "podman", "rm", cfg.Name)
+	_ = rmCmd.Run() // Ignore errors
+
+	args := buildGenericContainerRunArgs(cfg)
+
+	// Start container
+	_, _ = fmt.Fprintf(writer, "   🐳 Starting container with image: %s\n", cfg.Image)
+	cmd := exec.CommandContext(context.Background(), "podman", args...)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to start container: %w", err)
+	}
+
+	// Get container ID
+	inspectCmd := exec.CommandContext(context.Background(), "podman", "inspect", "--format", "{{.Id}}", cfg.Name)
+	idBytes, err := inspectCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container ID: %w", err)
+	}
+	containerID := strings.TrimSpace(string(idBytes))
+
+	instance := &ContainerInstance{
+		Name:   cfg.Name,
+		ID:     containerID,
+		Ports:  cfg.Ports,
+		Config: cfg,
+	}
+
+	// Step 4: Health check
+	if cfg.HealthCheck != nil {
+		if err := checkGenericContainerHealth(cfg, writer); err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 5: Start streaming container logs in background (for runtime debugging)
+	// This is critical for debugging KA audit events, Python exceptions, etc.
+	go func() {
+		logsCmd := exec.CommandContext(context.Background(), "podman", "logs", "-f", cfg.Name)
+		logsCmd.Stdout = writer
+		logsCmd.Stderr = writer
+		_ = logsCmd.Run() // Will run until container stops
+	}()
+	_, _ = fmt.Fprintf(writer, "   📋 Container logs streaming to test output\n")
+
+	_, _ = fmt.Fprintf(writer, "✅ Container ready: %s (ID: %s)\n\n", cfg.Name, containerID[:12])
+	return instance, nil
+}
+
+func checkGenericContainerHealth(cfg GenericContainerConfig, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for health check: %s\n", cfg.HealthCheck.URL)
+	if err := waitForContainerHealth(cfg.HealthCheck, writer); err != nil {
+		_, _ = fmt.Fprintf(writer, "\n⚠️  Container failed health check. Logs:\n")
+		logsCmd := exec.CommandContext(context.Background(), "podman", "logs", cfg.Name)
+		logsCmd.Stdout = writer
+		logsCmd.Stderr = writer
+		_ = logsCmd.Run()
+		return fmt.Errorf("container health check failed: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "   ✅ Health check passed\n")
+	return nil
+}
+
+func prepareGenericContainerImage(cfg *GenericContainerConfig, writer io.Writer) {
+	if cfg.BuildContext != "" {
+		serviceName := extractServiceNameFromImage(cfg.Image)
+		if prebuilt, ok := resolvePrebuiltCIArtifact(context.Background(), serviceName, writer); ok {
+			cfg.Image = prebuilt
+			cfg.BuildContext = ""
+			cfg.BuildDockerfile = ""
+		}
+	}
+	registry := os.Getenv("IMAGE_REGISTRY")
+	tag := os.Getenv("IMAGE_TAG")
+	if registry == "" || tag == "" || isExternalImage(cfg.Image, registry) {
+		return
+	}
+	_, _ = fmt.Fprintf(writer, "   🔄 Registry mode detected (IMAGE_REGISTRY + IMAGE_TAG set)\n")
+	serviceName := extractServiceNameFromImage(cfg.Image)
+	if serviceName == "" {
+		return
+	}
+	registryImage := fmt.Sprintf("%s/%s:%s", registry, serviceName, tag)
+	exists, verifyErr := VerifyImageExistsInRegistry(context.Background(), registryImage, writer)
+	if verifyErr == nil && exists {
+		_, _ = fmt.Fprintf(writer, "   ✅ Image ready from registry (skipping build)\n")
+		_, _ = fmt.Fprintf(writer, "   💡 No pre-pull needed - Podman will fetch during deployment\n")
+		cfg.BuildContext = ""
+		cfg.BuildDockerfile = ""
+		return
+	}
+	_, _ = fmt.Fprintf(writer, "   ⚠️  Registry verification failed: %v\n", verifyErr)
+	_, _ = fmt.Fprintf(writer, "   ⚠️  Falling back to local build...\n")
+}
+
+func buildGenericContainerRunArgs(cfg GenericContainerConfig) []string {
+	args := []string{"run", "-d", "--name", cfg.Name}
+	if cfg.Network != "" {
+		args = append(args, "--network", cfg.Network)
+	}
+	for _, host := range cfg.ExtraHosts {
+		args = append(args, "--add-host", host)
+	}
+	if cfg.Network != host2 {
+		for containerPort, hostPort := range cfg.Ports {
+			args = append(args, "-p", fmt.Sprintf("%d:%d", hostPort, containerPort))
+		}
+	}
+	for key, value := range cfg.Env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", key, value))
+	}
+	for hostPath, containerPath := range cfg.Volumes {
+		if strings.Contains(containerPath, ":") {
+			args = append(args, "-v", fmt.Sprintf("%s:%s,z", hostPath, containerPath))
+		} else {
+			args = append(args, "-v", fmt.Sprintf("%s:%s:z", hostPath, containerPath))
+		}
+	}
+	args = append(args, cfg.Image)
+	return append(args, cfg.Cmd...)
+}
+
+// StopGenericContainer stops and removes a container
+func StopGenericContainer(instance *ContainerInstance, writer io.Writer) error {
+	_, _ = fmt.Fprintf(writer, "🛑 Stopping container: %s\n", instance.Name)
+
+	stopCmd := exec.CommandContext(context.Background(), "podman", "stop", instance.Name)
+	stopCmd.Stdout = writer
+	stopCmd.Stderr = writer
+	_ = stopCmd.Run() // Ignore errors
+
+	rmCmd := exec.CommandContext(context.Background(), "podman", "rm", instance.Name)
+	rmCmd.Stdout = writer
+	rmCmd.Stderr = writer
+	_ = rmCmd.Run() // Ignore errors
+
+	_, _ = fmt.Fprintf(writer, "✅ Container stopped: %s\n", instance.Name)
+	return nil
+}
+
+// isExternalImage returns true if the image is from an external registry that
+// should not be overridden with IMAGE_REGISTRY/IMAGE_TAG. Third-party images
+// (e.g. ghcr.io/containers/kubernetes-mcp-server) have their own versioning
+// and should be used as-is.
+//
+// Compares the full registry path prefix (not just hostname) because
+// images from the same host but different orgs (e.g. ghcr.io/containers/
+// vs ghcr.io/jordigilh/) are external to each other.
+func isExternalImage(image, registry string) bool {
+	if strings.HasPrefix(image, "localhost/") || !strings.Contains(image, "/") {
+		return false
+	}
+	if strings.HasPrefix(image, registry+"/") {
+		return false
+	}
+	imageHost := strings.SplitN(image, "/", 2)[0]
+	if strings.Contains(imageHost, ".") || strings.Contains(imageHost, ":") {
+		return true
+	}
+	return false
+}
+
+// extractServiceNameFromImage extracts the service name from various image name formats
+//
+// Handles:
+//   - "localhost/datastorage:aianalysis-a3b5c7d9" → "datastorage"
+//   - "kubernaut/kubernaut-agent" → "kubernaut-agent"
+//   - "datastorage:test-tag" → "datastorage"
+//   - "ghcr.io/owner/kubernaut/datastorage:pr-123" → "datastorage"
+//
+// Returns:
+//   - Service name if successfully extracted
+//   - Empty string if image format is unrecognized
+func extractServiceNameFromImage(imageName string) string {
+	// Remove tag if present (split on first ':')
+	parts := strings.SplitN(imageName, ":", 2)
+	nameWithoutTag := parts[0]
+
+	// Split on '/' to get path components
+	pathParts := strings.Split(nameWithoutTag, "/")
+
+	// The service name is always the last component
+	if len(pathParts) > 0 {
+		return pathParts[len(pathParts)-1]
+	}
+
+	return ""
+}
+
+// buildContainerImage builds a container image using podman build
+func buildContainerImage(cfg GenericContainerConfig, writer io.Writer) error {
+	args := []string{"build", "-t", cfg.Image, "--force-rm=false",
+		"--build-arg", fmt.Sprintf("GOARCH=%s", runtime.GOARCH),
+	}
+
+	// Add build args (caller-supplied args override the default GOARCH if needed)
+	for key, value := range cfg.BuildArgs {
+		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Add dockerfile and context
+	// BuildDockerfile can be relative to BuildContext or absolute
+	dockerfilePath := cfg.BuildDockerfile
+	if !filepath.IsAbs(dockerfilePath) {
+		// Make it absolute by joining with BuildContext
+		dockerfilePath = filepath.Join(cfg.BuildContext, dockerfilePath)
+	}
+	args = append(args, "-f", dockerfilePath, cfg.BuildContext)
+
+	cmd := exec.CommandContext(context.Background(), "podman", args...)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		// Check if image was actually built despite error (podman cleanup issue)
+		checkCmd := exec.CommandContext(context.Background(), "podman", "image", "exists", cfg.Image)
+		if checkCmd.Run() == nil {
+			_, _ = fmt.Fprintf(writer, "   ⚠️  Build completed with warnings (image exists): %s\n", cfg.Image)
+			return nil // Image exists, treat as success
+		}
+		return err // Image doesn't exist, real failure
+	}
+	return nil
+}
+
+// waitForContainerHealth waits for HTTP health check to pass
+func waitForContainerHealth(check *HealthCheckConfig, writer io.Writer) error {
+	deadline := time.Now().Add(check.Timeout)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for time.Now().Before(deadline) {
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, check.URL, http.NoBody)
+		if reqErr != nil {
+			return fmt.Errorf("failed to build health check request: %w", reqErr)
+		}
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			_ = resp.Body.Close()
+			return nil
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+
+		// Log progress every 5 seconds
+		elapsed := check.Timeout - time.Until(deadline)
+		if elapsed.Seconds() > 0 && int(elapsed.Seconds())%5 == 0 {
+			_, _ = fmt.Fprintf(writer, "   Still waiting for %s... (%.0fs elapsed)\n", check.URL, elapsed.Seconds())
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for %s after %v", check.URL, check.Timeout)
+}
+
+// WaitForTCPPort polls a TCP address until a connection succeeds or the
+// timeout elapses. Some containers (e.g. EAIGW's aigw process) expose an
+// admin/health HTTP endpoint that becomes ready before the actual data-plane
+// listener finishes binding -- an HTTP-based HealthCheckConfig alone is
+// insufficient in that case, since it can report "healthy" while the real
+// port a caller needs (e.g. the MCP data-plane port) still refuses
+// connections. Callers with such a two-stage startup should poll the
+// data-plane port with this helper after StartGenericContainer returns.
+func WaitForTCPPort(address string, timeout time.Duration, writer io.Writer) error {
+	deadline := time.Now().Add(timeout)
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+
+	for time.Now().Before(deadline) {
+		conn, err := dialer.Dial("tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+
+		elapsed := timeout - time.Until(deadline)
+		if elapsed.Seconds() > 0 && int(elapsed.Seconds())%5 == 0 {
+			_, _ = fmt.Fprintf(writer, "   Still waiting for TCP port %s... (%.0fs elapsed)\n", address, elapsed.Seconds())
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for TCP port %s after %v", address, timeout)
+}

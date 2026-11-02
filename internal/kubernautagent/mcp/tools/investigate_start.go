@@ -1,0 +1,459 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tools
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+func (t *InvestigateTool) handleStart(ctx context.Context, input InvestigateInput, user mcpinternal.UserInfo) (InvestigateOutput, error) {
+	if t.rrChecker != nil {
+		exists, err := t.rrChecker.RemediationRequestExists(ctx, input.RRID)
+		if err != nil {
+			return InvestigateOutput{}, fmt.Errorf("validate remediation request: %w", err)
+		}
+		if !exists {
+			return InvestigateOutput{}, ErrCodeRRNotFound.WithDetail("rr_id", input.RRID)
+		}
+	}
+
+	// BR-INTEGRATION-054: resolve the authoritative signal before launching
+	// deferred work. A failed resolution must not leave an investigation running
+	// without its fleet routing context.
+	resolvedSignal, hasSignal, err := t.resolveSignalForSession(ctx, input.RRID)
+	if err != nil {
+		return InvestigateOutput{}, err
+	}
+
+	// BR-INTERACTIVE-010: Check for pending interactive session and launch it.
+	// When launched, the investigation will self-transition to StatusUserDriving
+	// via InteractiveHold — skip TransitionToUserDriving below to avoid cancelling
+	// the RCA goroutine prematurely.
+	launchedPending, investigationSessionID := t.launchPendingInteractiveSession(input)
+
+	sess, startErr := t.startInteractiveSession(ctx, input, user, resolvedSignal, hasSignal)
+	if startErr != nil {
+		return InvestigateOutput{}, startErr
+	}
+
+	// #2103 (v1.6 clone #2104): record Started as soon as startInteractiveSession
+	// confirms a genuinely new lease was acquired (activeCount.Add(1)) --
+	// before any fallback logic below that might immediately Release() it
+	// again (the exhausted branch a few lines down). Now that Release()
+	// centrally decrements aiagent_mcp_interactive_sessions_active (paired
+	// with its own activeCount.Add(-1)), Started/Ended must stay paired with
+	// the lease's own lifecycle -- otherwise that branch would decrement a
+	// gauge that was never incremented, driving it negative.
+	if t.metrics != nil {
+		t.metrics.RecordInteractiveSessionStarted()
+	}
+
+	// #1390: Upgrade running autonomous session in-place (Jump In) instead of
+	// cancelling and recreating. UpgradeToInteractive sets the atomic flag so
+	// the goroutine's next InteractiveHold check sees it, and store.Update's
+	// deterministic check catches completion that already happened.
+	// Skip when we just launched a pending session — its RCA goroutine will
+	// self-transition via InteractiveHold once complete.
+	if !launchedPending {
+		var exhausted bool
+		investigationSessionID, exhausted = t.upgradeOrCreateInteractiveSession(ctx, input, user)
+		if exhausted {
+			return InvestigateOutput{}, t.failStartOnFallbackExhausted(sess.SessionID, input.RRID)
+		}
+	}
+
+	if t.metrics != nil {
+		t.metrics.RecordInteractiveTakeover("start_success")
+	}
+
+	t.emitInteractiveStarted(sess.SessionID, input.RRID, user.Username) //nolint:contextcheck // emitInteractiveStarted uses audit.StoreBestEffort by design (ADR-038); see investigate_autonomous.go doc comment
+	t.startTimeoutTracking(sess.SessionID)
+	t.storeReconstructedContext(ctx, input.RRID, sess.SessionID)
+
+	return InvestigateOutput{
+		SessionID:              sess.SessionID,
+		Status:                 "started",
+		InvestigationSessionID: investigationSessionID,
+	}, nil
+}
+
+// failStartOnFallbackExhausted handles handleStart's fallback-exhausted
+// branch (#2100, v1.6 clone #2101): both the running-autonomous-session
+// upgrade and the fallback-session-creation path failed, so the just-acquired
+// Lease is released immediately and the request fails closed, instead of
+// falling through to startTimeoutTracking/a "started" response with an empty
+// InvestigationSessionID -- which previously left the lease reclaimed only
+// incidentally by TimeoutManager's ~10-minute inactivity window
+// (interactive.maxConcurrentSessions capacity erosion). Extracted out of
+// handleStart to keep its own nesting depth within this repo's complexity
+// limit (nestif).
+func (t *InvestigateTool) failStartOnFallbackExhausted(sessionID, rrID string) error {
+	if releaseErr := t.sessions.Release(sessionID, "no_investigation_available"); releaseErr != nil {
+		t.logger.Error(releaseErr, "start: failed to release lease after exhausting all fallback paths",
+			"rr_id", rrID, "session_id", sessionID)
+	}
+	if t.metrics != nil {
+		t.metrics.RecordInteractiveTakeover("start_failed")
+	}
+	return ErrCodeNoInvestigationAvailable
+}
+
+// launchPendingInteractiveSession launches a previously-deferred interactive
+// investigation, if one is pending for this session/RR. Returns whether a
+// pending session was launched and, when so, its session ID (used as the
+// InvestigationSessionID so the caller skips the autonomous-session upgrade
+// path below, since the deferred RCA goroutine self-transitions via
+// InteractiveHold once complete).
+func (t *InvestigateTool) launchPendingInteractiveSession(input InvestigateInput) (bool, string) {
+	pendingID := input.SessionID
+	hasPending := pendingID != ""
+	if !hasPending {
+		pendingID, hasPending = t.autoMgr.FindPendingByRemediationID(input.RRID)
+	}
+	if !hasPending {
+		return false, ""
+	}
+	if launchErr := t.autoMgr.LaunchDeferredInvestigation(pendingID); launchErr != nil {
+		// #2088 (main port of #2086): session.ErrSessionNotPending is a
+		// benign, expected race -- it fires when the driving agent retries
+		// action=start after a prior call already launched the deferred
+		// session (e.g. a retry after a false-"completed" report from
+		// #2086 could trigger this). Logging this at Error level pollutes
+		// on-call alerting with false-positive noise for routine retries;
+		// genuine failures (missing deferred function, unknown session)
+		// stay at Error.
+		if errors.Is(launchErr, session.ErrSessionNotPending) {
+			t.logger.Info("start: failed to launch deferred investigation",
+				"rr_id", input.RRID, "pending_session_id", pendingID, "reason", launchErr.Error())
+		} else {
+			t.logger.Error(launchErr, "start: failed to launch deferred investigation",
+				"rr_id", input.RRID, "pending_session_id", pendingID)
+		}
+		return false, ""
+	}
+	return true, pendingID
+}
+
+// acquireInteractiveLease takes over the interactive lease for rrID and maps
+// each failure mode (lease held, max sessions reached, or a generic takeover
+// error) to the appropriate MCP error and metric. raceLostMetric is recorded
+// when another driver holds the lease; failedMetric is recorded for every
+// other failure. genericErrPrefix labels the wrapped error text for the
+// generic-failure case (callers use distinct prefixes for start vs takeover).
+// Does not evaluate sess.Reconnected — callers handle the reconnect case
+// differently (handleStart rejects it, handleTakeover treats it as a
+// successful rejoin).
+func (t *InvestigateTool) acquireInteractiveLease(ctx context.Context, rrID string, user mcpinternal.UserInfo, raceLostMetric, failedMetric, genericErrPrefix string) (*mcpinternal.InteractiveSession, error) {
+	sess, err := t.sessions.Takeover(ctx, rrID, user)
+	if err == nil {
+		return sess, nil
+	}
+
+	if errors.Is(err, mcpinternal.ErrLeaseHeld) {
+		if t.metrics != nil {
+			t.metrics.RecordInteractiveLeaseContention()
+			t.metrics.RecordInteractiveTakeover(raceLostMetric)
+		}
+		driver, _ := t.sessions.GetDriver(rrID)
+		driverName := "unknown"
+		if driver != nil {
+			driverName = driver.ActingUser.Username
+		}
+		return nil, ErrCodeSessionActive.WithDetail("driver", driverName)
+	}
+	if errors.Is(err, mcpinternal.ErrMaxSessionsReached) {
+		if t.metrics != nil {
+			t.metrics.RecordInteractiveTakeover(failedMetric)
+		}
+		return nil, &MCPError{Code: "max_sessions", Message: "Maximum concurrent sessions reached"}
+	}
+	if t.metrics != nil {
+		t.metrics.RecordInteractiveTakeover(failedMetric)
+	}
+	return nil, fmt.Errorf("%s: %w", genericErrPrefix, err)
+}
+
+// startInteractiveSession takes over the interactive lease for the RR and
+// records the appropriate metrics/error mapping for each failure mode
+// (lease held, max sessions reached, reconnect-in-progress, or a generic
+// takeover error).
+
+func (t *InvestigateTool) startInteractiveSession(ctx context.Context, input InvestigateInput, user mcpinternal.UserInfo, resolvedSignal *katypes.SignalContext, hasSignal bool) (*mcpinternal.InteractiveSession, error) {
+	sess, err := t.acquireInteractiveLease(ctx, input.RRID, user, "start_failed", "start_failed", "start session")
+	if err != nil {
+		return nil, err
+	}
+	if hasSignal {
+		t.storeSignalContext(sess, resolvedSignal)
+	}
+
+	if sess.Reconnected {
+		return nil, &MCPError{
+			Code:    "session_active",
+			Message: "You already have an active session for this investigation; use action=reconnect to rejoin",
+			Details: map[string]string{
+				"driver":     user.Username,
+				"session_id": sess.SessionID,
+			},
+		}
+	}
+
+	return sess, nil
+}
+
+func (t *InvestigateTool) resolveSignalForSession(ctx context.Context, rrID string) (*katypes.SignalContext, bool, error) {
+	if t.signalResolver == nil {
+		return nil, false, nil
+	}
+	resolved, err := t.signalResolver.ResolveSignalContext(ctx, rrID)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve signal context: %w", err)
+	}
+	return resolved, resolved != nil, nil
+}
+
+func (t *InvestigateTool) storeSignalContext(sess *mcpinternal.InteractiveSession, signal *katypes.SignalContext) {
+	if sess == nil || signal == nil {
+		return
+	}
+	t.sessions.StoreSignalContext(sess.SessionID, signal)
+}
+
+// upgradeOrCreateInteractiveSession upgrades the running autonomous session
+// for this RR in-place (Jump In), or — when no autonomous session exists, or
+// the existing one is terminal — reattaches to (or creates) a fresh
+// interactive session so the user is never left with a lease but no
+// investigation to drive (#1440 SC-24). Returns the resulting investigation
+// session ID, and (#2100, v1.6 clone #2101) whether every fallback path was
+// exhausted with genuinely nothing for the caller to attach to -- true only
+// when no running session exists for this RR AND both the reattach-or-create
+// fallback and ForceTransitionToUserDriving failed. handleStart uses this
+// second value to fail closed (release the lease, return an actionable
+// error) instead of returning a hollow "started" response with an empty
+// InvestigationSessionID. The terminal-session branch below deliberately
+// never reports exhausted=true: it always has autoSessionID (a real,
+// non-empty session) to fall back to, matching pre-#2100 behavior.
+func (t *InvestigateTool) upgradeOrCreateInteractiveSession(ctx context.Context, input InvestigateInput, user mcpinternal.UserInfo) (string, bool) {
+	autoSessionID, found := t.autoMgr.FindByRemediationID(input.RRID)
+	if !found {
+		autoSessionID, found = t.waitForRaceyDispatch(ctx, input.RRID)
+	}
+	if !found {
+		// No Running session exists for this RR — reattach to an existing
+		// user_driving session or a completed session's real RCA, or create
+		// a genuine placeholder, so the user is never left with a lease but
+		// no investigation.
+		if reattachedID := t.reattachOrCreateFallback(ctx, input.RRID, user); reattachedID != "" {
+			return reattachedID, false
+		}
+		if forceErr := t.autoMgr.ForceTransitionToUserDriving(input.RRID, user.Username, user.Groups); forceErr != nil {
+			t.logger.Error(forceErr, "start: force-transition to user-driving (no running session found)",
+				"rr_id", input.RRID)
+			// #2100 (v1.6 clone #2101): both fallback paths are now
+			// exhausted -- there is genuinely no investigation this
+			// session could ever attach to.
+			return "", true
+		}
+		return "", false
+	}
+
+	upgradeErr := t.autoMgr.UpgradeToInteractive(autoSessionID, user.Username, user.Groups)
+	if upgradeErr == nil {
+		return autoSessionID, false
+	}
+	if !errors.Is(upgradeErr, session.ErrSessionTerminal) {
+		t.logger.Error(upgradeErr, "start: upgrade autonomous session to interactive",
+			"rr_id", input.RRID, "auto_session_id", autoSessionID)
+		return autoSessionID, false
+	}
+
+	if forceErr := t.autoMgr.ForceTransitionToUserDriving(input.RRID, user.Username, user.Groups); forceErr != nil {
+		t.logger.Error(forceErr, "start: force-transition to user-driving failed (session terminal)",
+			"rr_id", input.RRID, "auto_session_id", autoSessionID)
+	}
+	// #1440 SC-24 / #1818: Terminal session — reattach to the real RCA (or a
+	// genuine placeholder) so the user always has an investigation to drive.
+	if reattachedID := t.reattachOrCreateFallback(ctx, input.RRID, user); reattachedID != "" {
+		return reattachedID, false
+	}
+	return autoSessionID, false
+}
+
+// raceyDispatchPollInterval/MaxAttempts bound waitForRaceyDispatch's total
+// wait budget to ~1.2s (6 x 200ms). Short and fixed rather than
+// context-deadline-based: this closes a same-process registration race (AA
+// creates an AgentSession -> KA's own dispatcher goroutine, running in this
+// same process, picks it up and registers it in session.Manager), which
+// resolves in low-single-digit milliseconds under normal load -- 1.2s is
+// already a generous margin for CI-level scheduling jitter, not a
+// network-latency budget.
+const (
+	raceyDispatchPollInterval = 200 * time.Millisecond
+	raceyDispatchMaxAttempts  = 6
+)
+
+// waitForRaceyDispatch closes the race window between AA creating (and
+// KA's own dispatcher starting to process) an AgentSession for rrID, and a
+// concurrent MCP action=start call finding nothing yet in session.Manager's
+// in-memory cache purely because the dispatcher hasn't finished registering
+// it there yet.
+//
+// Confirmed via CI must-gather evidence (run 32188463924, E2E-FLEET-018 and
+// the apifrontend E2E suite): before this guard, upgradeOrCreateInteractiveSession
+// treated "not found in session.Manager yet" as indistinguishable from
+// "genuinely no AgentSession exists or ever will," and fell straight to
+// createFreshInteractiveSession -- which starts a second, independent,
+// competing RunFullInvestigation call for the same RR. That duplicate ran
+// without the dispatcher's own AgentSession-driven cluster/fleet-overlay
+// context, produced generic enrichment-failure RCA content, and polluted
+// the shared conversation history the real (AA-dispatched) investigation
+// and any later interactive turn both read from -- observed directly in
+// KA's pod log as createFreshInteractiveSession.func1's enrichment errors
+// for a target that only existed on a remote cluster the duplicate never
+// fleet-scoped to.
+//
+// Only fires when t.agentSessionExists is wired (production always wires
+// it via WithAgentSessionExistenceChecker, cmd/kubernautagent/routes.go) --
+// a nil checker preserves the pre-existing immediate-fallback behavior
+// exactly, so unit tests that don't need this guard are unaffected.
+func (t *InvestigateTool) waitForRaceyDispatch(ctx context.Context, rrID string) (string, bool) {
+	if t.agentSessionExists == nil {
+		return "", false
+	}
+	exists, err := t.agentSessionExists.AgentSessionExists(ctx, rrID)
+	if err != nil {
+		t.logger.Error(err, "start: check AgentSession existence for race guard failed (proceeding as genuinely fresh)",
+			"rr_id", rrID)
+		return "", false
+	}
+	if !exists {
+		// No AgentSession anywhere for this RR: genuinely fresh, not a
+		// race. createFreshInteractiveSession is the correct path.
+		return "", false
+	}
+	for attempt := 0; attempt < raceyDispatchMaxAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(raceyDispatchPollInterval):
+		}
+		if autoSessionID, found := t.autoMgr.FindByRemediationID(rrID); found {
+			return autoSessionID, true
+		}
+	}
+	// AgentSession CRD exists but never registered in session.Manager
+	// within the wait budget (e.g. its dispatch is itself stuck/erroring,
+	// not merely slow) -- fall through to the existing fallback chain
+	// rather than waiting indefinitely.
+	return "", false
+}
+
+// reattachOrCreateFallback resolves the investigation session the user
+// should be attached to when no viable Running autonomous session exists
+// for rrID, in order of preference (#1818, DD-AA-KA-001 Amendment Gap 3,
+// revised post-#2189 CI evidence -- see createFreshInteractiveSession):
+//  1. An already-user_driving session for this rrID — e.g. left over from a
+//     prior action=start/takeover whose MCP lease was since released — is
+//     reused directly rather than creating a duplicate placeholder.
+//  2. A fresh interactive session seeded with the real RCA from the most
+//     recently completed autonomous investigation for this rrID. Previously
+//     createFallbackSession always seeded a hardcoded placeholder here,
+//     orphaning any real RCA the autonomous investigation had already
+//     produced before the interactive request raced past it.
+//  3. A genuinely fresh, real investigation (createFreshInteractiveSession)
+//     when neither of the above exists -- e.g. a user interactively
+//     investigating an RR that AA has not (or will never) pick up
+//     autonomously (the "AF-style fresh start" journey proven by
+//     test/e2e/fullpipeline's FP-MCP-002 and mirrored across
+//     apifrontend/fleet/kubernautagent E2E suites). Gap 3's original
+//     design treated this as a dead end because it only considered a
+//     *canned/hardcoded* placeholder with no execution path; the fix is a
+//     real investigation, not fail-closed.
+//
+// Returns "" only when a real investigation could not even be started
+// (StartInvestigation itself erroring, e.g. capacity exhaustion, or the
+// signal-resolution dependency being unavailable) -- callers still route
+// that through the existing exhaustion path
+// (upgradeOrCreateInteractiveSession -> ForceTransitionToUserDriving ->
+// failStartOnFallbackExhausted).
+//
+// httpCompleter is used (with a nil check) rather than extending
+// AutonomousSessionQuerier: FindUserDrivingByRemediationID already lives on
+// that narrower interface, and enrichLiveEventContext follows the same
+// pattern for the same reason (investigate_discovery.go).
+func (t *InvestigateTool) reattachOrCreateFallback(ctx context.Context, rrID string, user mcpinternal.UserInfo) string {
+	if t.httpCompleter != nil {
+		if existingID, found := t.httpCompleter.FindUserDrivingByRemediationID(rrID); found {
+			return existingID
+		}
+	}
+	if seedResult, found := t.autoMgr.GetLatestRCAResultByRemediationID(rrID); found {
+		return t.createFallbackSession(ctx, rrID, user, seedResult)
+	}
+	return t.createFreshInteractiveSession(ctx, rrID, user)
+}
+
+// transitionAutonomousToUserDriving transitions the running autonomous
+// session for rrID to user-driven (#774: TransitionToUserDriving replaces
+// SuspendInvestigation so the session enters StatusUserDriving — pollable,
+// not terminal — with identity written to session metadata for the AA poll
+// response's Rego input.identity). When no autonomous session is found by RR
+// ID, retries ForceTransitionToUserDriving briefly to allow for the race
+// between MCP takeover and AA reconcile. Returns a non-nil error only for a
+// non-terminal TransitionToUserDriving failure; terminal-session and
+// not-found cases are logged and treated as best-effort.
+func (t *InvestigateTool) transitionAutonomousToUserDriving(rrID string, user mcpinternal.UserInfo) error {
+	autoSessionID, found := t.autoMgr.FindByRemediationID(rrID)
+	if !found {
+		// No running session found by RR ID. The AA session submit may still
+		// be in-flight (race between MCP takeover and AA reconcile). Retry
+		// briefly to allow the session to appear before giving up.
+		var forceErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			forceErr = t.autoMgr.ForceTransitionToUserDriving(rrID, user.Username, user.Groups)
+			if forceErr == nil || !errors.Is(forceErr, session.ErrSessionNotFound) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if forceErr != nil {
+			t.logger.Error(forceErr, "takeover: force-transition to user-driving failed after retries",
+				"rr_id", rrID)
+		}
+		return nil
+	}
+
+	err := t.autoMgr.TransitionToUserDriving(autoSessionID, user.Username, user.Groups)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, session.ErrSessionTerminal) {
+		return fmt.Errorf("transition autonomous session to user-driving: %w", err)
+	}
+	if forceErr := t.autoMgr.ForceTransitionToUserDriving(rrID, user.Username, user.Groups); forceErr != nil {
+		t.logger.Error(forceErr, "takeover: force-transition to user-driving failed",
+			"rr_id", rrID, "auto_session_id", autoSessionID)
+	}
+	return nil
+}

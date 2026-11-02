@@ -1,0 +1,334 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package signalprocessing_e2e contains E2E tests for SignalProcessing.
+// These tests validate complete business workflows with real Kind cluster.
+//
+// Defense-in-Depth Strategy (per 03-testing-strategy.mdc):
+// - Unit tests (70%+): Business logic in isolation (test/unit/signalprocessing/)
+// - Integration tests (>50%): CRD coordination, ENVTEST (test/integration/signalprocessing/)
+// - E2E tests (10-15%): Complete workflow validation (this directory)
+//
+// Kubeconfig Convention (per TESTING_GUIDELINES.md):
+// - Pattern: ~/.kube/{service}-e2e-config
+// - Path: ~/.kube/signalprocessing-e2e-config
+// - Cluster Name: signalprocessing-e2e
+//
+// Port Allocation (per DD-TEST-001):
+// - NodePort (Metrics): 30182 -> localhost:9182
+// - NodePort (API): 30082 -> localhost:8082
+//
+// Business Requirements Validated:
+// - BR-SP-051: Environment classification
+// - BR-SP-070: Priority assignment
+// - BR-SP-100: Owner chain traversal
+// - BR-SP-101: Detected labels (removed - ADR-056: relocated to KA)
+// - BR-SP-102: CustomLabels from Rego
+package signalprocessing
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	trueFixture = "true"
+)
+
+// Global test variables
+var (
+	ctx            context.Context
+	cancel         context.CancelFunc
+	k8sClient      client.Client
+	clientset      *kubernetes.Clientset
+	kubeconfigPath string
+	metricsURL     string
+	coverageMode   bool   // E2E coverage capture mode (per E2E_COVERAGE_COLLECTION.md)
+	anyTestFailed  bool   // Track test failures for cluster cleanup decision
+	e2eAuthToken   string // DD-AUTH-014: ServiceAccount token for DataStorage authentication
+)
+
+const (
+	clusterName = "signalprocessing-e2e"
+	serviceName = "signalprocessing"
+	timeout     = 2 * time.Minute
+	interval    = 2 * time.Second
+
+	// ADR-057: RR and SP CRs live in controller namespace; SP controller watches kubernaut-system only
+	controllerNamespace = "kubernaut-system"
+)
+
+func TestSignalProcessingE2E(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "SignalProcessing E2E Suite")
+}
+
+var _ = SynchronizedBeforeSuite(
+	// This runs on process 1 only - create cluster once
+	func() []byte {
+		By("Setting up SignalProcessing E2E cluster (process 1 only)")
+
+		// Check for coverage mode (per E2E_COVERAGE_COLLECTION.md)
+		coverageMode = os.Getenv("E2E_COVERAGE") == trueFixture
+		if coverageMode {
+			By("📊 E2E Coverage Mode ENABLED (per E2E_COVERAGE_COLLECTION.md)")
+		}
+
+		// Get home directory for kubeconfig
+		homeDir, err := os.UserHomeDir()
+		Expect(err).ToNot(HaveOccurred())
+
+		// Standard kubeconfig location: ~/.kube/{service}-e2e-config
+		// Per docs/development/business-requirements/TESTING_GUIDELINES.md
+		kubeconfigPath = filepath.Join(homeDir, ".kube", fmt.Sprintf("%s-e2e-config", serviceName))
+
+		By(fmt.Sprintf("Creating Kind cluster '%s'", clusterName))
+		By(fmt.Sprintf("  • Kubeconfig: %s", kubeconfigPath))
+		By("  • Metrics URL: http://localhost:9182/metrics")
+
+		ctx := context.Background()
+
+		// Use hybrid parallel infrastructure setup per DD-TEST-002 (Dec 25, 2025)
+		// Strategy: Build images in parallel → Create cluster → Load → Deploy
+		// Benefits:
+		// - 4x faster than sequential (5min vs 20min)
+		// - 100% reliable (no Kind timeout issues)
+		// - Coverage-enabled by default (per DD-TEST-007)
+		//
+		// This replaces both coverage and parallel approaches with a unified strategy
+		err = infrastructure.SetupSignalProcessingInfrastructureHybridWithCoverage(ctx, clusterName, kubeconfigPath, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred())
+
+		// DD-AUTH-014: Create E2E ServiceAccount for DataStorage authentication
+		By("🔐 Creating E2E ServiceAccount for DataStorage audit queries (DD-AUTH-014)")
+		e2eSAName := "signalprocessing-e2e-sa"
+		namespace := "kubernaut-system"
+
+		err = infrastructure.CreateE2EServiceAccountWithDataStorageAccess(ctx, namespace, kubeconfigPath, e2eSAName, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create E2E ServiceAccount")
+
+		// Get ServiceAccount token for Bearer authentication
+		token, err := infrastructure.GetServiceAccountToken(ctx, namespace, e2eSAName, kubeconfigPath)
+		Expect(err).ToNot(HaveOccurred(), "Failed to get E2E ServiceAccount token")
+		By("✅ E2E ServiceAccount token retrieved for authenticated DataStorage access")
+
+		// Return kubeconfig path, coverage mode flag, and auth token
+		return []byte(fmt.Sprintf("%s|%t|%s", kubeconfigPath, coverageMode, token))
+	},
+	// This runs on ALL processes - connect to cluster
+	func(data []byte) {
+		// Parse data: "kubeconfig|coverageMode|authToken"
+		parts := strings.Split(string(data), "|")
+		kubeconfigPath = parts[0]
+		if len(parts) > 1 {
+			coverageMode = parts[1] == trueFixture
+		}
+		if len(parts) > 2 {
+			e2eAuthToken = parts[2] // DD-AUTH-014: Store token for authenticated DataStorage access
+		}
+
+		// Issue #785: Configure http.DefaultTransport to trust the inter-service CA.
+		tlsTransport, tlsErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsErr).ToNot(HaveOccurred(), "Failed to create TLS-aware transport (Issue #785)")
+		http.DefaultTransport = tlsTransport
+
+		ctx, cancel = context.WithCancel(context.Background())
+
+		By(fmt.Sprintf("Connecting to cluster (kubeconfig: %s)", kubeconfigPath))
+
+		// Build REST config from kubeconfig
+		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Create controller-runtime client
+		k8sClient, err = client.New(config, client.Options{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(k8sClient).To(Not(BeNil()), "k8sClient must be initialized from envtest")
+
+		// Register SignalProcessing scheme
+		err = signalprocessingv1alpha1.AddToScheme(k8sClient.Scheme())
+		Expect(err).ToNot(HaveOccurred())
+
+		// Register RemediationRequest scheme (parent of SignalProcessing)
+		err = remediationv1alpha1.AddToScheme(k8sClient.Scheme())
+		Expect(err).ToNot(HaveOccurred())
+
+		// Create standard clientset for native K8s resources
+		clientset, err = kubernetes.NewForConfig(config)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Set metrics URL (NodePort via Kind extraPortMappings)
+		metricsURL = "http://localhost:9182/metrics"
+
+		By("E2E setup complete - ready for tests")
+	},
+)
+
+// Track test failures for cluster cleanup decision
+var _ = ReportAfterEach(func(report SpecReport) {
+	if report.Failed() {
+		anyTestFailed = true
+		infrastructure.MarkTestFailure(clusterName)
+	}
+})
+
+var _ = SynchronizedAfterSuite(
+	// This runs on ALL processes
+	func() {
+		By("Cleaning up test resources")
+		if cancel != nil {
+			cancel()
+		}
+	},
+	// This runs on process 1 only - delete cluster
+	func() {
+		By("Deleting Kind cluster (process 1 only)")
+
+		// Detect setup failure: if k8sClient is nil, BeforeSuite failed
+		setupFailed := k8sClient == nil
+		if setupFailed {
+			By("⚠️  Setup failure detected (k8sClient is nil)")
+		}
+
+		// Determine test results for log export decision
+		anyFailure := infrastructure.ResolveAnyFailure(clusterName, setupFailed, anyTestFailed, GinkgoWriter)
+		defer infrastructure.CleanupFailureMarker(clusterName)
+		preserveCluster := os.Getenv("KEEP_CLUSTER") != ""
+
+		if preserveCluster {
+			By("KEEP_CLUSTER set - preserving cluster for debugging")
+			By(fmt.Sprintf("  • Cluster: %s", clusterName))
+			By(fmt.Sprintf("  • Kubeconfig: %s", kubeconfigPath))
+			By(fmt.Sprintf("  • To connect: export KUBECONFIG=%s", kubeconfigPath))
+			return
+		}
+
+		// DD-TEST-007: Collect E2E binary coverage BEFORE cluster deletion
+		if coverageMode {
+			if err := infrastructure.CollectE2EBinaryCoverage(infrastructure.E2ECoverageOptions{
+				ServiceName:    "signalprocessing",
+				ClusterName:    clusterName,
+				DeploymentName: "signalprocessing-controller",
+				Namespace:      "kubernaut-system",
+				KubeconfigPath: kubeconfigPath,
+			}, GinkgoWriter); err != nil {
+				GinkgoWriter.Printf("⚠️  Failed to collect E2E binary coverage (non-fatal): %v\n", err)
+			}
+		}
+
+		// DD-TESTING-003 / Issue #2036: run the production must-gather image
+		// as a local podman container BEFORE coverage collection scales the
+		// deployment to 0 and BEFORE cluster teardown, replacing the old
+		// in-process kubectl-log-scraping (MustGatherPodLogs, previously
+		// invoked internally by DeleteCluster and removed once every caller
+		// migrated to this explicit call).
+		if anyFailure {
+			// #2036 rollout validation (2026-08-19 CI run): the package-level
+			// `ctx` is already canceled by the first SynchronizedAfterSuite
+			// closure's `cancel()` (runs on ALL processes, before this
+			// process-1-only closure) -- exec.CommandContext against an
+			// already-canceled context fails immediately with "context
+			// canceled" before podman ever runs. Use a fresh, independent
+			// context here so cluster teardown timing can never suppress
+			// diagnostic collection.
+			bgCtx := context.Background()
+			mustGatherImage, buildErr := infrastructure.BuildMustGatherImageForE2E(bgCtx, GinkgoWriter)
+			if buildErr != nil {
+				GinkgoWriter.Printf("⚠️  Failed to build must-gather image (non-fatal, no diagnostics collected): %v\n", buildErr)
+			} else {
+				mustGatherOutputDir := filepath.Join("/tmp", "kubernaut-must-gather", "signalprocessing", clusterName)
+				if err := infrastructure.RunMustGatherImage(bgCtx, infrastructure.RunMustGatherImageOptions{
+					ClusterName: clusterName,
+					Image:       mustGatherImage,
+					OutputDir:   mustGatherOutputDir,
+					Namespace:   controllerNamespace,
+					UsePodman:   true,
+				}, GinkgoWriter); err != nil {
+					GinkgoWriter.Printf("⚠️  Failed to run must-gather image (non-fatal, no diagnostics collected): %v\n", err)
+				}
+			}
+		}
+
+		// Delete cluster with must-gather log export
+		// Delete Kind cluster using infrastructure helper (with failure tracking)
+		Eventually(func() error {
+			return infrastructure.DeleteSignalProcessingCluster(clusterName, kubeconfigPath, anyFailure, GinkgoWriter)
+		}).WithTimeout(30*time.Second).WithPolling(5*time.Second).Should(Succeed(),
+			"Cluster deletion should succeed (transient Podman connectivity handled via retry)")
+
+		// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		// DD-TEST-001 v1.1: Comprehensive Image Cleanup
+		// Clean ALL images built for this E2E run to prevent disk exhaustion
+		// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		By("Cleaning up SignalProcessing service image (DD-TEST-001 v1.1)")
+		spImageName := infrastructure.GetSignalProcessingFullImageName()
+		spPruneCmd := exec.Command("podman", "rmi", spImageName)
+		spPruneOutput, spPruneErr := spPruneCmd.CombinedOutput()
+		if spPruneErr != nil {
+			GinkgoWriter.Printf("⚠️  Failed to remove SP image %s: %v\n%s\n", spImageName, spPruneErr, spPruneOutput)
+		} else {
+			GinkgoWriter.Printf("✅ SP image removed: %s\n", spImageName)
+		}
+
+		By("Cleaning up DataStorage service image (DD-TEST-001 v1.1)")
+		dsImageName := infrastructure.GetDataStorageImageTagForSP()
+		dsPruneCmd := exec.Command("podman", "rmi", dsImageName)
+		dsPruneOutput, dsPruneErr := dsPruneCmd.CombinedOutput()
+		if dsPruneErr != nil {
+			GinkgoWriter.Printf("⚠️  Failed to remove DS image %s: %v\n%s\n", dsImageName, dsPruneErr, dsPruneOutput)
+		} else {
+			GinkgoWriter.Printf("✅ DS image removed: %s\n", dsImageName)
+		}
+
+		By("Cleaning up temp tar files from image loading")
+		imageTag := infrastructure.GetSignalProcessingImageTag()
+		tmpFiles := []string{
+			fmt.Sprintf("/tmp/signalprocessing-controller-%s.tar", imageTag),
+			"/tmp/datastorage-e2e-sp.tar",
+		}
+		for _, tmpFile := range tmpFiles {
+			if err := os.Remove(tmpFile); err == nil {
+				GinkgoWriter.Printf("✅ Temp file removed: %s\n", tmpFile)
+			}
+		}
+
+		By("Pruning dangling images from Kind builds (DD-TEST-001 v1.1)")
+		pruneCmd := exec.Command("podman", "image", "prune", "-f")
+		_, _ = pruneCmd.CombinedOutput()
+
+		GinkgoWriter.Println("✅ E2E cleanup complete (DD-TEST-001 v1.1 compliant)")
+	},
+)

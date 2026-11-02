@@ -1,0 +1,167 @@
+# Kubernaut Documentation Index
+
+## Quick Navigation
+
+This index provides comprehensive navigation across all Kubernaut documentation with cross-references between business requirements, architecture, and implementation guides.
+
+---
+
+## 📋 **Business Requirements** (1,452+ Requirements)
+
+### Core Requirements Modules
+| Module | Requirements | Key Components | Architecture Links |
+|--------|-------------|----------------|-------------------|
+| **[01_MAIN_APPLICATIONS](requirements/01_MAIN_APPLICATIONS.md)** | 127 | Alert Processing, AI Decision Making | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) |
+| **[02_AI_MACHINE_LEARNING](requirements/02_AI_MACHINE_LEARNING.md)** | 185 | Pattern Recognition, ML Analytics | [Intelligence & Pattern Discovery](architecture/INTELLIGENCE_PATTERN_DISCOVERY_ARCHITECTURE.md) |
+| **[03_PLATFORM_KUBERNETES_OPERATIONS](requirements/03_PLATFORM_KUBERNETES_OPERATIONS.md)** | 142 | K8s Operations, Resource Management | [Workflow Engine](architecture/WORKFLOW_ENGINE_ORCHESTRATION_ARCHITECTURE.md) |
+| **[04_WORKFLOW_ENGINE_ORCHESTRATION](requirements/04_WORKFLOW_ENGINE_ORCHESTRATION.md)** | 165 | Adaptive Orchestration, Step Execution | [Workflow Engine](architecture/WORKFLOW_ENGINE_ORCHESTRATION_ARCHITECTURE.md) |
+| **[05_STORAGE_DATA_MANAGEMENT](requirements/05_STORAGE_DATA_MANAGEMENT.md)** | 135 | Multi-modal Storage, Caching | [Storage & Data Management](architecture/STORAGE_DATA_MANAGEMENT_ARCHITECTURE.md) |
+| **[06_INTEGRATION_LAYER](requirements/06_INTEGRATION_LAYER.md)** | 128 | API Integration, External Services | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) |
+| **[07_INTELLIGENCE_PATTERN_DISCOVERY](requirements/07_INTELLIGENCE_PATTERN_DISCOVERY.md)** | 150 | Anomaly Detection, Clustering | [Intelligence & Pattern Discovery](architecture/INTELLIGENCE_PATTERN_DISCOVERY_ARCHITECTURE.md) |
+| **[08_INFRASTRUCTURE_MONITORING](requirements/08_INFRASTRUCTURE_MONITORING.md)** | 98 | Health Monitoring, Metrics | [Enhanced Health Monitoring](requirements/14_ENHANCED_HEALTH_MONITORING.md) |
+| **[09_SHARED_UTILITIES_COMMON](requirements/09_SHARED_UTILITIES_COMMON.md)** | 112 | Common Services, Utilities | Multiple Architecture Documents |
+| **[10_AI_CONTEXT_ORCHESTRATION](requirements/10_AI_CONTEXT_ORCHESTRATION.md)** | 180 | Dynamic Context, Performance | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) |
+| **[11_SECURITY_ACCESS_CONTROL](requirements/11_SECURITY_ACCESS_CONTROL.md)** | 85 | RBAC, Authentication | Security sections in all architectures |
+| **[12_API_SERVER_SERVICES](requirements/12_API_SERVER_SERVICES.md)** | 92 | REST APIs, Service Integration | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) |
+| **[13_INFRASTRUCTURE_PLATFORM](requirements/13_INFRASTRUCTURE_PLATFORM.md)** | 95 | Platform Services | [Storage & Data Management](architecture/STORAGE_DATA_MANAGEMENT_ARCHITECTURE.md) |
+| **[14_ENHANCED_HEALTH_MONITORING](requirements/14_ENHANCED_HEALTH_MONITORING.md)** | 65 | Advanced Health Checks | Health sections in all architectures |
+
+---
+
+## 🏗️ **System Architecture**
+
+### Comprehensive Architecture Documents
+| Architecture | Business Requirements Coverage | Key Features | Related Requirements |
+|-------------|-------------------------------|--------------|---------------------|
+| **[AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md)** | 180 Requirements (BR-CONTEXT-001 to BR-CONTEXT-043) | Dynamic Context Discovery, Intelligent Caching, Performance Optimization | [10_AI_CONTEXT_ORCHESTRATION](requirements/10_AI_CONTEXT_ORCHESTRATION.md) |
+| **[Intelligence & Pattern Discovery](architecture/INTELLIGENCE_PATTERN_DISCOVERY_ARCHITECTURE.md)** | 150 Requirements (BR-INTELLIGENCE-001 to BR-INTELLIGENCE-150) | Pattern Recognition, Anomaly Detection, ML Analytics | [02_AI_MACHINE_LEARNING](requirements/02_AI_MACHINE_LEARNING.md), [07_INTELLIGENCE_PATTERN_DISCOVERY](requirements/07_INTELLIGENCE_PATTERN_DISCOVERY.md) |
+| **[Workflow Engine & Orchestration](architecture/WORKFLOW_ENGINE_ORCHESTRATION_ARCHITECTURE.md)** | 165 Requirements (BR-REMEDIATION-001 to BR-AUTOMATION-030) | Adaptive Orchestration, Step Execution, State Management | [04_WORKFLOW_ENGINE_ORCHESTRATION](requirements/04_WORKFLOW_ENGINE_ORCHESTRATION.md), [03_PLATFORM_KUBERNETES_OPERATIONS](requirements/03_PLATFORM_KUBERNETES_OPERATIONS.md) |
+| **[Storage & Data Management](architecture/STORAGE_DATA_MANAGEMENT_ARCHITECTURE.md)** | 135 Requirements (BR-STORAGE-001 to BR-PERSISTENCE-015) | Multi-modal Storage, Vector DB, Intelligent Caching | [05_STORAGE_DATA_MANAGEMENT](requirements/05_STORAGE_DATA_MANAGEMENT.md), [13_INFRASTRUCTURE_PLATFORM](requirements/13_INFRASTRUCTURE_PLATFORM.md) |
+
+### Legacy Architecture Documents (Archived)
+- **[archived_legacy/ARCHITECTURE.md](archived_legacy/ARCHITECTURE.md)** - Superseded by comprehensive architecture documents
+- **[archived_legacy/HOLMESGPT_INTEGRATION.md](archived_legacy/HOLMESGPT_INTEGRATION.md)** - Superseded by AI Context Orchestration
+- **[archived_legacy/WORKFLOWS.md](archived_legacy/WORKFLOWS.md)** - Superseded by Workflow Engine & Orchestration
+
+---
+
+## 🔧 **Development & Implementation**
+
+### Implementation Guides
+| Guide | Focus Area | Related Architecture | Business Requirements |
+|-------|------------|---------------------|---------------------|
+| **[TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md)** | Testing Strategy | All Architectures | Quality requirements across all modules |
+| **[development/project guidelines.md](development/project%20guidelines.md)** | Development Standards | All Architectures | Development process requirements |
+| **[development/LLM_CONTEXT_ENRICHMENT_GUIDE.md](development/LLM_CONTEXT_ENRICHMENT_GUIDE.md)** | Context Enhancement | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) | [10_AI_CONTEXT_ORCHESTRATION](requirements/10_AI_CONTEXT_ORCHESTRATION.md) |
+
+### Testing Documentation
+| Test Category | Documentation | Coverage | Related Requirements |
+|--------------|---------------|----------|---------------------|
+| **Integration Testing** | [test/integration/](test/integration/) | End-to-end workflows | All business requirements |
+| **Unit Testing** | [test/unit/](test/unit/) | Component testing | Module-specific requirements |
+| **E2E Testing** | [test/e2e/](test/e2e/) | Complete scenarios | [01_MAIN_APPLICATIONS](requirements/01_MAIN_APPLICATIONS.md) |
+| **Business Requirements Testing** | [requirements/tests/](requirements/tests/) | Requirements validation | All business requirements |
+
+---
+
+## 📊 **Project Status & Planning**
+
+### Current Status
+| Document | Purpose | Last Updated | Key Metrics |
+|----------|---------|-------------|-------------|
+| **[status/PROJECT_STATUS_CONSOLIDATED.md](status/PROJECT_STATUS_CONSOLIDATED.md)** | Comprehensive Status | September 2025 | 85% Milestone 1 Complete, 1,452 Requirements |
+| **[requirements/00_REQUIREMENTS_OVERVIEW.md](requirements/00_REQUIREMENTS_OVERVIEW.md)** | Requirements Summary | September 2025 | 16 Modules, 1,452 Requirements |
+
+### Planning & Analysis
+| Document | Focus | Related Architecture |
+|----------|-------|---------------------|
+| **[planning/](planning/)** | Project Planning | All Architectures |
+| **[analysis/](analysis/)** | System Analysis | Architecture Dependencies |
+
+---
+
+## 🚀 **Deployment & Operations**
+
+### Deployment Guides
+| Environment | Documentation | Requirements Addressed |
+|------------|---------------|----------------------|
+| **Development** | [development/getting-started/](development/getting-started/) | Development environment setup |
+| **Integration** | [operations/deployment/](operations/deployment/) | Integration testing setup |
+| **Production** | [operations/deployment/](operations/deployment/) | Production deployment |
+
+See [Legacy Deploy Manifest Audit](operations/deployment/LEGACY_DEPLOY_MANIFEST_AUDIT.md)
+for the historical `deploy/` classification and test-fixture relocation record.
+
+### Health Monitoring
+| Component | Monitoring Guide | Architecture Reference |
+|-----------|-----------------|----------------------|
+| **Enhanced Health** | [development/HEARTBEAT_INTEGRATION_GUIDE.md](development/HEARTBEAT_INTEGRATION_GUIDE.md) | Health sections in all architectures |
+| **System Metrics** | [requirements/14_ENHANCED_HEALTH_MONITORING.md](requirements/14_ENHANCED_HEALTH_MONITORING.md) | [Enhanced Health Monitoring](requirements/14_ENHANCED_HEALTH_MONITORING.md) |
+
+---
+
+## 📚 **Specialized Documentation**
+
+### Kubernaut Agent (KA) Integration
+| Document | Purpose | Architecture Link |
+|----------|---------|------------------|
+| **[services/kubernaut-agent/toolset/DYNAMIC_TOOLSET_CONFIGURATION.md](services/kubernaut-agent/toolset/DYNAMIC_TOOLSET_CONFIGURATION.md)** | Toolset Management | [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md) — ⚠️ target file not found in repo (pre-existing, not introduced by the kubernaut-agent/ directory move) |
+
+### Vector Database
+| Document | Purpose | Architecture Link |
+|----------|---------|------------------|
+| **[VECTOR_DATABASE_SELECTION.md](VECTOR_DATABASE_SELECTION.md)** | Vector DB Analysis | [Storage & Data Management](architecture/STORAGE_DATA_MANAGEMENT_ARCHITECTURE.md) |
+
+---
+
+## 🔗 **Cross-Reference Quick Links**
+
+### By Business Requirement Categories
+- **Alert Processing**: [01_MAIN_APPLICATIONS](requirements/01_MAIN_APPLICATIONS.md) → [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md)
+- **AI & ML**: [02_AI_MACHINE_LEARNING](requirements/02_AI_MACHINE_LEARNING.md) → [Intelligence & Pattern Discovery](architecture/INTELLIGENCE_PATTERN_DISCOVERY_ARCHITECTURE.md)
+- **Kubernetes Operations**: [03_PLATFORM_KUBERNETES_OPERATIONS](requirements/03_PLATFORM_KUBERNETES_OPERATIONS.md) → [Workflow Engine](architecture/WORKFLOW_ENGINE_ORCHESTRATION_ARCHITECTURE.md)
+- **Data Storage**: [05_STORAGE_DATA_MANAGEMENT](requirements/05_STORAGE_DATA_MANAGEMENT.md) → [Storage & Data Management](architecture/STORAGE_DATA_MANAGEMENT_ARCHITECTURE.md)
+- **Context Orchestration**: [10_AI_CONTEXT_ORCHESTRATION](requirements/10_AI_CONTEXT_ORCHESTRATION.md) → [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md)
+
+### By Implementation Priority
+1. **Production Ready**: AI Context Orchestration, Security Framework, State Storage
+2. **Integration Testing**: Workflow Engine, Pattern Discovery, Storage Management
+3. **Enhancement Phase**: Advanced ML Analytics, Cross-cluster Operations
+
+---
+
+## 📊 **Value Proposition & Business Materials**
+
+**Location**: [`value-proposition/`](value-proposition/)
+
+**Purpose**: Sales enablement materials demonstrating kubernaut's differentiated value in GitOps-managed Kubernetes environments with existing automation (HPA, VPA, ArgoCD)
+
+### Documents by Audience
+
+| Document | Audience | Purpose | Read Time |
+|----------|----------|---------|-----------|
+| **[Executive Summary](value-proposition/EXECUTIVE_SUMMARY.md)** | Decision-makers, managers | ROI justification, quantitative impact | 10-15 min |
+| **[Technical Scenarios](value-proposition/TECHNICAL_SCENARIOS.md)** | SRE teams, platform engineers | Step-by-step workflows, detailed use cases | 45-60 min |
+| **[V1 vs V2 Capabilities](value-proposition/V1_VS_V2_CAPABILITIES.md)** | Technical leads, architects | Version planning, capability breakdown | 15-20 min |
+| **[Documentation Update Log](value-proposition/DOCUMENTATION_UPDATE_LOG.md)** | All audiences | Change history, V1/V2 assessment | 5 min |
+
+### Key Metrics
+- **V1 ROI**: 11,300-14,700% return (3-4 week implementation)
+- **MTTR Reduction**: 85-95% (hours → minutes)
+- **Cost Savings**: $215K-$350K annually (10-engineer team)
+- **V1 Readiness**: 93% average across 6 scenarios (85-100% range)
+
+---
+
+## 📖 **Documentation Guidelines**
+
+- **Business Requirements**: Start with [requirements/00_REQUIREMENTS_OVERVIEW.md](requirements/00_REQUIREMENTS_OVERVIEW.md)
+- **Architecture Understanding**: Begin with [AI Context Orchestration](architecture/AI_CONTEXT_ORCHESTRATION_ARCHITECTURE.md)
+- **Implementation**: Follow [development/project guidelines.md](development/project%20guidelines.md)
+- **Testing**: Reference [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md)
+- **Deployment**: Start with [development/getting-started/](development/getting-started/)
+- **Value Proposition**: Review [value-proposition/](value-proposition/) for stakeholder materials
+
+---
+
+*This index is maintained as part of the documentation reorganization initiative to ensure comprehensive cross-referencing between business requirements, architecture, and implementation documentation.*

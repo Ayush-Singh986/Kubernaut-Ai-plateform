@@ -1,0 +1,381 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package scenarios
+
+import (
+	"reflect"
+	"strings"
+
+	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
+)
+
+// DefaultRegistryWithOverrides returns a fully populated registry with optional
+// per-scenario overrides applied. If overrides is nil, behaves identically to
+// DefaultRegistry.
+//
+// Override keys in the ConfigMap use "<workflow_name>:<environment>" format
+// (populated by test infrastructure from DataStorage UUIDs). The lookup checks:
+//  1. Exact match by ScenarioName (backward compatibility)
+//  2. Fallback match by WorkflowName prefix (strips ":environment" suffix),
+//     rejecting ambiguous environment matches
+func DefaultRegistryWithOverrides(overrides *config.Overrides) *Registry {
+	return DefaultRegistryFull(overrides, "")
+}
+
+func applyOverride(cs *configScenario, ov config.ScenarioOverride) {
+	if ov.WorkflowID != "" {
+		cs.config.WorkflowID = ov.WorkflowID
+	}
+	if ov.Confidence != nil {
+		cs.config.Confidence = *ov.Confidence
+	}
+	if ov.ForceText != nil {
+		cs.config.ForceText = ov.ForceText
+	}
+	if ov.ToolCall != nil {
+		cs.config.ToolCallName = ov.ToolCall.Name
+		cs.config.ToolCallArgs = ov.ToolCall.Arguments
+	}
+	if len(ov.ToolCalls) > 0 {
+		entries := make([]MultiToolCallEntry, len(ov.ToolCalls))
+		for i, tc := range ov.ToolCalls {
+			entries[i] = MultiToolCallEntry{Name: tc.Name, Arguments: tc.Arguments}
+		}
+		cs.config.MultiToolCalls = entries
+	}
+	if ov.Usage != nil {
+		cs.config.Usage = &MockUsage{
+			PromptTokens:     ov.Usage.PromptTokens,
+			CompletionTokens: ov.Usage.CompletionTokens,
+			TotalTokens:      ov.Usage.TotalTokens,
+		}
+	}
+}
+
+// convertToolCallChain recursively converts a YAML-parsed ToolCallOverride
+// chain (config.ToolCallOverride.NextToolCall) into the scenario-internal
+// MultiToolCallEntry linked-list representation, preserving arbitrary chain
+// depth (issue #1853).
+func convertToolCallChain(tc *config.ToolCallOverride) *MultiToolCallEntry {
+	if tc == nil {
+		return nil
+	}
+	return &MultiToolCallEntry{
+		Name:              tc.Name,
+		Arguments:         tc.Arguments,
+		NextToolCall:      convertToolCallChain(tc.NextToolCall),
+		FallbackArguments: tc.FallbackArguments,
+	}
+}
+
+// applyAlternativeOverrides replaces deterministic UUIDs in a scenario's
+// Alternatives with the real DataStorage UUIDs from the overrides map.
+func applyAlternativeOverrides(cs *configScenario, overrides map[string]config.ScenarioOverride) {
+	for i := range cs.config.Alternatives {
+		alt := &cs.config.Alternatives[i]
+		if alt.WorkflowName == "" {
+			continue
+		}
+		if ov, found := findOverrideByWorkflowName(overrides, alt.WorkflowName); found && ov.WorkflowID != "" {
+			alt.WorkflowID = ov.WorkflowID
+		}
+	}
+}
+
+// findOverrideByWorkflowName searches override keys for entries matching the
+// given workflow name. Keys have format "workflow_name:environment". A
+// name-only lookup may resolve multiple environments only when every matching
+// environment carries the same override value.
+func findOverrideByWorkflowName(overrides map[string]config.ScenarioOverride, workflowName string) (config.ScenarioOverride, bool) {
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		name := key
+		if idx := strings.Index(key, ":"); idx != -1 {
+			name = key[:idx]
+		}
+		if name == workflowName {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return config.ScenarioOverride{}, false
+	}
+	selected := overrides[keys[0]]
+	for _, key := range keys[1:] {
+		if !reflect.DeepEqual(selected, overrides[key]) {
+			// Do not select an environment from a conflicting name-only lookup.
+			return config.ScenarioOverride{}, false
+		}
+	}
+	return selected, true
+}
+
+// DefaultRegistryFull returns a registry with optional overrides and golden
+// transcript replay. goldenDir may be empty to skip replay loading.
+func DefaultRegistryFull(overrides *config.Overrides, goldenDir string) *Registry {
+	r := defaultRegistryWithGoldenDir(goldenDir)
+	if overrides != nil {
+		for _, ts := range overrides.TranscriptScenarios {
+			r.Register(newTranscriptScenario(ts))
+		}
+
+		for _, s := range r.scenarios {
+			switch ts := s.(type) {
+			case *configScenario:
+				if ov, found := overrides.Scenarios[ts.config.ScenarioName]; found {
+					applyOverride(ts, ov)
+				} else if ts.config.WorkflowName != "" {
+					if ov, found := findOverrideByWorkflowName(overrides.Scenarios, ts.config.WorkflowName); found {
+						applyOverride(ts, ov)
+					}
+				}
+				if len(ts.config.Alternatives) > 0 {
+					applyAlternativeOverrides(ts, overrides.Scenarios)
+				}
+			case *paramValidationSelfcorrectScenario:
+				if ov, found := findOverrideByWorkflowName(overrides.Scenarios, "param-validation-test-v1"); found && ov.WorkflowID != "" {
+					ts.overrideWfID = ov.WorkflowID
+				}
+			}
+		}
+
+		// Register consumer-defined selector scenarios from YAML (issue #1160).
+		// These use the same priority (1.0) as built-in keyword selectors and
+		// override the default fallback (0.01).
+		// When MatchLastOnly is true (issue #1189), matching uses only the last
+		// user message to prevent prior-turn keyword shadowing in multi-turn
+		// ADK agent conversations.
+		selectorOverrides := make([]config.ScenarioSelectorOverride, 0, len(overrides.ScenarioSelectors)+len(overrides.KeywordScenarios))
+		selectorOverrides = append(selectorOverrides, overrides.ScenarioSelectors...)
+		selectorOverrides = append(selectorOverrides, overrides.KeywordScenarios...)
+		for _, ks := range selectorOverrides {
+			cfg := MockScenarioConfig{
+				ScenarioName:      ks.Name,
+				WorkflowID:        ks.WorkflowID,
+				ActionType:        ks.ActionType,
+				ToolCallName:      ks.ToolCall.Name,
+				ToolCallArgs:      ks.ToolCall.Arguments,
+				FallbackArguments: ks.ToolCall.FallbackArguments,
+				ForceText:         BoolPtr(false),
+				RepeatToolCall:    ks.RepeatToolCall,
+				ThoughtText:       ks.ThoughtText,
+			}
+			cfg.NextToolCall = convertToolCallChain(ks.NextToolCall)
+			// BR-KA-016: consumer-defined discovery selectors may author an
+			// independent workflow score through the existing scenario override.
+			// Omitted and explicit-zero scores must not borrow RCA confidence.
+			if override := overrides.Scenarios[ks.Name]; override.Confidence != nil {
+				cfg.Confidence = *override.Confidence
+			}
+			r.Register(newSelectorScenario(ks.Name, ScenarioSelector{
+				Scope:             ScenarioScope{Caller: Caller(ks.Caller), Phase: Phase(ks.Phase)},
+				Keywords:          ks.Keywords,
+				SignalPatterns:    ks.SignalPatterns,
+				MatchLastUserOnly: ks.MatchLastOnly,
+				Confidence:        1.0,
+			}, cfg))
+		}
+	}
+	return r
+}
+
+// DefaultRegistry returns a fully populated registry with all 15 scenarios
+// and a default fallback, matching the Python MOCK_SCENARIOS catalog.
+func DefaultRegistry() *Registry {
+	return defaultRegistryInternal()
+}
+
+func defaultRegistryInternal() *Registry {
+	return defaultRegistryWithGoldenDir("")
+}
+
+func defaultRegistryWithGoldenDir(goldenDir string) *Registry {
+	r := NewRegistry()
+
+	// Golden transcript replay scenarios (highest priority = 1.1)
+	if goldenDir != "" {
+		replays, _ := LoadReplayScenarios(goldenDir)
+		for _, rs := range replays {
+			r.Register(rs)
+		}
+	}
+
+	// Selector-based keyword scenarios (highest priority = 1.0)
+	r.Register(newKeywordScenario("no_workflow_found", "mock_no_workflow_found", noWorkflowFoundConfig()))
+	r.Register(newKeywordScenario("low_confidence", "mock_low_confidence", lowConfidenceConfig()))
+	r.Register(newKeywordScenario("approval_required", "mock_approval_test", approvalRequiredConfig()))
+	r.Register(newKeywordScenario("problem_resolved_contradiction", "mock_problem_resolved_contradiction", problemResolvedContradictionConfig()))
+	r.Register(newKeywordScenario("problem_resolved", "mock_problem_resolved", problemResolvedConfig()))
+	r.Register(newKeywordScenarioMulti("problem_resolved", []string{"mock_not_reproducible", "mock not reproducible"}, problemResolvedConfig()))
+	r.Register(newKeywordScenario("rca_incomplete", "mock_rca_incomplete", rcaIncompleteConfig()))
+	r.Register(newKeywordScenario("max_retries_exhausted", "mock_max_retries_exhausted", maxRetriesExhaustedConfig()))
+	r.Register(newKeywordScenario("not_actionable", "mock_not_actionable", notActionableConfig()))
+	r.Register(newKeywordScenario("parallel_tools", "mock_parallel_tools", parallelToolsConfig()))
+	r.Register(newKeywordScenario("empty_tool_result_replay", "mock_empty_tool_result_replay", emptyToolResultReplayConfig()))
+	r.Register(newKeywordScenario("alertmanager_node_tools", "mock_alertmanager_node_tools", alertmanagerNodeToolsConfig()))
+	r.Register(newKeywordScenario("ambiguous_kind", "mock_ambiguous_kind", ambiguousKindConfig()))
+	r.Register(newKeywordScenario("mock_reasoning_capture", "mock_reasoning_capture", reasoningCaptureConfig()))
+	for _, scenario := range historySelectionScenarios2496() {
+		r.Register(scenario)
+	}
+	r.Register(recurrentRCA2511Scenario())
+	for _, scenario := range phaseIsolationScenarios2498() {
+		r.Register(scenario)
+	}
+
+	// Test signal scenario
+	r.Register(testSignalScenario())
+	for _, scenario := range aiAnalysisFixtureScenarios() {
+		r.Register(scenario)
+	}
+
+	// Proactive scenarios (checked before signal-name)
+	r.Register(predictiveNoActionScenario())
+	r.Register(oomkilledPredictiveScenario())
+
+	// Signal name scenarios
+	r.Register(newSignalScenario("cert_not_ready", []string{"certmanagercertnotready", "cert_not_ready"}, certNotReadyConfig()))
+	r.Register(newSignalScenario("node_not_ready", []string{"nodenotready"}, nodeNotReadyConfig()))
+	r.Register(memoryEaterResourcePressureScenario())
+	r.Register(oomkilledScenario())
+	r.Register(crashloopScenario())
+	r.Register(helmManagedScenario())
+	r.Register(newSignalScenario("injection_configmap_read", []string{"injection_configmap_read"}, injectionConfigmapReadConfig()))
+	r.Register(newSignalScenario("istio_authz", []string{"istiohighdenyrate", "istio_high_deny"}, istioAuthzConfig()))
+
+	// Issue #1189/#1282: AF-created RRs use "unknown" as signal name when
+	// deriveSignalName finds no grounded infrastructure signal.
+	r.Register(newSignalScenario("af_unknown", []string{"unknown"}, oomkilledConfig()))
+
+	// E2E-AF-1396-001 (issue #1818 Gap 3 regression): dedicated seed-only
+	// grounding scenario for structured_decision_e2e_test.go's
+	// groundSessionBeta call -- see scenario_af_structured_decision_ground.go's
+	// doc comment for why ToolCallArgs must hand-craft the RCA substituted
+	// into args["rca"] rather than relying on the typed config fields.
+	r.Register(newSignalScenario("af_structured_decision_ground", []string{"structureddecisiongrounding"}, structuredDecisionGroundingConfig()))
+	r.Register(newSignalScenario("af_structured_decision_ground_3", []string{"structureddecisiongrounding3"}, structuredDecisionGrounding3Config()))
+
+	// E2E-AF-2387-002 (issue #2387): dedicated grounding scenario for
+	// structured_decision_e2e_test.go's groundSessionDelta call -- same
+	// single-turn submit_result shape as ground_3 above, for the
+	// StructuredDecisionGrounding4 alert/fixture.
+	r.Register(newSignalScenario("af_structured_decision_ground_4", []string{"structureddecisiongrounding4"}, structuredDecisionGrounding4Config()))
+
+	// Issue #1918: grounded not-actionable signal for E2E-FP-1918-001, safe
+	// from the ctx.AllText leak that a broadly-matched keyword (like
+	// not_actionable's "mock_not_actionable") would suffer when AF's own
+	// kubernaut_remediate response echoes the RR's derived SignalName back
+	// into its own tool-orchestration conversation (see
+	// notActionableGroundedConfig's doc comment for the full explanation).
+	r.Register(newSignalScenario("not_actionable_grounded_1918", []string{"e2efp1918notactionable"}, notActionableGroundedConfig()))
+
+	// Issue #1912/#2265: grounded not-actionable signal for E2E-FP-1912-001,
+	// same rationale and safety properties as not_actionable_grounded_1918
+	// above (see notActionableGrounded1912Config's doc comment).
+	r.Register(newSignalScenario("not_actionable_grounded_1912", []string{"e2efp1912notactionable"}, notActionableGrounded1912Config()))
+
+	// E2E-FLEET-2326-001 (Issue #2326, DD-FLEET-008, BR-FLEET-004): dedicated
+	// isolated signal so this scenario can never be matched by another Fleet
+	// E2E test's alert traffic -- see fleetExecClusterOverrideConfig's doc
+	// comment.
+	r.Register(newSignalScenario("fleet_exec_cluster_override_2326", []string{"fleetexecclusteroverride2326"}, fleetExecClusterOverrideConfig()))
+	// E2E-FLEET-004 (BR-INTEGRATION-054): resolve the isolated FleetRouting
+	// signal to the existing catalog-backed Deployment remediation workflow.
+	r.Register(newSignalScenario("fleet_routing", []string{"fleetrouting"}, fleetRoutingConfig()))
+
+	// E2E-FP-2378-001: standalone execution must ignore a catalog-declared
+	// execution cluster while retaining the metadata in WorkflowExecution.
+	r.Register(newSignalScenario("standalone_exec_cluster_id_2378", []string{"standaloneexecutioncluster2378"}, standaloneExecClusterIDConfig()))
+
+	// E2E-FP-2390-001: interactive GitOps workflow snapshot parity.
+	// The A2A investigation targets a zero-replica Deployment, so the E2E
+	// fixture supplies a synthetic warning event to ground this signal.
+	r.Register(newSignalScenario("gitops_drift_2390", []string{"gitopsdrift2390"}, gitopsDrift2390Config()))
+	r.Register(newSelectorScenario("gitops_drift_2390", ScenarioSelector{
+		Keywords:          []string{"gitops-drift-2390", "gitops drift 2390"},
+		MatchLastUserOnly: true,
+	}, gitopsDrift2390Config()))
+	r.Register(newSelectorScenario("af_select_gitops_workflow_2390", ScenarioSelector{
+		Keywords:          []string{"select the discovered GitOps workflow"},
+		MatchLastUserOnly: true,
+		Confidence:        1.0,
+	}, gitopsSelectWorkflow2390Config()))
+
+	// Issue #1170: Multi-turn param validation self-correction (BR-KA-191).
+	// Returns bad params on first call, corrected params after validation feedback.
+	r.Register(paramValidationSelfcorrectScenarioNew())
+
+	// Issue #1332: AF A2A tests need the mock LLM to call kubernaut_remediate
+	// when the user message contains "create a remediation request" (priority 0.9).
+	r.Register(afCreateRRScenario())
+
+	// TC-E2E-STREAM-03: slow variant of kubernaut_remediate that delays 5s on
+	// the second LLM turn, giving the test time to disconnect mid-execution.
+	r.Register(afCreateRRSlowScenario())
+
+	// E2E-FP-1292-001: cross-namespace variant that extracts the workload
+	// namespace from the prompt (ADR-057 split verification).
+	r.Register(afCreateRRCrossNSScenario())
+
+	// Slow investigation scenario for AA interactive watch ITs.
+	// Keeps KA session in "investigating" via a 30s second-turn delay.
+	r.Register(newKeywordScenario("slow_investigation", "slow-investigation-test", slowInvestigationConfig()))
+
+	// E2E-AA-065: capacity saturation needs a phase-valid, parseable RCA
+	// response while the first wave remains active for the overshoot burst.
+	r.Register(newCapacityRetrySlowInvestigationScenario())
+
+	// Brief investigation scenario for IT tests that need a non-instant session
+	// but don't require the full 30s window. 5s delay is enough for IS creation
+	// and upgrade detection before the session completes naturally.
+	r.Register(newBriefInvestigationScenario())
+
+	// E2E-FLEET-016 (issue #1768, Gaps A+C): real AF binary calls
+	// list_clusters + kubectl_get(cluster_id) via a real A2A request.
+	r.Register(afFleetKubectlE2EScenario())
+
+	// E2E-FLEET-020 (Issue #2274): real AF binary calls
+	// list_alerts(cluster_id) via a real A2A request against a real
+	// AlertManager, proving cluster-scoped alert filtering.
+	r.Register(afFleetAlertsE2EScenario())
+
+	// E2E-FLEET-017 (issue #1729): real KA investigation loop calls the
+	// correct (local or fleet) real K8s read tool -- strictly based on
+	// which tool names are actually advertised in the request -- and
+	// echoes back proof of a genuine, correctly-targeted round trip. One
+	// scenario, one keyword, for both the hub-local and fleet test cases
+	// (see scenario_ka_fleet_investigation.go).
+	r.Register(kaToolCallE2EInvestigationScenario())
+
+	// E2E-FLEET-018 (issue #1768 Track 2 Gap D): real KA RunInteractiveTurn,
+	// triggered by AF's kubernaut_message tool, calls the fleet-overlay-
+	// resolved read tool and echoes proof of a genuine remote-cluster round
+	// trip into the A2A artifact stream (see scenario_ka_interactive_fleet_bridge.go).
+	r.Register(kaInteractiveFleetBridgeE2EScenario())
+
+	// E2E-FLEET-018 companion: once kubernaut_message's tool result already
+	// carries the fleet-scoped evidence, AF's own agent loop must echo it
+	// back as plain text instead of falling through to a generic
+	// completion (see afKaInteractiveFleetBridgeMessageEchoScenario's doc
+	// comment in scenario_ka_interactive_fleet_bridge.go).
+	r.Register(afKaInteractiveFleetBridgeMessageEchoE2EScenario())
+
+	// Default fallback (lowest priority = 0.01)
+	r.Register(afHistoryLive2496())
+	r.Register(defaultFallbackScenario())
+
+	return r
+}

@@ -1,0 +1,322 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package aianalysis
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+)
+
+// TestWorkflow represents a workflow for AIAnalysis integration tests
+// These workflows match the Mock LLM responses to enable end-to-end testing
+type TestWorkflow struct {
+	WorkflowID       string // Must match Mock LLM workflow_id (e.g., "oomkill-increase-memory-v1")
+	Name             string
+	Description      string
+	SignalType       string // Must match test scenarios (e.g., "OOMKilled")
+	Severity         string
+	Component        []string
+	Environment      string
+	Priority         string
+	SchemaParameters []models.WorkflowParameter // BR-KA-191: Must match Mock LLM parameters
+}
+
+// GetAIAnalysisTestWorkflows returns the workflows that Mock LLM expects
+// These must be registered in DataStorage before tests run
+//
+// Pattern: Test data alignment between Mock LLM and DataStorage
+//   - Mock LLM returns workflow IDs (e.g., "oomkill-increase-memory-v1")
+//   - KA validates workflows via DataStorage API
+//   - Tests fail if workflows don't exist in catalog
+//   - Workflows created for BOTH staging and production environments
+//     (tests use staging by default, but some use production)
+func GetAIAnalysisTestWorkflows() []TestWorkflow {
+	// BR-KA-191: SchemaParameters MUST match Mock LLM scenario parameters
+	// Mock LLM scenarios defined in test/services/mock-llm/scenarios/
+	// KA validates LLM response parameters against workflow schema from DataStorage
+	// If parameters don't match, KA returns parameter_validation_failed BEFORE confidence check
+	// DD-WORKFLOW-017: SchemaParameters mirror OCI image's /workflow-schema.yaml for documentation.
+	// Actual schema comes from OCI image via pullspec-only registration.
+	baseWorkflows := []TestWorkflow{
+		{
+			WorkflowID:  "oomkill-increase-memory-v1",
+			Name:        "OOMKill Recovery - Increase Memory Limits",
+			Description: "Increase memory limits for pods hitting OOMKill",
+			SignalType:  "OOMKilled",
+			Severity:    "critical",
+			Component:   []string{"apps/v1/Deployment"},
+			Priority:    "P0",
+			// Must match workflow-schema.yaml and Mock LLM "oomkilled" scenario parameters
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "TARGET_RESOURCE_KIND", Type: "string", Required: true, Description: "Kubernetes resource kind (Deployment, StatefulSet, DaemonSet)"},
+				{Name: "TARGET_RESOURCE_NAME", Type: "string", Required: true, Description: "Name of the resource to patch"},
+				{Name: "TARGET_NAMESPACE", Type: "string", Required: true, Description: "Namespace of the resource"},
+				{Name: "MEMORY_LIMIT_NEW", Type: "string", Required: true, Description: "New memory limit to apply (e.g., 128Mi, 256Mi, 1Gi)"},
+			},
+		},
+		{
+			WorkflowID:  "crashloop-config-fix-v1",
+			Name:        "CrashLoopBackOff - Configuration Fix",
+			Description: "Fix missing configuration causing CrashLoopBackOff",
+			SignalType:  "CrashLoopBackOff",
+			Severity:    "high",
+			Component:   []string{"apps/v1/Deployment"},
+			Priority:    "P1",
+			// Mock LLM "crashloop" scenario returns: NAMESPACE, DEPLOYMENT_NAME
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+				{Name: "DEPLOYMENT_NAME", Type: "string", Required: true, Description: "Name of the deployment to restart"},
+				{Name: "GRACE_PERIOD_SECONDS", Type: "integer", Required: false, Description: "Graceful shutdown period in seconds"},
+			},
+		},
+		{
+			WorkflowID:  "node-drain-reboot-v1",
+			Name:        "NodeNotReady - Drain and Reboot",
+			Description: "Drain node and reboot to resolve NodeNotReady",
+			SignalType:  "NodeNotReady",
+			Severity:    "critical",
+			Component:   []string{"v1/Node"},
+			Priority:    "P0",
+			// Mock LLM "node_not_ready" scenario returns: NODE_NAME
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NODE_NAME", Type: "string", Required: true, Description: "Name of the node to drain and reboot"},
+				{Name: "DRAIN_TIMEOUT_SECONDS", Type: "integer", Required: false, Description: "Timeout for drain operation in seconds"},
+			},
+		},
+		{
+			WorkflowID:  "memory-optimize-v1",
+			Name:        "Memory Optimization - Alternative Approach",
+			Description: "Optimize memory usage after failed scaling attempt",
+			SignalType:  "OOMKilled",
+			Severity:    "critical",
+			Component:   []string{"apps/v1/Deployment"},
+			Priority:    "P0",
+			// Mock LLM returns: NAMESPACE, DEPLOYMENT_NAME
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+				{Name: "DEPLOYMENT_NAME", Type: "string", Required: true, Description: "Name of the deployment to scale"},
+				{Name: "REPLICA_COUNT", Type: "integer", Required: false, Description: "Target number of replicas"},
+			},
+		},
+		{
+			WorkflowID:  "generic-restart-v1",
+			Name:        "Generic Pod Restart",
+			Description: "Generic pod restart for unknown issues",
+			SignalType:  "Unknown",
+			Severity:    "warning",
+			Component:   []string{"v1/Pod"},
+			Priority:    "*",
+			// Mock LLM "low_confidence" scenario returns: NAMESPACE, POD_NAME
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+				{Name: "POD_NAME", Type: "string", Required: true, Description: "Name of the pod to restart"},
+			},
+		},
+		{
+			WorkflowID:  "test-signal-handler-v1",
+			Name:        "Test Signal Handler",
+			Description: "Generic workflow for test signals (graceful shutdown tests)",
+			SignalType:  "TestSignal",
+			Severity:    "critical",
+			Component:   []string{"v1/Pod"},
+			Priority:    "P1",
+			// Mock LLM "test_signal" scenario returns: NAMESPACE, POD_NAME
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+				{Name: "POD_NAME", Type: "string", Required: true, Description: "Name of the pod to delete"},
+			},
+		},
+		{
+			WorkflowID:  "imagepullbackoff-metrics-v1",
+			Name:        "ImagePullBackOff Confidence Metrics Fixture",
+			Description: "Test-only Pod restart workflow for confidence histogram integration coverage",
+			SignalType:  "ImagePullBackOff",
+			Severity:    "critical",
+			Component:   []string{"v1/Pod"},
+			Priority:    "P2",
+			SchemaParameters: []models.WorkflowParameter{
+				{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+				{Name: "POD_NAME", Type: "string", Required: true, Description: "Name of the pod to restart"},
+			},
+		},
+	}
+
+	// Create workflows for staging, production, test, AND development environments
+	// Pattern: Environment-specific workflow instances
+	// - Most tests use staging (metrics_integration_test.go)
+	// - Some tests use production (approval decision tests)
+	// - Graceful shutdown tests use test (graceful_shutdown_test.go)
+	// - Audit and metrics tests use development
+	// - DataStorage filters by environment, so we need all four
+	var allWorkflows []TestWorkflow
+	for _, wf := range baseWorkflows {
+		// Staging version
+		stagingWf := wf
+		stagingWf.Environment = "staging"
+		allWorkflows = append(allWorkflows, stagingWf)
+
+		// Production version
+		prodWf := wf
+		prodWf.Environment = "production"
+		allWorkflows = append(allWorkflows, prodWf)
+
+		// Test version (for graceful shutdown and infrastructure tests)
+		testWf := wf
+		testWf.Environment = "test"
+		allWorkflows = append(allWorkflows, testWf)
+
+		// Development version (for audit and metrics tests)
+		developmentWf := wf
+		developmentWf.Environment = "development"
+		allWorkflows = append(allWorkflows, developmentWf)
+	}
+
+	return allWorkflows
+}
+
+// REMOVED: SeedTestWorkflowsInDataStorage()/registerWorkflowInDataStorage() -
+// Postgres-backed inline registration, replaced by
+// SeedTestWorkflowsViaDirectCRDCreation below (#1661 Phase 55: this suite
+// runs no AuthWebhook). See test/infrastructure/workflow_seeding.go and
+// workflow_seeding_direct_crd.go for the shared implementations.
+
+// workflowVersionSuffix strips the "-vN" version suffix from a WorkflowID to
+// recover its fixture directory name (mirrors the unexported
+// infrastructure.workflowIDToImageName -- this package can't call it
+// directly, so the stripping logic is duplicated here).
+var workflowVersionSuffix = regexp.MustCompile(`-v\d+$`)
+
+// SeedTestWorkflowsViaDirectCRDCreation registers AIAnalysis test workflows
+// directly as RemediationWorkflow CRDs (#1661 Phase 55: this suite runs no
+// AuthWebhook -- see infrastructure.SeedWorkflowsViaDirectCRDCreation).
+//
+// GetAIAnalysisTestWorkflows returns one entry per (base workflow,
+// environment) triple, but each fixture's labels.environment already lists
+// every environment it's used with (e.g. [production, staging, test]) -- one
+// CRD instance is discoverable under all of them. Seeding is still driven by
+// the full triple list so the returned map preserves the exact
+// "name:environment" keys WriteMockLLMConfigFile and test assertions expect;
+// SeedWorkflowsViaDirectCRDCreation's create-or-get fallback makes the
+// repeated per-environment Create calls against the same underlying CRD safe.
+func SeedTestWorkflowsViaDirectCRDCreation(ctx context.Context, k8sClient client.Client, namespace string, output io.Writer) (map[string]string, error) {
+	workflows := GetAIAnalysisTestWorkflows()
+	specs := make([]infrastructure.WorkflowSeedSpec, len(workflows))
+	for i, wf := range workflows {
+		specs[i] = infrastructure.WorkflowSeedSpec{
+			FixtureDir:  workflowVersionSuffix.ReplaceAllString(wf.WorkflowID, ""),
+			Environment: wf.Environment,
+		}
+	}
+	return infrastructure.SeedWorkflowsViaDirectCRDCreation(ctx, k8sClient, namespace, specs, output)
+}
+
+// Deprecated: WriteMockLLMConfigFile is part of the legacy ConfigMap sync infrastructure.
+// The Go Mock LLM uses deterministic UUIDs (pkg/shared/uuid) and optional YAML overrides.
+//
+// WriteMockLLMConfigFile writes a YAML configuration file for Mock LLM
+// Pattern: DD-TEST-011 v2.0 - File-Based Configuration
+// Mock LLM reads workflow UUIDs from YAML file at startup (no HTTP calls)
+// Input: Map of "workflow_name:environment" → "actual-uuid-from-datastorage"
+func WriteMockLLMConfigFile(configPath string, workflowUUIDs map[string]string, output io.Writer) error {
+	_, _ = fmt.Fprintf(output, "\n📝 Writing Mock LLM configuration file: %s\n", configPath)
+
+	// Build YAML content with deterministic key order. AIAnalysis must exercise
+	// workflow discovery so the selected workflow is registered in the session
+	// before submit_result_with_workflow is returned.
+	var yamlContent strings.Builder
+	yamlContent.WriteString("scenarios:\n")
+	for _, key := range infrastructure.SortedWorkflowUUIDKeys(workflowUUIDs) {
+		yamlContent.WriteString(fmt.Sprintf("  %s:\n    workflow_id: %s\n    force_text: false\n", key, workflowUUIDs[key]))
+	}
+
+	// Write to file
+	if err := os.WriteFile(configPath, []byte(yamlContent.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write Mock LLM config file: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(output, "✅ Mock LLM config file written (%d scenarios)\n\n", len(workflowUUIDs))
+	return nil
+}
+
+// UpdateMockLLMWithUUIDs sends the actual workflow UUIDs to Mock LLM.
+// Pattern: DD-WORKFLOW-002 v3.0 UUID synchronization.
+// DataStorage auto-generates UUIDs, so Mock LLM must be updated with actual values.
+// This ensures LLM responses contain UUIDs that exist in DataStorage catalog.
+//
+// Deprecated: Use WriteMockLLMConfigFile for DD-TEST-011 v2.0 file-based pattern.
+func UpdateMockLLMWithUUIDs(mockLLMConfig infrastructure.MockLLMConfig, workflowUUIDs map[string]string, output io.Writer) error {
+	_, _ = fmt.Fprintf(output, "\n⚠️  DEPRECATED: UpdateMockLLMWithUUIDs() - Use WriteMockLLMConfigFile() instead\n")
+	_, _ = fmt.Fprintf(output, "\n🔄 Updating Mock LLM scenarios with actual DataStorage UUIDs...\n")
+
+	// Convert workflowUUIDs map to format Mock LLM expects
+	// Input format: "workflow_name:environment" → "uuid"
+	// Mock LLM format: {"workflow_name:environment": "uuid"}
+	updatePayload := workflowUUIDs
+
+	jsonPayload, err := json.Marshal(updatePayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal UUID update payload: %w", err)
+	}
+
+	// HTTP PUT to Mock LLM's update endpoint
+	mockLLMURL := infrastructure.GetMockLLMEndpoint(mockLLMConfig)
+	updateEndpoint := fmt.Sprintf("%s/api/test/update-uuids", mockLLMURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", updateEndpoint, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("failed to create Mock LLM update request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to update Mock LLM UUIDs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("mock LLM returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var responseData map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&responseData); err != nil {
+		return fmt.Errorf("failed to parse Mock LLM response: %w", err)
+	}
+
+	updatedCount, _ := responseData["updated_scenarios"].(float64)
+	_, _ = fmt.Fprintf(output, "✅ Mock LLM updated: %d scenarios synchronized with DataStorage UUIDs\n", int(updatedCount))
+
+	return nil
+}

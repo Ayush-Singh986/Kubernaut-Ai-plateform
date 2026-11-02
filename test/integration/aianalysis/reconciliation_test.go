@@ -1,0 +1,338 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package aianalysis
+
+import (
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/jordigilh/kubernaut/test/shared/helpers"
+)
+
+// SERIAL EXECUTION: AA integration suite runs serially for 100% reliability.
+// See audit_flow_integration_test.go for detailed rationale.
+var _ = Describe("AIAnalysis Full Reconciliation Integration", Label("integration", "reconciliation"), func() {
+	const (
+		timeout  = 2 * time.Minute
+		interval = time.Second
+	)
+
+	// Per reconciliation-phases.md v2.1: 4-phase flow
+	// Pending → Investigating → Analyzing → Completed
+	// NOTE: Validating and Recommending phases were removed in v1.8/v1.10
+
+	Context("Complete reconciliation cycle - BR-AI-001", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			rrName := helpers.UniqueTestName("test-remediation")
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      helpers.UniqueTestName("integration-test"),
+					Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      rrName,        // ✅ UNIQUE per test run (DD-AUDIT-CORRELATION-001)
+						Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+					},
+					RemediationID: rrName, // Match RemediationRequestRef.Name for correlation consistency
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "test-fingerprint-001",
+							Severity:         "high", // DD-SEVERITY-001: Match crashloop-config-fix-v1 fixture
+							SignalName:       "CrashLoopBackOff",
+							SignalMode:       "reactive",
+							Environment:      "staging",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "test-pod",
+								Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+		})
+
+		It("IT-AA-2390-001: should transition through all phases and persist the selected workflow snapshot", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis CRD")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			// The controller processes phases very quickly, so instead of checking
+			// intermediate phases (which may have already transitioned by the time
+			// we poll), we verify the final state and important status fields.
+
+			By("Waiting for Completed phase (terminal)")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying final status fields")
+			// Refresh status
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)).To(Succeed())
+
+			Expect(analysis.Status.CompletedAt).NotTo(BeZero())
+			// Staging environment should auto-approve per Rego policy
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeFalse())
+			// Should have a selected workflow from KA mock
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow).NotTo(BeNil())
+			// DD-WORKFLOW-002 v3.0: Test assertions use actual UUIDs from DataStorage
+			// Mock LLM returns workflow for CrashLoopBackOff → crashloop-config-fix-v1 (production environment)
+			expectedWorkflowID := workflowUUIDs["crashloop-config-fix-v1:production"]
+			Expect(expectedWorkflowID).NotTo(BeEmpty(), "crashloop-config-fix-v1:production UUID must be seeded")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.WorkflowID).To(Equal(expectedWorkflowID))
+			// The seeded crashloop-config-fix catalog fixture declares Tekton;
+			// the catalog engine is authoritative over the mock selection.
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.ExecutionEngine).To(Equal("tekton"),
+				"IT-AA-2390-001: catalog execution engine must persist in AA status")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.ExecutionBundle).ToNot(BeEmpty(),
+				"IT-AA-2390-001: selected workflow execution bundle must persist in AA status")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.WorkflowName).ToNot(BeEmpty(),
+				"IT-AA-2390-001: workflow name must persist in AA status")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.ActionType).ToNot(BeEmpty(),
+				"IT-AA-2390-001: action type must persist in AA status")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.Version).ToNot(BeEmpty(),
+				"IT-AA-2390-001: workflow version must persist in AA status")
+			Expect(analysis.Status.GetRCAResult().SelectedWorkflow.SelectedAt).ToNot(BeNil(),
+				"IT-AA-2390-001: selected timestamp must persist in AA status")
+		})
+
+		It("should require approval for production environment - BR-AI-013", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			analysis.Spec.AnalysisRequest.SignalContext.Environment = "production"
+			// Use the registered 0.75-confidence scenario, ensuring the
+			// production catch-all rule fires: is_production + not is_high_confidence.
+			analysis.Spec.AnalysisRequest.SignalContext.SignalName = "MOCK_APPROVAL_TEST"
+
+			By("Creating production AIAnalysis")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Waiting for completion")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+
+			By("Verifying approval required for production")
+			Expect(analysis.Status.GetApproval().ApprovalRequired).To(BeTrue())
+			Expect(analysis.Status.GetApproval().ApprovalContext).NotTo(BeNil())
+		})
+	})
+
+	Context("Error handling scenarios - BR-AI-009", func() {
+		var analysis *aianalysisv1.AIAnalysis
+
+		BeforeEach(func() {
+			rrName := helpers.UniqueTestName("test-remediation")
+			analysis = &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      helpers.UniqueTestName("error-retry"),
+					Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      rrName,        // ✅ UNIQUE per test run (DD-AUDIT-CORRELATION-001)
+						Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+					},
+					RemediationID: rrName, // Match RemediationRequestRef.Name for correlation consistency
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "test-fingerprint-002",
+							Severity:         "high", // DD-SEVERITY-001: Match crashloop-config-fix-v1 fixture
+							SignalName:       "CrashLoopBackOff",
+							SignalMode:       "reactive",
+							Environment:      "staging",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "test-pod",
+								Namespace: testNamespace, // DD-TEST-002: Use dynamic namespace
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation},
+					},
+				},
+			}
+		})
+
+		It("should increment retry count on transient failures", func() {
+			// Per 03-testing-strategy.mdc: Cleanup in defer for extra safety
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			// This test verifies the retry mechanism works correctly
+			// The mock KA can be configured to return transient errors
+
+			By("Creating AIAnalysis")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Verifying retry annotation exists after failure")
+			// This assertion depends on KA behavior
+			// If mock is configured to fail first N times, verify retry count
+			Eventually(func() bool {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				// Check if retry annotation is set
+				_, hasRetry := analysis.Annotations["kubernaut.ai/retry-count"]
+				// Either completed or has retry annotation
+				return analysis.Status.Phase == aianalysisv1.PhaseCompleted || hasRetry
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	// NOTE: Status conditions (Status.Conditions) are NOT in V1.0 scope.
+	// BR-AI-022 is about confidence thresholds (80% auto-approval), which is
+	// tested in the Rego policy evaluation tests.
+	// Status conditions for phase observability may be added in V2.0 if needed.
+
+	Context("#462: SignalAnnotations end-to-end through reconciliation", func() {
+		It("IT-AA-462-001: should persist SignalAnnotations on AIAnalysis and complete normally", func() {
+			rrName := helpers.UniqueTestName("annot-rr")
+			analysis := &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      helpers.UniqueTestName("annot-e2e"),
+					Namespace: testNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      rrName,
+						Namespace: testNamespace,
+					},
+					RemediationID: rrName,
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "test-fp-462-001",
+							Severity:         "high",
+							SignalName:       "OOMKilled",
+							SignalMode:       "reactive",
+							Environment:      "production",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "api-server-pod",
+								Namespace: testNamespace,
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+							SignalAnnotations: map[string]string{
+								"description": "Pod OOMKilled in production",
+								"summary":     "Memory limit exceeded for api-server",
+								"runbook_url": "https://runbooks.example.com/oom",
+							},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis with SignalAnnotations")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Verifying SignalAnnotations persisted on CRD spec")
+			fetched := &aianalysisv1.AIAnalysis{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), fetched)).To(Succeed())
+			Expect(fetched.Spec.AnalysisRequest.SignalContext.SignalAnnotations).To(Equal(map[string]string{
+				"description": "Pod OOMKilled in production",
+				"summary":     "Memory limit exceeded for api-server",
+				"runbook_url": "https://runbooks.example.com/oom",
+			}))
+
+			By("Waiting for Completed phase (annotations must not break reconciliation)")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+		})
+
+		It("IT-AA-462-002: should complete normally without SignalAnnotations (backward compat)", func() {
+			rrName := helpers.UniqueTestName("no-annot-rr")
+			analysis := &aianalysisv1.AIAnalysis{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      helpers.UniqueTestName("no-annot-e2e"),
+					Namespace: testNamespace,
+				},
+				Spec: aianalysisv1.AIAnalysisSpec{
+					RemediationRequestRef: corev1.ObjectReference{
+						Name:      rrName,
+						Namespace: testNamespace,
+					},
+					RemediationID: rrName,
+					AnalysisRequest: aianalysisv1.AnalysisRequest{
+						SignalContext: aianalysisv1.SignalContextInput{
+							Fingerprint:      "test-fp-462-002",
+							Severity:         "high",
+							SignalName:       "CrashLoopBackOff",
+							SignalMode:       "reactive",
+							Environment:      "staging",
+							BusinessPriority: "P1",
+							TargetResource: aianalysisv1.TargetResource{
+								Kind:      "Pod",
+								Name:      "test-pod",
+								Namespace: testNamespace,
+							},
+							EnrichmentResults: sharedtypes.EnrichmentResults{},
+						},
+						AnalysisTypes: []aianalysisv1.AnalysisType{aianalysisv1.AnalysisTypeInvestigation, aianalysisv1.AnalysisTypeRootCause, aianalysisv1.AnalysisTypeWorkflowSelection},
+					},
+				},
+			}
+
+			defer func() {
+				_ = k8sClient.Delete(ctx, analysis)
+			}()
+
+			By("Creating AIAnalysis without SignalAnnotations")
+			Expect(k8sClient.Create(ctx, analysis)).To(Succeed())
+
+			By("Verifying SignalAnnotations is nil")
+			fetched := &aianalysisv1.AIAnalysis{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), fetched)).To(Succeed())
+			Expect(fetched.Spec.AnalysisRequest.SignalContext.SignalAnnotations).To(BeNil())
+
+			By("Waiting for Completed phase (backward compatibility)")
+			Eventually(func() string {
+				_ = k8sClient.Get(ctx, client.ObjectKeyFromObject(analysis), analysis)
+				return analysis.Status.Phase
+			}, timeout, interval).Should(Equal("Completed"))
+		})
+	})
+})

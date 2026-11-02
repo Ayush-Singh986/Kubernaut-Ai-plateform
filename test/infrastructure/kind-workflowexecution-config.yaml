@@ -1,0 +1,45 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  # Expose WorkflowExecution Controller ports via NodePort to host machine
+  # Per DD-TEST-001 port allocation strategy
+  extraPortMappings:
+  - containerPort: 30085  # WorkflowExecution health/ready NodePort
+    hostPort: 8085        # Port on host machine (localhost:8085)
+    protocol: TCP
+  - containerPort: 30185  # WorkflowExecution metrics NodePort
+    hostPort: 9185        # Port on host machine (localhost:9185)
+    protocol: TCP
+  # Data Storage for BR-WE-005 audit events (per DD-TEST-001)
+  - containerPort: 30081  # Data Storage HTTP NodePort
+    hostPort: 8092        # DD-TEST-001: WE → DataStorage dependency (avoids conflicts with RO:8089, DS:8081)
+    protocol: TCP
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 30281       # Port on host machine
+    protocol: TCP
+  # BR-WE-015: AWX API NodePort for ansible engine E2E tests
+  - containerPort: 30095  # AWX API NodePort
+    hostPort: 30095       # Port on host machine (localhost:30095)
+    protocol: TCP
+  # DD-TEST-007: Mount coverage directory for E2E coverage collection
+  # Controller pods run on control-plane node, so coverage must be accessible here
+  extraMounts:
+  - hostPath: ./coverdata
+    containerPath: /coverdata
+    readOnly: false
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Increase API server rate limits for parallel E2E testing
+        # Tekton creates many TaskRun/PipelineRun resources
+        max-requests-inflight: "800"
+        max-mutating-requests-inflight: "400"
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        kube-api-qps: "100"
+        kube-api-burst: "200"

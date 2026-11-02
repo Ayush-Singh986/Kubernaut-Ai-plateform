@@ -1,0 +1,761 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package fleet contains the Fleet E2E test suite (Issue #54).
+//
+// This suite deploys ALL Kubernaut services in a PRIMARY Kind cluster plus
+// fleet infrastructure (Envoy AI Gateway (EAIGW) + FMC + Valkey + K8s MCP
+// Server + Keycloak) and a genuinely separate REMOTE Kind cluster
+// (DD-TEST-013), and validates the complete multi-cluster remediation
+// lifecycle:
+//
+//	Alert → GW → SP(MCP enrich) → AA(MCP investigate) → WE(MCP dispatch) → EM → NT
+//
+// Spoke registrations (remote-cluster, prod-east, prod-west) are backed by
+// the remote bridge to the remote cluster's kube-mcp-server
+// (KubeMCPServerAuthConfig.AllRegistrationsRemote). The hub is separately
+// registered as "hub" and its kube-mcp-server is also reached through the
+// Gateway (ADR-068 amendment, 2026-09-22). No remediation uses an implicit
+// local-client shortcut. kube-mcp-server runs in passthrough mode with a real RFC
+// 8693 Standard Token Exchange against Keycloak (mirrors the FMC E2E lane;
+// Keycloak replaces DEX here because DEX has no Standard Token Exchange,
+// Spike S17/S20). Tool names use the `remote-cluster__` prefix EAIGW
+// auto-derives from the Backend name (kubernaut#2309: this suite moved off
+// Kuadrant's static broker credential, a structural SPOF; Kuadrant itself
+// stays covered by its own standalone FMC E2E lane).
+//
+// K8s objects for a spoke cluster must be created through remoteK8sClient;
+// hub-targeted fixtures are created on k8sClient but read/routed through the
+// registered "hub" MCP Gateway backend. Kubernaut's own CRDs (RemediationRequest, SignalProcessing,
+// AIAnalysis, WorkflowExecution, ...) are reconciled by controllers running
+// in the PRIMARY cluster and stay on k8sClient.
+//
+// Authority: Issue #54, ADR-068, DD-TEST-013, Spike S17/S19/S20
+//
+// Test Execution:
+//
+//	FLEET_E2E=true ginkgo -v ./test/e2e/fleet/...
+//
+// IMPORTANT: This suite requires significant resources (primary cluster
+// ~6.1GB RAM + remote cluster ~1.7-2.5GB RAM, Keycloak vs DEX's ~64MB
+// accepted to validate the real production token-exchange wiring end-to-end).
+package fleet
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+)
+
+// goconst dedup: test-fixture literals deduplicated below.
+const (
+	trueFixture = "true"
+
+	// remediationRequestKind is the owner-reference/ObjectReference Kind for
+	// RemediationRequest, matched by string (not the typed remediationv1
+	// import) across several fleet E2E tests that walk generic
+	// metav1.OwnerReference/ObjectReference lists.
+	remediationRequestKind = "RemediationRequest"
+)
+
+const (
+	timeout  = 10 * time.Minute
+	interval = 500 * time.Millisecond
+
+	clusterName = "fleet-e2e"
+	namespace   = "kubernaut-system"
+)
+
+// mcpGatewayURL targets EAIGW's generated-Service NodePort (DD-TEST-001:
+// 31976), not Kuadrant's 31975 -- this suite moved to EAIGW (kubernaut#2309).
+// Apply the shared qualification offset so the isolated Fleet lane reaches
+// its +20000 host-port block. The operator-managed Gateway certificate has
+// localhost as its host SAN.
+var mcpGatewayURL = fmt.Sprintf("https://localhost:%d/mcp", infrastructure.DemoHostPort(31976))
+
+var (
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	kubeconfigPath       string
+	remoteKubeconfigPath string
+
+	k8sClient client.Client
+	apiReader client.Reader
+
+	// remoteK8sClient targets the second Kind cluster (DD-TEST-013) backing
+	// the spoke registrations remote-cluster/prod-east/prod-west
+	// (AllRegistrationsRemote, see test/infrastructure/fleet_e2e.go).
+	// Spoke-target fixtures and their MCP-enrichment resources live here;
+	// hub-target fixtures stay on k8sClient and are read through the separately
+	// registered Gateway hub. Kubernaut's own CRDs (RemediationRequest,
+	// SignalProcessing, etc.) are reconciled by controllers in the PRIMARY
+	// cluster and stay on k8sClient.
+	remoteK8sClient client.Client
+
+	dataStorageClient *ogenclient.Client
+	e2eAuthToken      string
+	fpAuthToken       string
+
+	afBaseURL        string
+	afHTTPClient     *http.Client
+	operatorExposure infrastructure.OperatorExposureEvidence
+
+	workflowUUIDs map[string]string
+	fpRemediateNS map[string]string
+
+	anyTestFailed bool
+)
+
+func fleetPrometheusURL() string {
+	return fmt.Sprintf("https://127.0.0.1:%d", infrastructure.PrometheusHostPort)
+}
+
+func fleetMonitoringCAPath() string {
+	return infrastructure.MonitoringCAPath(kubeconfigPath)
+}
+
+// fleetGatewayURL resolves the operator-created host adapter at call time.
+// The fallback is retained for legacy fixtures, but operator qualification
+// must use the dynamically allocated NodePort block rather than chart port 30080.
+func fleetGatewayURL() string {
+	if url := infrastructure.OperatorExposureURL(operatorExposure, "gateway"); url != "" {
+		return url
+	}
+	return fleetGatewayFallbackURL
+}
+
+// postWithFleetAuth sends an authenticated POST request to the Gateway with a
+// fixed "application/json" content type (the only content type used across
+// all e2e/fleet tests). Uses fpAuthToken (BR-GATEWAY-036/037) provisioned in BeforeSuite.
+func postWithFleetAuth(url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+	if fpAuthToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", fpAuthToken))
+	}
+	return http.DefaultClient.Do(req)
+}
+
+// fmcSyncTimeout bounds the retry window for postFleetAlertUntilAccepted.
+//
+// Root cause (Issue #54 SOC2 gap RCA, CI run 28495045499): every fleet E2E
+// alert carries a non-empty cluster label, so Gateway's scope check
+// (pkg/gateway/server.go validateScope) routes through
+// pkg/fleet.FederatedScopeChecker.IsManagedResource, which for non-empty
+// ClusterID ALWAYS delegates to the remote FleetMetadataCache (FMC) HTTP
+// backend (pkg/fleet/fmc/http_client.go) -- never the local K8s informer
+// cache (pkg/shared/scope/manager.go), which only applies to empty
+// ClusterID (hub-local) signals.
+//
+// FMC does not watch resources live: pkg/fleet/fmc/syncer.go polls every
+// registered cluster (via MCP tools, one List call per resource kind) on a
+// fixed ticker and writes results to Valkey; the HTTP scope-check endpoint
+// only ever answers from that cache. The e2e fleetmetadatacache-config
+// ConfigMap (test/infrastructure/fleet_e2e.go) sets sync.interval=10s, so a
+// resource created/labeled by a test immediately before posting an alert is
+// only guaranteed to be visible to FMC's scope-check endpoint after the next
+// full sync tick. Because syncAll() iterates every registered cluster
+// (hub, remote-cluster, prod-east, prod-west) x 6 resource kinds sequentially,
+// a single cycle can itself take non-trivial wall time, so worst-case
+// staleness exceeds the nominal 10s interval. 90s gives multiple sync cycles
+// of margin and allows the AF request itself to complete; a 15s window (the
+// previous value) was measured insufficient and
+// caused persistent "resource not managed by Kubernaut" rejections for the
+// full retry window. Rejected responses have no side effects (no RR is
+// created), so retrying the POST is safe.
+const fmcSyncTimeout = 90 * time.Second
+
+// postFleetAlertUntilAccepted posts a Prometheus alert payload to the Gateway and
+// retries while the response status is not one of acceptableStatus (defaults to
+// 201 Created). See fmcSyncTimeout for why the retry window must exceed FMC's
+// sync interval.
+func postFleetAlertUntilAccepted(gatewayURL string, payload []byte, acceptableStatus ...int) []byte {
+	if len(acceptableStatus) == 0 {
+		acceptableStatus = []int{http.StatusCreated}
+	}
+	var respBody []byte
+	Eventually(func(g Gomega) {
+		resp, err := postWithFleetAuth(gatewayURL+"/api/v1/signals/prometheus",
+			strings.NewReader(string(payload)))
+		g.Expect(err).ToNot(HaveOccurred())
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		g.Expect(readErr).ToNot(HaveOccurred())
+
+		respBody = body
+		g.Expect(acceptableStatus).To(ContainElement(resp.StatusCode),
+			"Gateway should accept the alert (body: %s)", string(body))
+	}, fmcSyncTimeout, 1*time.Second).Should(Succeed())
+	return respBody
+}
+
+func fleetWorkloadNamespace(key string) string {
+	ns, ok := fpRemediateNS[key]
+	ExpectWithOffset(1, ok).To(BeTrue(), "fleet workload namespace %q must be provisioned", key)
+	ExpectWithOffset(1, ns).NotTo(BeEmpty(), "fleet workload namespace %q must not be empty", key)
+	return ns
+}
+
+func deployFleetMemoryEater(targetName, targetNamespace, targetKubeconfig string, targetClient client.Client, memoryLimit, growthLimit string) {
+	Expect(infrastructure.DeployMemoryEaterNamed(ctx, targetName, targetNamespace,
+		targetKubeconfig, memoryLimit, growthLimit, GinkgoWriter)).To(Succeed())
+	DeferCleanup(func() {
+		dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: targetName, Namespace: targetNamespace}}
+		_ = targetClient.Delete(context.Background(), dep)
+	})
+}
+
+// fleetKeycloakNodePort is this suite's Keycloak NodePort (DD-TEST-001, same
+// dedicated port as the FMC E2E lane -- see keycloakHostPortDemo in
+// test/infrastructure/fleet_e2e.go, which is unexported and so can't be
+// referenced directly from this package).
+const fleetKeycloakNodePort = 30557
+
+// fleetAuthenticatedHTTPClient fetches a Keycloak client_credentials token
+// (kubernaut-fleet-read / kube-mcp-server-audience -- the same identity
+// FMC, SP, and every other fleet-aware production service use) and returns
+// an *http.Client that injects it as "Authorization: Bearer <token>" on
+// every outbound request.
+//
+// Required because kube-mcp-server's RequireOAuth resource-server check
+// gates the mcp-gateway broker's *per-client* upstream session negotiation
+// on tools/call (not just its own tools/list discovery, which the broker
+// serves from its aggregated catalog using its own static
+// BrokerCredentialToken and therefore succeeds even for an unauthenticated
+// caller). A raw mcpclient.New(ctx, mcpGatewayURL) with no WithHTTPClient
+// option sends no Authorization header at all, so any tools/call it makes
+// fails with "rejected by transport: sending \"tools/call\": Internal Server
+// Error" (jsonrpc2 -32005) once the target registration is backed by the
+// RequireOAuth-protected remote kube-mcp-server (AllRegistrationsRemote) --
+// confirmed by reproducing the exact broker/router error via a raw MCP
+// tools/call through mcp-gateway-istio with and without a client-supplied
+// token (2026-07-04 RCA). The token has a 3600s lifespan
+// (keycloak-realm-demo.json accessTokenLifespan) -- comfortably longer than
+// any single test or this suite's ~20 minute runtime -- so fetching once per
+// client construction (no refresh) is sufficient; mirrors
+// probeAuthenticatedResourcesList's bearerTokenTransport in
+// test/infrastructure/fleet_e2e.go, which proved the same pattern during
+// SynchronizedBeforeSuite's readiness probe.
+func fleetAuthenticatedHTTPClient() (*http.Client, error) {
+	cfg := infrastructure.DefaultKeycloakFleetReadConfig(fleetKeycloakNodePort, kubeconfigPath)
+	cfg.Scopes = []string{"kube-mcp-server-audience"}
+	token, err := infrastructure.GetKeycloakClientCredentialsToken(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("acquire Keycloak client_credentials token: %w", err)
+	}
+	tlsTransport, err := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("load Fleet MCP Gateway CA: %w", err)
+	}
+	return &http.Client{Transport: testauth.NewStaticTokenTransportWithBase(token, tlsTransport)}, nil
+}
+
+// newFleetMCPClient creates an MCP client for the remote-cluster registration,
+// preserving the default used by existing spoke-focused scenarios.
+func newFleetMCPClient(ctx context.Context) (*mcpclient.Client, error) {
+	return newFleetMCPClientForCluster(ctx, "remote-cluster")
+}
+
+// newFleetMCPClientForCluster creates an authenticated MCP client with an
+// auto-discovered tool prefix for a registered fleet cluster. This suite runs
+// EAIGW, whose "{clusterID}__" naming convention derives the prefix from the
+// Backend name; DiscoverToolPrefix is gateway-agnostic and also works against
+// Kuadrant's admin-set spec.prefix in the standalone FMC E2E lane.
+//
+// Retries up to 90s to handle broker synchronization delay, then warms the new
+// session because kube-mcp-server negotiates its upstream connection lazily.
+func newFleetMCPClientForCluster(ctx context.Context, clusterID string) (*mcpclient.Client, error) {
+	if clusterID == "" {
+		return nil, fmt.Errorf("cluster ID is required for a fleet MCP client")
+	}
+
+	const (
+		maxRetries    = 18
+		retryInterval = 5 * time.Second
+	)
+
+	authClient, err := fleetAuthenticatedHTTPClient()
+	if err != nil {
+		return nil, fmt.Errorf("build authenticated MCP HTTP client for %q: %w", clusterID, err)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		c, err := mcpclient.New(ctx, mcpGatewayURL, mcpclient.WithHTTPClient(authClient))
+		if err != nil {
+			lastErr = fmt.Errorf("connect to MCP gateway (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		prefix, err := mcpclient.DiscoverToolPrefix(ctx, c.Session(), clusterID)
+		if err != nil {
+			c.Close()
+			lastErr = fmt.Errorf("discover tool prefix for %q (attempt %d/%d): %w", clusterID, attempt+1, maxRetries+1, err)
+			if attempt < maxRetries {
+				GinkgoWriter.Printf("  Waiting for broker sync (attempt %d/%d): %v\n", attempt+1, maxRetries+1, err)
+				time.Sleep(retryInterval)
+				continue
+			}
+			return nil, lastErr
+		}
+		c.Close()
+
+		finalClient, err := mcpclient.New(ctx, mcpGatewayURL, mcpclient.WithClusterID(clusterID), mcpclient.WithToolPrefix(prefix), mcpclient.WithHTTPClient(authClient))
+		if err != nil {
+			lastErr = fmt.Errorf("create final MCP client for %q (attempt %d/%d): %w", clusterID, attempt+1, maxRetries+1, err)
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		// warmUpFleetMCPSession's own probeAuthenticatedResourcesList (mirrored
+		// below) proved the *broker's* route/AuthPolicy had converged once,
+		// globally, during SynchronizedBeforeSuite (WaitForFleetReady). It did
+		// not prove that THIS brand-new session (the one just created above)
+		// can complete its own first real call: kube-mcp-server negotiates a
+		// session with the remote cluster lazily, on first use, per client --
+		// see mcp-gateway broker logs from a 2026-07-04 CI run, where 7 specs
+		// across 12 parallel processes all opened their first fresh session
+		// within the same ~150ms window right after SynchronizedBeforeSuite
+		// returned, and several got "failed to create client: transport
+		// error: authorization required" even though the readiness probe's
+		// own (single, earlier, non-concurrent) session had already
+		// succeeded. Absorb that thundering-herd race here, once per test
+		// client, instead of leaving every call site to retry independently.
+		if err := warmUpFleetMCPSession(ctx, finalClient); err != nil {
+			finalClient.Close()
+			lastErr = fmt.Errorf("warm up MCP session for %q (attempt %d/%d): %w", clusterID, attempt+1, maxRetries+1, err)
+			GinkgoWriter.Printf("  Waiting for broker session warm-up (attempt %d/%d): %v\n", attempt+1, maxRetries+1, err)
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		return finalClient, nil
+	}
+	return nil, fmt.Errorf("broker sync timeout after %d attempts: %w", maxRetries+1, lastErr)
+}
+
+// warmUpFleetMCPSession performs one cheap, real resources_list call
+// (Pods, cluster-wide) on a freshly created client to force kube-mcp-server's
+// lazy per-session negotiation with the remote cluster to complete before the
+// caller's actual test assertions run. Retries internally for up to 15s --
+// the race window observed in CI closed within ~1s once the burst of
+// concurrent session negotiations settled, so this budget is deliberately
+// short relative to newFleetMCPClient's own 90s broker-sync retry loop.
+func warmUpFleetMCPSession(ctx context.Context, c *mcpclient.Client) error {
+	deadline := time.Now().Add(15 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "PodList"})
+		if err := c.List(ctx, list); err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("session warm-up did not succeed within 15s: %w", lastErr)
+}
+
+func TestFleetE2E(t *testing.T) {
+	if os.Getenv("FLEET_E2E") != trueFixture {
+		t.Skip("FLEET_E2E=true required for fleet E2E tests")
+	}
+	// Configure controller-runtime logging before Ginkgo starts parallel
+	// workers. SynchronizedBeforeSuite's first closure runs only in process 1.
+	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Fleet E2E Suite (Issue #54)")
+}
+
+var _ = SynchronizedBeforeSuite(
+	func() []byte {
+		By("Setting up isolated kubeconfig path (per TESTING_GUIDELINES.md)")
+		homeDir, err := os.UserHomeDir()
+		Expect(err).ToNot(HaveOccurred())
+		tempKubeconfigPath := fmt.Sprintf("%s/.kube/%s-config", homeDir, clusterName)
+		GinkgoWriter.Printf("Using isolated kubeconfig: %s\n", tempKubeconfigPath)
+
+		if os.Getenv("FLEET_E2E_REUSE_CLUSTER") == trueFixture {
+			GinkgoWriter.Println("⚡ FLEET_E2E_REUSE_CLUSTER=true — skipping infrastructure setup, reusing existing cluster")
+
+			By("Retrieving existing ServiceAccount tokens")
+			ctx := context.Background()
+			token, tokenErr := infrastructure.GetServiceAccountToken(ctx, namespace, "fleet-e2e-sa", tempKubeconfigPath)
+			Expect(tokenErr).ToNot(HaveOccurred(), "fleet-e2e-sa must exist in reused cluster")
+			gatewayToken, gwErr := infrastructure.GetServiceAccountToken(ctx, namespace, "fleet-gateway-sa", tempKubeconfigPath)
+			Expect(gwErr).ToNot(HaveOccurred(), "fleet-gateway-sa must exist in reused cluster")
+
+			Expect(os.Setenv("KUBECONFIG", tempKubeconfigPath)).To(Succeed())
+			GinkgoWriter.Println("Fleet E2E reuse-cluster ready (Process 1)")
+
+			// Deterministic path SetupFleetE2EInfrastructure/SetupRemoteClusterForFMC
+			// always uses -- the remote cluster from the prior run is still up.
+			reuseRemoteKcPath := fmt.Sprintf("%s/.kube/%s-remote-config", homeDir, clusterName)
+			return []byte(fmt.Sprintf("%s|%s|%s|%s|%s|%s", tempKubeconfigPath, token, "{}", gatewayToken, "{}", reuseRemoteKcPath))
+		}
+
+		By("Setting up Fleet E2E infrastructure (Issue #54)")
+		ctx := context.Background()
+		images, seededUUIDs, remediateNS, remoteKcPath, err := infrastructure.SetupFleetE2EInfrastructure(
+			ctx, clusterName, tempKubeconfigPath, GinkgoWriter,
+		)
+		Expect(err).ToNot(HaveOccurred(), "Fleet E2E infrastructure setup failed")
+		_ = images
+		var exposureOK bool
+		operatorExposure, exposureOK = infrastructure.OperatorExposureForKubeconfig(tempKubeconfigPath)
+		Expect(exposureOK).To(BeTrue(), "operator exposure evidence must be recorded")
+		Expect(infrastructure.OperatorExposureURL(operatorExposure, "gateway")).NotTo(BeEmpty(),
+			"operator gateway exposure adapter must be recorded")
+		GinkgoWriter.Printf("Fleet Gateway test URL: %s\n", fleetGatewayURL())
+
+		Expect(seededUUIDs).To(HaveKey("crashloop-config-fix-v1:production"))
+		Expect(seededUUIDs).To(HaveKey("oomkill-increase-memory-v1:production"))
+
+		By("Creating E2E ServiceAccount for DataStorage authentication (DD-AUTH-014)")
+		e2eSAName := "fleet-e2e-sa"
+		err = infrastructure.CreateE2EServiceAccountWithDataStorageAccess(
+			ctx, namespace, tempKubeconfigPath, e2eSAName, GinkgoWriter,
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create E2E ServiceAccount")
+
+		token, err := infrastructure.GetServiceAccountToken(ctx, namespace, e2eSAName, tempKubeconfigPath)
+		Expect(err).ToNot(HaveOccurred(), "Failed to get E2E ServiceAccount token")
+
+		By("Creating E2E ServiceAccount for Gateway authentication (BR-GATEWAY-036/037)")
+		gatewaySAName := "fleet-gateway-sa"
+		err = infrastructure.CreateE2EServiceAccountWithGatewayAccess(
+			ctx, namespace, tempKubeconfigPath, gatewaySAName, GinkgoWriter,
+		)
+		Expect(err).ToNot(HaveOccurred(), "Failed to create Gateway SA")
+		gatewayToken, err := infrastructure.GetServiceAccountToken(ctx, namespace, gatewaySAName, tempKubeconfigPath)
+		Expect(err).ToNot(HaveOccurred(), "Failed to get Gateway SA token")
+
+		By("Labeling kubernaut-system namespace as managed (primary + remote, for fleet E2E tests)")
+		for _, kc := range []string{tempKubeconfigPath, remoteKcPath} {
+			labelCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kc,
+				"label", "namespace", namespace, "kubernaut.ai/managed=true", "--overwrite")
+			labelOut, labelErr := labelCmd.CombinedOutput()
+			Expect(labelErr).ToNot(HaveOccurred(), "Failed to label namespace on %s: %s", kc, string(labelOut))
+		}
+
+		By("Creating per-test workload namespaces (dynamic, UUID-based; primary and remote clusters)")
+		for key, ns := range remediateNS {
+			for _, kc := range []string{tempKubeconfigPath, remoteKcPath} {
+				GinkgoWriter.Printf("  Creating namespace %s on %s (scenario: %s)\n", ns, kc, key)
+				createNSCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kc,
+					"create", "namespace", ns)
+				createNSOut, createNSErr := createNSCmd.CombinedOutput()
+				if createNSErr != nil && !strings.Contains(string(createNSOut), "already exists") {
+					Expect(createNSErr).ToNot(HaveOccurred(), "Failed to create namespace %s: %s", ns, string(createNSOut))
+				}
+				labelNSCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kc,
+					"label", "namespace", ns,
+					"kubernaut.ai/managed=true", "kubernaut.ai/environment=staging", "--overwrite")
+				labelNSOut, labelNSErr := labelNSCmd.CombinedOutput()
+				Expect(labelNSErr).ToNot(HaveOccurred(), "Failed to label namespace %s: %s", ns, string(labelNSOut))
+			}
+		}
+
+		By("Setting KUBECONFIG for all processes")
+		err = os.Setenv("KUBECONFIG", tempKubeconfigPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		GinkgoWriter.Println("Fleet E2E infrastructure ready (Process 1)")
+
+		uuidsJSON, jsonErr := json.Marshal(seededUUIDs)
+		Expect(jsonErr).ToNot(HaveOccurred())
+		remediateNSJSON, nsErr := json.Marshal(remediateNS)
+		Expect(nsErr).ToNot(HaveOccurred())
+		exposureJSON, exposureErr := json.Marshal(operatorExposure)
+		Expect(exposureErr).ToNot(HaveOccurred())
+		return []byte(fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", tempKubeconfigPath, token, string(uuidsJSON), gatewayToken, string(remediateNSJSON), remoteKcPath, string(exposureJSON)))
+	},
+	func(data []byte) {
+		parts := strings.SplitN(string(data), "|", 7)
+		kubeconfigPath = parts[0]
+		if len(parts) > 1 {
+			e2eAuthToken = parts[1]
+		}
+		if len(parts) > 2 {
+			Expect(json.Unmarshal([]byte(parts[2]), &workflowUUIDs)).To(Succeed(),
+				"Failed to decode workflow UUIDs from Process 1")
+		}
+		if len(parts) > 3 {
+			fpAuthToken = parts[3]
+		}
+		if len(parts) > 4 {
+			Expect(json.Unmarshal([]byte(parts[4]), &fpRemediateNS)).To(Succeed(),
+				"Failed to decode remediate namespaces from Process 1")
+		}
+		if len(parts) > 5 {
+			remoteKubeconfigPath = parts[5]
+		}
+		if len(parts) > 6 {
+			Expect(json.Unmarshal([]byte(parts[6]), &operatorExposure)).To(Succeed(),
+				"Failed to decode operator exposure evidence from Process 1")
+		}
+		Expect(infrastructure.OperatorExposureURL(operatorExposure, "gateway")).NotTo(BeEmpty(),
+			"operator gateway exposure adapter must be recorded")
+
+		ctx, cancel = context.WithCancel(context.TODO())
+
+		GinkgoWriter.Printf("Fleet E2E - Setup (Process %d)\n", GinkgoParallelProcess())
+
+		By("Setting KUBECONFIG")
+		err := os.Setenv("KUBECONFIG", kubeconfigPath)
+		Expect(err).ToNot(HaveOccurred())
+
+		tlsTransport, tlsTErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsTErr).ToNot(HaveOccurred(), "Failed to create TLS-aware transport (Issue #785)")
+		http.DefaultTransport = tlsTransport
+
+		By("Registering ALL CRD schemes")
+		Expect(remediationv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(signalprocessingv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(aianalysisv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(agentsessionv1.AddToScheme(scheme.Scheme)).To(Succeed()) // BR-KA-016: admitted history-selection result read-back
+		Expect(workflowexecutionv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(notificationv1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(eav1.AddToScheme(scheme.Scheme)).To(Succeed())
+		Expect(isv1alpha1.AddToScheme(scheme.Scheme)).To(Succeed())
+		// Issue #1511 / #1661 (DD-WORKFLOW-018): 13_cluster_scoped_workflow_targeting_test.go
+		// creates RemediationWorkflow objects directly via k8sClient.
+		Expect(rwv1alpha1.AddToScheme(scheme.Scheme)).To(Succeed())
+
+		By("Creating Kubernetes client")
+		cfg, err := config.GetConfig()
+		Expect(err).ToNot(HaveOccurred())
+
+		k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+
+		apiReader, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Creating remote cluster's Kubernetes client (DD-TEST-013: backs remote-cluster/prod-east/prod-west)")
+		remoteCfg, remoteCfgErr := clientcmd.BuildConfigFromFlags("", remoteKubeconfigPath)
+		Expect(remoteCfgErr).ToNot(HaveOccurred(), "failed to build remote cluster kubeconfig")
+		remoteK8sClient, err = client.New(remoteCfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Setting up authenticated DataStorage client (DD-TEST-001: port 30081, Issue #785: HTTPS)")
+		dataStorageURL := infrastructure.OperatorExposureURL(operatorExposure, "datastorage")
+		tlsBase, tlsCErr := infrastructure.NewTLSAwareTransport(kubeconfigPath)
+		Expect(tlsCErr).ToNot(HaveOccurred(), "TLS transport for DataStorage client")
+		saTransport := testauth.NewServiceAccountTransportWithBase(e2eAuthToken, tlsBase)
+		httpClient := &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: saTransport,
+		}
+		dataStorageClient, err = ogenclient.NewClient(dataStorageURL, ogenclient.WithClient(httpClient))
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Setting up API Frontend HTTP client (NodePort 30443, self-signed TLS)")
+		afBaseURL = infrastructure.OperatorExposureURL(operatorExposure, "apifrontend")
+		// A2A consent journeys can legitimately spend longer than the shared
+		// transport's 30s response-header budget while AF waits for the
+		// investigation/consent state transition. Keep CA verification, but let
+		// afA2AInvokeWithTimeout's per-request deadline govern the long turn.
+		afTransport, afTransportErr := infrastructure.NewTLSAwareTransportWithResponseHeaderTimeout(kubeconfigPath, 0)
+		Expect(afTransportErr).ToNot(HaveOccurred(), "TLS transport for long-running A2A turns")
+		afHTTPClient = &http.Client{
+			Transport: afTransport,
+			Timeout:   30 * time.Second,
+		}
+
+		GinkgoWriter.Printf("Fleet E2E Setup Complete - Process %d ready\n", GinkgoParallelProcess())
+	},
+)
+
+var _ = ReportAfterEach(func(report SpecReport) {
+	if report.Failed() {
+		anyTestFailed = true
+		infrastructure.MarkTestFailure(clusterName)
+	}
+})
+
+var _ = SynchronizedAfterSuite(
+	func() {
+		if cancel != nil {
+			cancel()
+		}
+	},
+	func() {
+		By("Cleaning up Fleet E2E environment")
+
+		setupFailed := k8sClient == nil
+		anyFailure := infrastructure.ResolveAnyFailure(clusterName, setupFailed, anyTestFailed, GinkgoWriter)
+		defer infrastructure.CleanupFailureMarker(clusterName)
+		preserveCluster := os.Getenv("PRESERVE_E2E_CLUSTER") == trueFixture || os.Getenv("KEEP_CLUSTER") == trueFixture || os.Getenv("FLEET_E2E_REUSE_CLUSTER") == trueFixture
+
+		remoteClusterName := clusterName + "-remote"
+
+		if preserveCluster {
+			GinkgoWriter.Println("CLUSTER PRESERVED FOR DEBUGGING")
+			GinkgoWriter.Printf("   To access: export KUBECONFIG=%s\n", kubeconfigPath)
+			GinkgoWriter.Printf("   To delete: kind delete cluster --name %s\n", clusterName)
+			GinkgoWriter.Printf("   Remote cluster (DD-TEST-013, backs remote-cluster/prod-east/prod-west): export KUBECONFIG=%s\n", remoteKubeconfigPath)
+			GinkgoWriter.Printf("   To delete: kind delete cluster --name %s\n", remoteClusterName)
+			return
+		}
+
+		if anyFailure && !setupFailed {
+			// DD-TESTING-003 / Issue #2036/#2194: production must-gather image
+			// as a local podman container on each cluster's own "kind" network,
+			// replacing the old in-process kubectl-log-scraping (MustGatherPodLogs).
+			// The primary cluster additionally needs the EAIGW gateway infra
+			// namespaces (envoy-gateway-system/envoy-ai-gateway-system/
+			// gateway-system, kubernaut#2309) that DeployFleetCoreInfra creates
+			// outside kubernaut-system/kubernaut-workflows -- must-gather's
+			// --extra-namespace flag reaches those. Default
+			// --namespace/--workflow-namespace already cover kubernaut-system/
+			// kubernaut-workflows on both clusters, including the remote's Job/
+			// Pod/Event diagnostics per Issue #1690 RCA follow-up (BR-FLEET-054
+			// can route the K8s Job to the remote cluster).
+			//
+			// #2036 rollout validation (2026-08-19 CI run): the package-level
+			// `ctx` is already canceled by the first SynchronizedAfterSuite
+			// closure's `cancel()` (runs on ALL processes, before this
+			// process-1-only closure) -- exec.CommandContext against an
+			// already-canceled context fails immediately with "context
+			// canceled" before podman ever runs. Use a fresh, independent
+			// context here so cluster teardown timing can never suppress
+			// diagnostic collection.
+			bgCtx := context.Background()
+			mustGatherImage, buildErr := infrastructure.BuildMustGatherImageForE2E(bgCtx, GinkgoWriter)
+			if buildErr != nil {
+				GinkgoWriter.Printf("Failed to build must-gather image (non-fatal, no diagnostics collected): %v\n", buildErr)
+			} else {
+				primaryOutputDir := filepath.Join("/tmp", "kubernaut-must-gather", "fleet", clusterName)
+				if err := infrastructure.RunMustGatherImage(bgCtx, infrastructure.RunMustGatherImageOptions{
+					ClusterName:     clusterName,
+					Image:           mustGatherImage,
+					OutputDir:       primaryOutputDir,
+					UsePodman:       true,
+					ExtraNamespaces: []string{"mcp-system", "gateway-system", "envoy-gateway-system", "envoy-ai-gateway-system"},
+				}, GinkgoWriter); err != nil {
+					GinkgoWriter.Printf("Failed to run must-gather image on primary cluster (non-fatal, no diagnostics collected): %v\n", err)
+				}
+
+				if remoteKubeconfigPath != "" {
+					remoteOutputDir := filepath.Join("/tmp", "kubernaut-must-gather", "fleet", remoteClusterName)
+					if err := infrastructure.RunMustGatherImage(bgCtx, infrastructure.RunMustGatherImageOptions{
+						ClusterName: remoteClusterName,
+						Image:       mustGatherImage,
+						OutputDir:   remoteOutputDir,
+						UsePodman:   true,
+					}, GinkgoWriter); err != nil {
+						GinkgoWriter.Printf("Failed to run must-gather image on remote cluster (non-fatal, no diagnostics collected): %v\n", err)
+					}
+				}
+			}
+		}
+
+		if !setupFailed {
+			infrastructure.CleanupFullPipelineTestResources(context.Background(), kubeconfigPath, GinkgoWriter)
+		}
+
+		if os.Getenv("E2E_COVERAGE") == trueFixture && !setupFailed {
+			for _, svc := range []struct{ service, deployment string }{
+				{"signalprocessing", "signalprocessing-controller"},
+				{"remediationorchestrator", "remediationorchestrator-controller"},
+				{"aianalysis", "aianalysis-controller"},
+				{"workflowexecution", "workflowexecution-controller"},
+				{"effectivenessmonitor", "effectivenessmonitor-controller"},
+			} {
+				if err := infrastructure.CollectE2EBinaryCoverage(infrastructure.E2ECoverageOptions{
+					ServiceName:    svc.service,
+					ClusterName:    clusterName,
+					DeploymentName: svc.deployment,
+					Namespace:      namespace,
+					KubeconfigPath: kubeconfigPath,
+				}, GinkgoWriter); err != nil {
+					GinkgoWriter.Printf("Coverage collection failed for %s (non-fatal): %v\n", svc.service, err)
+				}
+			}
+		}
+
+		By("Deleting Kind cluster")
+		if err := infrastructure.DeleteCluster(clusterName, "fleet", anyFailure, GinkgoWriter); err != nil {
+			GinkgoWriter.Printf("Warning: Failed to delete cluster: %v\n", err)
+		}
+
+		By("Deleting remote Kind cluster (DD-TEST-013)")
+		if err := infrastructure.TeardownRemoteClusterForFMC(remoteClusterName, remoteKubeconfigPath, "fleet", anyFailure, GinkgoWriter); err != nil {
+			GinkgoWriter.Printf("Warning: Failed to delete remote cluster: %v\n", err)
+		}
+
+		By("Removing isolated kubeconfig file")
+		if kubeconfigPath != "" {
+			defaultConfig := os.ExpandEnv("$HOME/.kube/config")
+			if kubeconfigPath != defaultConfig {
+				_ = os.Remove(kubeconfigPath)
+				GinkgoWriter.Printf("Removed kubeconfig: %s\n", kubeconfigPath)
+			}
+		}
+
+		By("Cleaning up built images")
+		if !infrastructure.IsRunningInCICD() {
+			pruneCmd := exec.Command("podman", "image", "prune", "-f")
+			_, _ = pruneCmd.CombinedOutput()
+		}
+
+		GinkgoWriter.Println("Fleet E2E cleanup complete")
+	},
+)

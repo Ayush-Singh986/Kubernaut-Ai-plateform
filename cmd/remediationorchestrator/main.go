@@ -1,0 +1,886 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/go-logr/zapr"
+	zaplog "go.uber.org/zap"
+	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationworkflowv1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
+	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	internalconfig "github.com/jordigilh/kubernaut/internal/config"
+	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
+	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	"github.com/jordigilh/kubernaut/internal/version"
+	"github.com/jordigilh/kubernaut/pkg/audit"
+	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/locking"
+	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	scope "github.com/jordigilh/kubernaut/pkg/shared/scope"
+	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	//+kubebuilder:scaffold:imports
+)
+
+var (
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
+)
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(remediationv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(signalprocessingv1.AddToScheme(scheme))
+	utilruntime.Must(aianalysisv1.AddToScheme(scheme))
+	utilruntime.Must(workflowexecutionv1.AddToScheme(scheme))
+	utilruntime.Must(notificationv1.AddToScheme(scheme))
+	utilruntime.Must(eav1.AddToScheme(scheme))                  // ADR-EM-001: EA CRD scheme for EA creation on terminal phases
+	utilruntime.Must(remediationworkflowv1.AddToScheme(scheme)) // Issue #643, #594: RW scheme for workflow name resolution + operator override
+	//+kubebuilder:scaffold:scheme
+}
+
+// loadRemediationOrchestratorConfig loads and validates the
+// RemediationOrchestrator config (ADR-030), applies the config-driven log
+// level (Issue #875), discovers the controller namespace for CRD watch
+// restriction (ADR-057), and builds the controller manager. Exits the
+// process on any failure, matching main()'s original fail-fast behavior.
+func loadRemediationOrchestratorConfig(configPath string, atomicLevel zaplog.AtomicLevel) (*config.Config, ctrl.Manager) {
+	setupLog.Info("Starting RemediationOrchestrator Controller",
+		"version", version.Version,
+		"gitCommit", version.GitCommit,
+		"buildDate", version.BuildDate,
+	)
+
+	// ========================================
+	// CONFIGURATION LOADING (ADR-030)
+	// ========================================
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		setupLog.Error(err, "Failed to load configuration -- aborting startup",
+			"configPath", configPath)
+		os.Exit(1)
+	}
+	if configPath != "" {
+		setupLog.Info("Configuration loaded successfully", "configPath", configPath)
+	} else {
+		setupLog.Info("No config file specified, using defaults")
+	}
+
+	// Issue #875: Apply config-driven log level
+	atomicLevel.SetLevel(cfg.Logging.ZapLevel())
+	setupLog.Info("Log level configured from config file", "level", cfg.Logging.Level)
+
+	// Validate configuration (ADR-030)
+	if err := cfg.Validate(); err != nil {
+		setupLog.Error(err, "Configuration validation failed")
+		os.Exit(1)
+	}
+
+	// ADR-057: Discover controller namespace for CRD watch restriction
+	controllerNS, err := scope.GetControllerNamespace()
+	if err != nil {
+		setupLog.Error(err, "unable to determine controller namespace")
+		os.Exit(1)
+	}
+
+	mgr, err := buildManager(cfg, controllerNS)
+	if err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	return cfg, mgr
+}
+
+// bootstrapAmbientCATrust injects the ambient CA trust bundle (Issue #2276)
+// from the resolved config's TLSCAFile field. Extracted from run() so it is
+// independently unit-testable, matching this package's existing pattern for
+// other startup-wiring steps (loadRemediationOrchestratorConfig).
+//
+// Callers MUST invoke this immediately after config load, before
+// setupRemediationOrchestratorControllers' DataStorage-backed audit store
+// client (the first outbound TLS call this process makes) --
+// x509.SystemCertPool() is sync.Once-cached process-wide, so injecting
+// after the first handshake has no effect (spike-verified, Issue #2276
+// preflight).
+func bootstrapAmbientCATrust(logger logr.Logger, cfg *config.Config) error {
+	return sharedtls.InjectAmbientCACerts(logger, cfg.TLSCAFile)
+}
+
+// setupRemediationOrchestratorControllers initializes the audit store
+// (DD-AUDIT-003, DD-API-001), metrics (DD-METRICS-001), the EA creator
+// (ADR-EM-001), the routing engine (DD-RO-002), the RemediationOrchestrator
+// reconciler, and the RemediationApprovalRequest audit controller
+// (BR-AUDIT-006). Returns the audit store (for the caller's graceful
+// shutdown flush) and the config-watcher stop function (for the caller to
+// defer). Exits the process on any failure, matching main()'s original
+// fail-fast behavior.
+func setupRemediationOrchestratorControllers(ctx context.Context, cfg *config.Config, mgr ctrl.Manager, configPath string, setupLog logr.Logger) (audit.AuditStore, func()) {
+	// ========================================
+	// AUDIT STORE INITIALIZATION (DD-AUDIT-003, DD-API-001)
+	// ========================================
+	auditStore, err := buildAuditStore(cfg) //nolint:contextcheck // background audit writer goroutine is fire-and-forget by design; not tied to any single request
+	if err != nil {
+		setupLog.Error(err, "Failed to create audit store")
+		os.Exit(1)
+	}
+	setupLog.Info("Audit store initialized",
+		"dataStorageURL", cfg.DataStorage.URL,
+		"bufferSize", cfg.DataStorage.Buffer.BufferSize,
+		"batchSize", cfg.DataStorage.Buffer.BatchSize,
+		"flushInterval", cfg.DataStorage.Buffer.FlushInterval,
+	)
+
+	// Log configuration
+	setupLog.Info("RemediationOrchestrator controller configuration",
+		"metricsAddr", cfg.Controller.MetricsAddr,
+		"healthProbeAddr", cfg.Controller.HealthProbeAddr,
+		"globalTimeout", cfg.Timeouts.Global,
+		"processingTimeout", cfg.Timeouts.Processing,
+		"analyzingTimeout", cfg.Timeouts.Analyzing,
+		"executingTimeout", cfg.Timeouts.Executing,
+		"dataStorageURL", cfg.DataStorage.URL,
+		"dryRun", cfg.DryRun,
+	)
+
+	// ========================================
+	// DD-METRICS-001: Initialize Metrics
+	// Per V1.0 Maturity Requirements: Metrics wired to controller via dependency injection
+	// ========================================
+	setupLog.Info("Initializing remediationorchestrator metrics (DD-METRICS-001)")
+	roMetrics := rometrics.NewMetrics()
+	setupLog.Info("RemediationOrchestrator metrics initialized and registered")
+
+	// ADR-EM-001: Create EA creator for EffectivenessAssessment CRD creation on terminal phases
+	eaCreator := creator.NewEffectivenessAssessmentCreator(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		roMetrics,
+		mgr.GetEventRecorderFor("remediationorchestrator-controller"),
+		cfg.EA.StabilizationWindow,
+	)
+	setupLog.Info("EffectivenessAssessment creator initialized (ADR-EM-001)",
+		"stabilizationWindow", cfg.EA.StabilizationWindow)
+
+	// ========================================
+	// ROUTING ENGINE INITIALIZATION (DD-RO-002, ADR-030)
+	// ADR-030: Routing thresholds from YAML config (not hardcoded)
+	// ========================================
+	routingEngine, err := buildRoutingEngine(cfg, mgr, setupLog)
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize routing engine")
+		os.Exit(1)
+	}
+
+	// Setup RemediationOrchestrator controller with audit store and comprehensive timeout config
+	// ADR-030: Timeouts from YAML config (not CLI flags)
+	roReconciler, fleetResilientClient, stopConfigWatcher, err := buildReconciler(ctx, reconcilerParams{
+		cfg:           cfg,
+		mgr:           mgr,
+		auditStore:    auditStore,
+		roMetrics:     roMetrics,
+		eaCreator:     eaCreator,
+		routingEngine: routingEngine,
+		configPath:    configPath,
+	}, setupLog)
+	if err != nil {
+		setupLog.Error(err, "Failed to build RemediationOrchestrator reconciler")
+		os.Exit(1)
+	}
+
+	// #1553 / ADR-068 / BR-INTEGRATION-065: fail closed on Fleet dependency
+	// unreachability via readyz (pod-wide), instead of the previous
+	// fail-open behavior of only logging an error.
+	stopConfigWatcher = setupFleetReadinessCheck(
+		ctx, mgr, routingEngine, fleetResilientClient, cfg, stopConfigWatcher, setupLog)
+
+	// #1985 / BR-AUDIT-005: fail closed on DataStorage unreachability via
+	// readyz (pod-wide), unconditionally.
+	stopConfigWatcher = setupDataStorageReadinessCheck(ctx, mgr, cfg, stopConfigWatcher, setupLog)
+
+	if err = roReconciler.SetupWithManager(mgr); err != nil { //nolint:contextcheck // SetupWithManager is controller-runtime's reconciler-registration contract (no ctx param) called once at startup
+		setupLog.Error(err, "unable to create controller", "controller", "RemediationOrchestrator")
+		os.Exit(1)
+	}
+
+	// REFACTOR: Setup RemediationApprovalRequest audit controller (BR-AUDIT-006)
+	// This controller watches RAR for status.Decision changes and emits audit events
+	// Enhanced with metrics for SOC 2 compliance tracking
+	setupLog.Info("Setting up RemediationApprovalRequest audit controller (BR-AUDIT-006)")
+	if err = controller.NewRARReconciler(
+		mgr.GetClient(),
+		mgr.GetAPIReader(), // DD-STATUS-001: Cache-bypassed reads for idempotency guard
+		mgr.GetScheme(),
+		auditStore,
+		roMetrics, // REFACTOR: Pass metrics for business value tracking
+	).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RemediationApprovalRequestAudit")
+		os.Exit(1)
+	}
+	setupLog.Info("RemediationApprovalRequest audit controller ready with metrics")
+
+	return auditStore, stopConfigWatcher
+}
+
+func main() {
+	// gocritic:exitAfterDefer — run() returns an exit code instead of calling
+	// os.Exit directly so deferred cleanup (stopConfigWatcher, stopHotReload)
+	// always runs.
+	os.Exit(run())
+}
+
+func run() int {
+	// ========================================
+	// ADR-030: Configuration via YAML file
+	// Single --config flag; all functional config in YAML ConfigMap
+	// ========================================
+	var configPath string
+	flag.StringVar(&configPath, "config", config.DefaultConfigPath, "Path to YAML configuration file (optional, falls back to defaults)")
+
+	flag.Parse()
+
+	// Issue #875: Bootstrap logger at INFO for config loading
+	atomicLevel := internalconfig.DefaultLoggingConfig().NewAtomicLevel()
+	ctrl.SetLogger(zap.New(zap.Level(atomicLevel)))
+
+	cfg, mgr := loadRemediationOrchestratorConfig(configPath, atomicLevel)
+
+	// Issue #2276: inject ambient CA trust before
+	// setupRemediationOrchestratorControllers' DataStorage-backed audit
+	// store client -- the first outbound TLS call this process makes.
+	if err := bootstrapAmbientCATrust(setupLog, cfg); err != nil {
+		setupLog.Error(err, "Failed to inject ambient CA trust")
+		return 1
+	}
+
+	// Issue #615/BR-FLEET-054: Signal context created early (mirrors EM's
+	// pattern, cmd/effectivenessmonitor/main.go) so buildReconciler's fleet
+	// MCP Gateway connection attempt respects graceful shutdown/cancellation
+	// instead of running against an unbounded context.Background().
+	ctx := ctrl.SetupSignalHandler()
+
+	auditStore, stopConfigWatcher := setupRemediationOrchestratorControllers(ctx, cfg, mgr, configPath, setupLog)
+	defer stopConfigWatcher()
+	//+kubebuilder:scaffold:builder
+
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up health check")
+		return 1
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up ready check")
+		return 1
+	}
+
+	setupLog.Info("starting manager")
+
+	// Issue #748/#756/#875: TLS security profile + CA-cert and log-level hot-reload watchers.
+	stopHotReload := wireTLSHotReload(ctx, cfg, configPath, atomicLevel, setupLog, auditStore)
+	defer stopHotReload()
+
+	if err := mgr.Start(ctx); err != nil {
+		setupLog.Error(err, "problem running manager")
+		return 1
+	}
+
+	// ========================================
+	// Graceful Shutdown: Flush Audit Events (DD-007)
+	// BR-STORAGE-001: Complete audit trail with no data loss
+	// ========================================
+	setupLog.Info("Shutting down remediation orchestrator, flushing remaining audit events")
+	if err := auditStore.Close(); err != nil {
+		setupLog.Error(err, "Failed to close audit store gracefully")
+		return 1
+	}
+	setupLog.Info("Audit store closed successfully, all events flushed")
+	return 0
+}
+
+// buildManager constructs the controller-runtime manager with the
+// namespace-restricted CRD caches (ADR-057) and metrics/health-probe/leader
+// election settings from cfg. Extracted from main()
+// (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0a) — pure code motion, no behavior
+// change.
+func buildManager(cfg *config.Config, controllerNS string) (ctrl.Manager, error) {
+	return ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme: scheme,
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&remediationv1alpha1.RemediationRequest{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&signalprocessingv1.SignalProcessing{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&aianalysisv1.AIAnalysis{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&workflowexecutionv1.WorkflowExecution{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&notificationv1.NotificationRequest{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&eav1.EffectivenessAssessment{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+				&remediationv1alpha1.RemediationApprovalRequest{}: {
+					Namespaces: map[string]cache.Config{
+						controllerNS: {},
+					},
+				},
+			},
+		},
+		Metrics: metricsserver.Options{
+			BindAddress: cfg.Controller.MetricsAddr,
+		},
+		HealthProbeBindAddress: cfg.Controller.HealthProbeAddr,
+		PprofBindAddress:       internalconfig.PprofBindAddress(cfg.Debug.PprofEnabled),
+		LeaderElection:         cfg.Controller.LeaderElection,
+		LeaderElectionID:       cfg.Controller.LeaderElectionID,
+	})
+}
+
+// buildAuditStore constructs the DataStorage-backed, buffered audit store
+// (DD-AUDIT-003, DD-API-001, ADR-038) used for fire-and-forget audit event
+// emission. Extracted from main() (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0a)
+// — pure code motion, no behavior change.
+func buildAuditStore(cfg *config.Config) (audit.AuditStore, error) {
+	// DD-API-001: Use OpenAPI client adapter (type-safe, contract-validated)
+	// ADR-030: Use DataStorage URL from YAML config (not CLI flag or env var)
+	dataStorageClient, err := audit.NewOpenAPIClientAdapter(cfg.DataStorage.URL, cfg.DataStorage.Timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create data storage client (url=%s): %w", cfg.DataStorage.URL, err)
+	}
+
+	// Create buffered audit store (fire-and-forget pattern, ADR-038)
+	// ADR-030: Use buffer config from YAML (not hardcoded RecommendedConfig)
+	auditConfig := audit.Config{
+		BufferSize:    cfg.DataStorage.Buffer.BufferSize,
+		BatchSize:     cfg.DataStorage.Buffer.BatchSize,
+		FlushInterval: cfg.DataStorage.Buffer.FlushInterval,
+		MaxRetries:    cfg.DataStorage.Buffer.MaxRetries,
+	}
+
+	// Create zap logger for audit store, then convert to logr.Logger via zapr adapter
+	// DD-005 v2.0: pkg/audit uses logr.Logger for unified logging interface
+	zapLogger, err := zaplog.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zap logger for audit store: %w", err)
+	}
+	auditLogger := zapr.NewLogger(zapLogger.Named("audit"))
+
+	auditStore, err := audit.NewBufferedStore(dataStorageClient, auditConfig, "remediation-orchestrator", auditLogger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create buffered audit store: %w", err)
+	}
+	return auditStore, nil
+}
+
+// buildRoutingEngine constructs the DD-RO-002 routing engine from YAML
+// config (ADR-030), including the ADR-068 federated scope checker and the
+// Issue #214 DataStorage history adapter used for ineffective-chain
+// detection. Extracted from main() (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0a)
+// — pure code motion, no behavior change.
+func buildRoutingEngine(cfg *config.Config, mgr ctrl.Manager, logger logr.Logger) (*routing.RoutingEngine, error) {
+	routingCfg := routing.Config{
+		ConsecutiveFailureThreshold:   cfg.Routing.ConsecutiveFailureThreshold,
+		ConsecutiveFailureCooldown:    int64(cfg.Routing.ConsecutiveFailureCooldown / time.Second),
+		RecentlyRemediatedCooldown:    int64(cfg.Routing.RecentlyRemediatedCooldown / time.Second),
+		ExponentialBackoffBase:        int64(cfg.Routing.ExponentialBackoffBase / time.Second),
+		ExponentialBackoffMax:         int64(cfg.Routing.ExponentialBackoffMax / time.Second),
+		ExponentialBackoffMaxExponent: cfg.Routing.ExponentialBackoffMaxExponent,
+		ScopeBackoffBase:              int64(cfg.Routing.ScopeBackoffBase / time.Second),
+		ScopeBackoffMax:               int64(cfg.Routing.ScopeBackoffMax / time.Second),
+		NoActionRequiredDelayHours:    cfg.Routing.NoActionRequiredDelayHours, // Issue #353
+		IneffectiveChainThreshold:     cfg.Routing.IneffectiveChainThreshold,
+		RecurrenceCountThreshold:      cfg.Routing.RecurrenceCountThreshold,
+		IneffectiveTimeWindow:         cfg.Routing.IneffectiveTimeWindow,
+	}
+	scopeMgr := scope.NewManager(mgr.GetClient())
+
+	// ADR-068: Federated scope checking via fleet.NewScopeChecker factory.
+	scopeCheckerInstance, err := fleet.NewScopeChecker(scopeMgr, cfg.Fleet, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create fleet scope checker: %w", err)
+	}
+	if cfg.Fleet.Enabled && cfg.Fleet.EffectiveEndpoint() != "" {
+		logger.Info("ADR-068: Federated scope checker enabled",
+			"backend", cfg.Fleet.Backend, "endpoint", cfg.Fleet.EffectiveEndpoint())
+	}
+
+	routingEngine := routing.NewRoutingEngine(mgr.GetClient(), mgr.GetAPIReader(), "", routingCfg, scopeCheckerInstance)
+
+	// Issue #214: Wire DataStorage history querier for ineffective chain detection.
+	dsHistoryAdapter, err := routing.NewDSHistoryAdapterFromConfig(cfg.DataStorage.URL, cfg.DataStorage.Timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create datastorage history adapter (issue #214, url=%s): %w",
+			cfg.DataStorage.URL, err)
+	}
+	routingEngine.SetDSClient(dsHistoryAdapter)
+
+	logger.Info("Routing engine initialized (DD-RO-002, ADR-030)",
+		"consecutiveFailureThreshold", cfg.Routing.ConsecutiveFailureThreshold,
+		"ineffectiveChainThreshold", cfg.Routing.IneffectiveChainThreshold,
+		"ineffectiveTimeWindow", cfg.Routing.IneffectiveTimeWindow,
+	)
+	return routingEngine, nil
+}
+
+// reconcilerParams groups buildReconciler's dependencies (Options pattern,
+// AGENTS.md's 8+-param rule) — mirrors mcpHandlerParams in
+// cmd/kubernautagent/main.go (Phase 2).
+type reconcilerParams struct {
+	cfg           *config.Config
+	mgr           ctrl.Manager
+	auditStore    audit.AuditStore
+	roMetrics     *rometrics.Metrics
+	eaCreator     *creator.EffectivenessAssessmentCreator
+	routingEngine *routing.RoutingEngine
+	configPath    string
+}
+
+// buildReconciler constructs the RemediationOrchestrator reconciler and
+// wires its remaining config-driven dependencies (workflow resolver, REST
+// mapper, async propagation, cluster identity, distributed lock manager,
+// fleet config, retention, dry-run, and — when a config file is provided
+// (DD-INFRA-001) — the reconciler's own hot-reload file watcher). Returns a
+// stop function for the config watcher (a no-op if none was started, the
+// caller must defer it) and the Fleet resilient client (nil if Fleet isn't
+// configured) so the caller can wire the #1553 readiness gate and close the
+// client on shutdown. Extracted from main() (GO-ANTIPATTERN-AUDIT-2026-07-01
+// Wave 0a) — pure code motion, no behavior change.
+func buildReconciler(ctx context.Context, p reconcilerParams, logger logr.Logger) (*controller.Reconciler, *mcpclient.ResilientClient, func(), error) {
+	noop := func() {}
+	cfg, mgr := p.cfg, p.mgr
+
+	roReconciler := controller.NewReconciler(controller.ReconcilerDeps{
+		Client:     mgr.GetClient(),
+		APIReader:  mgr.GetAPIReader(), // DD-STATUS-001: API reader for cache-bypassed status refetches
+		Scheme:     mgr.GetScheme(),
+		AuditStore: p.auditStore,
+		Recorder:   mgr.GetEventRecorderFor("remediationorchestrator-controller"), // V1.0 P1: EventRecorder for debugging
+		Metrics:    p.roMetrics,                                                   // V1.0 P0: Metrics for observability (DD-METRICS-001)
+		Timeouts: controller.TimeoutConfig{
+			Global:           cfg.Timeouts.Global,
+			Processing:       cfg.Timeouts.Processing,
+			Analyzing:        cfg.Timeouts.Analyzing,
+			Executing:        cfg.Timeouts.Executing,
+			AwaitingApproval: cfg.Timeouts.AwaitingApproval,
+			Verifying:        cfg.Timeouts.Verifying,
+		},
+		RoutingEngine: p.routingEngine, // DD-RO-002: Routing engine built from YAML config
+	}, p.eaCreator) // ADR-EM-001: EA creation on terminal phases
+
+	// DD-EM-002: Set REST mapper for pre-remediation hash Kind resolution
+	roReconciler.SetRESTMapper(mgr.GetRESTMapper())
+
+	// BR-FLEET-054: Wire fleet-aware target reads for CapturePreRemediationHash.
+	// Independent of the Backend/Endpoint scope checker wired into
+	// buildRoutingEngine above — this is the MCPGatewayEndpoint capability.
+	readerFactory, fleetResilientClient, err := buildFleetReaderFactory(ctx, mgr.GetClient(), cfg, logger)
+	if err != nil {
+		return nil, fleetResilientClient, noop, fmt.Errorf("fleet reader wiring: %w", err)
+	}
+	if readerFactory != nil {
+		roReconciler.SetReaderFactory(readerFactory)
+	}
+
+	// DD-EM-004 v2.0, Issue #253: Wire config-driven async propagation delays
+	roReconciler.SetAsyncPropagation(cfg.AsyncPropagation)
+	// BR-ORCH-037 AC-037-08, Issue #590: Wire self-resolved notification toggle
+	roReconciler.SetNotifySelfResolved(cfg.Notifications.NotifySelfResolved)
+
+	wireDistributedLockManager(roReconciler, mgr, logger)
+
+	// ADR-068: Wire fleet config for federated scope fallback path
+	roReconciler.SetFleetConfig(cfg.Fleet)
+	// #265: Wire CRD retention period for TTL enforcement
+	roReconciler.SetRetentionPeriod(cfg.Retention.Period)
+	// #712, #736: Wire dry-run mode configuration
+	if cfg.DryRun {
+		roReconciler.SetDryRun(cfg.DryRun, cfg.DryRunHoldPeriod)
+		logger.Info("Dry-run mode enabled: pipeline stops after AI analysis",
+			"holdPeriod", cfg.DryRunHoldPeriod)
+	}
+
+	// #835, DD-INFRA-001: Start config file watcher for hot-reload.
+	// Only enabled when a config file is explicitly provided (not defaults).
+	stop := startReconcilerConfigWatcher(roReconciler, p.configPath, noop, logger) //nolint:contextcheck // startReconcilerConfigWatcher starts a process-lifetime file watcher at startup; no parent request context exists yet
+
+	return roReconciler, fleetResilientClient, stop, nil
+}
+
+// fleetReadinessProbeInterval controls how often the Fleet readiness gate
+// re-probes its dependencies once started (mirrors cmd/gateway/main.go).
+const fleetReadinessProbeInterval = 15 * time.Second
+
+// wireFleetReadinessGate builds and starts the Fleet dependency readiness
+// gate (#1553, ADR-068, BR-INTEGRATION-065): once Fleet is enabled, RO's
+// pod-wide readyz must fail closed when the MCP Gateway or the
+// Backend/Endpoint scope-check backend becomes unreachable, instead of the
+// previous fail-open behavior of only logging an error. Returns nil when
+// Fleet is disabled or no probers could be constructed. The caller
+// registers the returned Gate's Check method via mgr.AddReadyzCheck and
+// must Stop() it on shutdown.
+func wireFleetReadinessGate(
+	ctx context.Context,
+	routingEngine *routing.RoutingEngine,
+	fleetResilientClient *mcpclient.ResilientClient,
+	cfg *config.Config,
+	logger logr.Logger,
+) *readiness.Gate {
+	if !cfg.Fleet.Enabled {
+		return nil
+	}
+
+	var probers []readiness.Prober
+	if fleetResilientClient != nil {
+		probers = append(probers, &readiness.MCPClientProber{Client: fleetResilientClient})
+	}
+	if fed, ok := routingEngine.ScopeChecker().(*fleet.FederatedScopeChecker); ok {
+		if pinger, ok := fed.Remote().(readiness.Pinger); ok {
+			probers = append(probers, &readiness.ScopeCheckerProber{Pinger: pinger})
+		}
+	}
+
+	if len(probers) == 0 {
+		logger.Info("Fleet is enabled but no readiness probers could be constructed " +
+			"(no MCP Gateway client and no federated scope-checker backend); readiness gate skipped")
+		return nil
+	}
+
+	gate := readiness.NewGate(fleetReadinessProbeInterval, logger.WithName("fleet-readiness"), probers...)
+	gate.Start(ctx)
+	logger.Info("Fleet readiness gate started", "prober_count", len(probers), "ready", gate.Ready())
+	return gate
+}
+
+// setupFleetReadinessCheck wires the #1553 Fleet readiness gate into mgr's
+// readyz surface and composes its cleanup into stop. Extracted from
+// setupRemediationOrchestratorControllers to keep it under the funlen gate
+// (Issue #1532).
+func setupFleetReadinessCheck(
+	ctx context.Context,
+	mgr ctrl.Manager,
+	routingEngine *routing.RoutingEngine,
+	fleetResilientClient *mcpclient.ResilientClient,
+	cfg *config.Config,
+	stop func(),
+	logger logr.Logger,
+) func() {
+	fleetGate := wireFleetReadinessGate(ctx, routingEngine, fleetResilientClient, cfg, logger)
+	if fleetGate != nil {
+		if err := mgr.AddReadyzCheck("fleet", fleetGate.Check); err != nil {
+			logger.Error(err, "unable to register fleet readiness check")
+			os.Exit(1)
+		}
+	}
+	return wrapStopWithFleetCleanup(stop, fleetGate, fleetResilientClient, logger)
+}
+
+// wireDataStorageReadinessGate builds and starts the DataStorage
+// dependency readiness gate (#1985, BR-AUDIT-005 v2.0): RO's pod-wide
+// readyz must fail closed when DataStorage is unreachable, closing the
+// audit-loss window where a pod accepts traffic (and generates audit
+// events) before DataStorage is confirmed reachable. Unlike
+// wireFleetReadinessGate, this is unconditional -- always wired, never
+// nil -- since every service writes audit. The caller registers the
+// returned Gate's Check method via mgr.AddReadyzCheck and must Stop() it
+// on shutdown. Delegates gate construction to audit.NewReadinessGate
+// (REFACTOR, shared across all 10 services).
+func wireDataStorageReadinessGate(ctx context.Context, cfg *config.Config, logger logr.Logger) *readiness.Gate {
+	return audit.NewReadinessGate(ctx, cfg.DataStorage.HealthURL, logger)
+}
+
+// setupDataStorageReadinessCheck wires the #1985 DataStorage readiness
+// gate into mgr's readyz surface and composes its cleanup into stop.
+// Unconditional (unlike setupFleetReadinessCheck): always registers the
+// check and always wraps stop with the gate's Stop().
+func setupDataStorageReadinessCheck(
+	ctx context.Context,
+	mgr ctrl.Manager,
+	cfg *config.Config,
+	stop func(),
+	logger logr.Logger,
+) func() {
+	dsGate := wireDataStorageReadinessGate(ctx, cfg, logger)
+	if err := mgr.AddReadyzCheck("datastorage", dsGate.Check); err != nil {
+		logger.Error(err, "unable to register datastorage readiness check")
+		os.Exit(1)
+	}
+	return func() {
+		stop()
+		dsGate.Stop()
+	}
+}
+
+// wrapStopWithFleetCleanup composes stop with closing the Fleet resilient
+// client and stopping the readiness gate (#1553), both of which are no-ops
+// when Fleet isn't enabled (nil arguments).
+func wrapStopWithFleetCleanup(
+	stop func(),
+	fleetGate *readiness.Gate,
+	fleetResilientClient *mcpclient.ResilientClient,
+	logger logr.Logger,
+) func() {
+	if fleetGate == nil && fleetResilientClient == nil {
+		return stop
+	}
+	return func() {
+		stop()
+		if fleetGate != nil {
+			fleetGate.Stop()
+		}
+		if fleetResilientClient != nil {
+			logger.Info("Closing fleet MCP Gateway connection")
+			if err := fleetResilientClient.Close(); err != nil {
+				logger.Error(err, "failed to close fleet MCP client gracefully")
+			}
+		}
+	}
+}
+
+// wireDistributedLockManager configures the BR-ORCH-025 distributed lock
+// manager for WFE creation safety, using POD_NAME as the holder ID for
+// lease ownership tracking. Distributed locking is disabled (single-replica
+// mode) when POD_NAME is unset.
+func wireDistributedLockManager(roReconciler *controller.Reconciler, mgr ctrl.Manager, logger logr.Logger) {
+	podName := os.Getenv("POD_NAME")
+	if podName == "" {
+		logger.Info("POD_NAME not set, distributed locking disabled (single-replica mode)")
+		return
+	}
+
+	controllerNS := os.Getenv("KUBERNAUT_CONTROLLER_NAMESPACE")
+	if controllerNS == "" {
+		controllerNS = "kubernaut-system"
+	}
+	lockMgr := locking.NewDistributedLockManager(mgr.GetClient(), controllerNS, podName)
+	roReconciler.SetLockManager(lockMgr)
+	logger.Info("Distributed lock manager configured", "holderID", podName, "namespace", controllerNS)
+}
+
+// startReconcilerConfigWatcher starts the #835/DD-INFRA-001 config file
+// watcher for reconciler hot-reload, only when a config file is explicitly
+// provided (not defaults). Returns noop when no watcher was started or
+// startup failed.
+func startReconcilerConfigWatcher(roReconciler *controller.Reconciler, configPath string, noop func(), logger logr.Logger) func() {
+	if configPath == "" {
+		return noop
+	}
+
+	reloadCallback := controller.NewReloadCallback(roReconciler, logger)
+	configWatcher, watchErr := hotreload.NewFileWatcher(configPath, reloadCallback, logger)
+	if watchErr != nil {
+		logger.Error(watchErr, "Failed to create config file watcher, hot-reload disabled")
+		return noop
+	}
+
+	if startErr := configWatcher.Start(context.Background()); startErr != nil {
+		logger.Error(startErr, "Failed to start config file watcher, hot-reload disabled")
+		return noop
+	}
+
+	logger.Info("Config hot-reload enabled (DD-INFRA-001)", "watchPath", configPath)
+	return configWatcher.Stop
+}
+
+// buildFleetReaderFactory wires BR-FLEET-054 multi-cluster target reads when
+// fleet federation is enabled: connects to the MCP Gateway and returns a
+// fleet.ReaderFactory for Reconciler.SetReaderFactory. Without this wiring,
+// readerForHash(ctx, clusterID) silently falls back to the local hub
+// cluster reader (config_accessors.go:71-76), so CapturePreRemediationHash
+// computes the pre-remediation resource fingerprint against the wrong
+// cluster for fleet-routed RemediationRequests. This is independent of the
+// Backend/Endpoint federated scope checker wired via fleet.NewScopeChecker
+// in buildRoutingEngine — RO needs both capabilities (see ADR-068). A
+// connectivity failure degrades gracefully to hub-only mode (mirrors GW's
+// registerAdapters and EM's buildFleetReaderFactory contracts) rather than
+// blocking RO startup. localClient is pre-built by the caller (independently
+// testable with fakes). The returned *mcpclient.ResilientClient is non-nil
+// whenever the reader factory is wired, so the caller can close it on
+// graceful shutdown.
+//
+//nolint:unparam // error is always nil here (connectivity failures degrade gracefully by design, per the doc comment above); signature intentionally mirrors EffectivenessMonitor's buildFleetReaderFactory (cmd/effectivenessmonitor/main.go) for cross-service consistency (Issue #1546 Tier 4)
+func buildFleetReaderFactory(ctx context.Context, localClient client.Client, cfg *config.Config, logger logr.Logger) (fleet.ReaderFactory, *mcpclient.ResilientClient, error) {
+	if !cfg.Fleet.Enabled || cfg.Fleet.MCPGatewayEndpoint == "" {
+		return nil, nil, nil
+	}
+
+	fleetLog := logger.WithName("fleet-mcp")
+	connectCfg := mcpclient.ConnectConfig{
+		Endpoint:            cfg.Fleet.MCPGatewayEndpoint,
+		MCPGatewayTLSCAFile: cfg.Fleet.MCPGatewayTLSCAFile,
+		OAuth2:              cfg.Fleet.OAuth2,
+		Resilience:          cfg.Fleet.Resilience,
+	}
+	if cfg.Fleet.OAuth2.Enabled {
+		connectCfg.CredentialsBasePath = "/etc/remediationorchestrator/fleet-oauth2"
+		if cfg.Fleet.OAuth2.CredentialsSecretRef != "" {
+			connectCfg.CredentialsBasePath = "/etc/remediationorchestrator/" + cfg.Fleet.OAuth2.CredentialsSecretRef
+		}
+	}
+
+	// #1553/#2315: keep (don't discard) the client and always build the
+	// reader factory from its SessionProvider, even when the initial
+	// connect attempt fails — the fleet readiness gate attaches an
+	// MCPClientProber that keeps retrying in the background, and once it
+	// reconnects, remote pre-remediation hash reads self-heal
+	// automatically instead of staying disabled until a pod restart.
+	mcpFleetClient, err := mcpclient.Connect(ctx, connectCfg, fleetLog) //nolint:contextcheck // Connect's internal reload/backoff loops are intentionally independent of any single request context
+	if err != nil {
+		logger.Error(err, "Fleet MCP Gateway connection failed at startup; readiness will report NotReady "+
+			"and keep retrying in the background; remote pre-remediation hash reads will become available "+
+			"automatically once the connection is established (self-healing, issue #2315)",
+			"endpoint", cfg.Fleet.MCPGatewayEndpoint)
+	} else {
+		logger.Info("Fleet MCP Gateway connected, remote pre-remediation hash reads enabled",
+			"endpoint", cfg.Fleet.MCPGatewayEndpoint, "gatewayType", cfg.Fleet.MCPGatewayType)
+	}
+
+	readerFactory := mcpclient.NewMCPReaderFactoryWithProvider(localClient, mcpFleetClient.SessionProvider(), mcpFleetClient.Reconnect)
+	return readerFactory, mcpFleetClient, nil
+}
+
+// wireTLSHotReload sets the initial TLS security profile (Issue #748) and
+// starts the CA-cert (Issue #756) and log-level (Issue #875) hot-reload file
+// watchers. Returns a combined stop function the caller should defer.
+// Extracted from main() (GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 0a) — pure
+// code motion, no behavior change.
+func wireTLSHotReload(
+	ctx context.Context,
+	cfg *config.Config,
+	configPath string,
+	atomicLevel zaplog.AtomicLevel,
+	logger logr.Logger,
+	auditStore audit.AuditStore,
+) func() {
+	// Issue #748: Load OCP TLS security profile from config before any TLS setup
+	if err := sharedtls.SetDefaultSecurityProfileFromConfig(cfg.TLSProfile); err != nil {
+		logger.Error(err, "Invalid TLS security profile in config, using default TLS 1.2")
+	} else if cfg.TLSProfile != "" {
+		logger.Info("TLS security profile active", "profile", cfg.TLSProfile)
+	}
+
+	stopFns := make([]func(), 0, 2)
+
+	// Issue #756: Start CA file watcher for client-side TLS hot-reload.
+	// GAP-11 (Issue #2285): audit every CA-cert hot-reload attempt.
+	roAuditManager := roaudit.NewManager(roaudit.ServiceName)
+	caWatcher, caWatchErr := sharedtls.StartCAFileWatcher(ctx, logger, func(reloadErr error) {
+		recordRemediationOrchestratorConfigReload(ctx, roAuditManager, auditStore, reloadErr, logger)
+	})
+	if caWatchErr != nil {
+		logger.Error(caWatchErr, "Failed to start CA file watcher")
+		os.Exit(1)
+	}
+	if caWatcher != nil {
+		stopFns = append(stopFns, caWatcher.Stop)
+	}
+
+	// Issue #875: Log level hot-reload via FileWatcher
+	logLevelWatcher, logWatchErr := hotreload.NewFileWatcher(
+		configPath,
+		func(newContent string) error {
+			var partial struct {
+				Logging internalconfig.LoggingConfig `yaml:"logging"`
+			}
+			if err := yaml.Unmarshal([]byte(newContent), &partial); err != nil {
+				return fmt.Errorf("failed to parse config for log level reload: %w", err)
+			}
+			return internalconfig.ParseAndSetLevel(atomicLevel, partial.Logging.Level)
+		},
+		logger.WithName("log-level-watcher"),
+	)
+	if logWatchErr != nil {
+		logger.Error(logWatchErr, "Failed to create log level file watcher")
+	} else {
+		if err := logLevelWatcher.Start(ctx); err != nil {
+			logger.Info("Log level file watcher failed to start", "error", err)
+		} else {
+			logger.Info("Log level hot-reload watcher started", "path", configPath)
+			stopFns = append(stopFns, logLevelWatcher.Stop)
+		}
+	}
+
+	return func() {
+		for _, stop := range stopFns {
+			stop()
+		}
+	}
+}
+
+// recordRemediationOrchestratorConfigReload records a CA-cert hot-reload
+// outcome (GAP-11, Issue #2285) via a dedicated Manager instance, mirroring
+// Gateway's shipped EmitConfigReloadAudit reference implementation.
+// Extracted so the onReload closure passed to StartCAFileWatcher stays a
+// one-liner and this logic is independently unit-testable.
+func recordRemediationOrchestratorConfigReload(ctx context.Context, mgr *roaudit.Manager, auditStore audit.AuditStore, reloadErr error, logger logr.Logger) {
+	if auditStore == nil {
+		return
+	}
+	var event *api.AuditEventRequest
+	if reloadErr != nil {
+		event = mgr.BuildConfigRejectedEvent("ca_cert", reloadErr)
+	} else {
+		event = mgr.BuildConfigReloadedEvent("ca_cert")
+	}
+	if err := auditStore.StoreAudit(ctx, event); err != nil {
+		logger.Error(err, "Failed to store config reload audit event", "component", "ca_cert")
+	}
+}

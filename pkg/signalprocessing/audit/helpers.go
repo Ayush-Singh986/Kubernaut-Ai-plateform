@@ -1,0 +1,163 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package audit
+
+import (
+	"strings"
+
+	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+)
+
+// Enum conversion helpers for SignalProcessing audit payloads
+
+func toSignalProcessingAuditPayloadPhase(value string) api.SignalProcessingAuditPayloadPhase {
+	switch value {
+	case "Pending":
+		return api.SignalProcessingAuditPayloadPhasePending
+	case "Enriching":
+		return api.SignalProcessingAuditPayloadPhaseEnriching
+	case "Classifying":
+		return api.SignalProcessingAuditPayloadPhaseClassifying
+	case "Categorizing":
+		return api.SignalProcessingAuditPayloadPhaseCategorizing
+	case "Completed":
+		return api.SignalProcessingAuditPayloadPhaseCompleted
+	case "Failed":
+		return api.SignalProcessingAuditPayloadPhaseFailed
+	default:
+		return ""
+	}
+}
+
+func toSignalProcessingAuditPayloadSeverity(value string) api.SignalProcessingAuditPayloadSeverity {
+	switch value {
+	case signalprocessingv1alpha1.SeverityCritical:
+		return api.SignalProcessingAuditPayloadSeverityCritical
+	case signalprocessingv1alpha1.SeverityHigh:
+		return api.SignalProcessingAuditPayloadSeverityHigh
+	case signalprocessingv1alpha1.SeverityWarning:
+		return api.SignalProcessingAuditPayloadSeverityWarning
+	case signalprocessingv1alpha1.SeverityInfo:
+		return api.SignalProcessingAuditPayloadSeverityInfo
+	case signalprocessingv1alpha1.SeverityUnknown:
+		return api.SignalProcessingAuditPayloadSeverityUnknown
+	default:
+		return api.SignalProcessingAuditPayloadSeverityUnknown // DD-SEVERITY-001 v1.1 fallback
+	}
+}
+
+// DD-SEVERITY-001 v1.1: Converter for normalized severity from Rego policy
+func toSignalProcessingAuditPayloadNormalizedSeverity(value string) api.SignalProcessingAuditPayloadNormalizedSeverity {
+	switch value {
+	case signalprocessingv1alpha1.SeverityCritical:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityCritical
+	case signalprocessingv1alpha1.SeverityHigh:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityHigh
+	case signalprocessingv1alpha1.SeverityWarning:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityWarning
+	case signalprocessingv1alpha1.SeverityInfo:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityInfo
+	case signalprocessingv1alpha1.SeverityUnknown:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityUnknown
+	default:
+		return api.SignalProcessingAuditPayloadNormalizedSeverityUnknown // DD-SEVERITY-001 v1.1 fallback
+	}
+}
+
+func toSignalProcessingAuditPayloadEnvironment(value string) api.SignalProcessingAuditPayloadEnvironment {
+	switch strings.ToLower(value) {
+	case "production":
+		return api.SignalProcessingAuditPayloadEnvironmentProduction
+	case "staging":
+		return api.SignalProcessingAuditPayloadEnvironmentStaging
+	case "development":
+		return api.SignalProcessingAuditPayloadEnvironmentDevelopment
+	default:
+		return ""
+	}
+}
+
+func toSignalProcessingAuditPayloadEnvironmentSource(value string) api.SignalProcessingAuditPayloadEnvironmentSource {
+	switch value {
+	case "rego":
+		return api.SignalProcessingAuditPayloadEnvironmentSourceRego
+	case "labels":
+		return api.SignalProcessingAuditPayloadEnvironmentSourceLabels
+	case "default":
+		return api.SignalProcessingAuditPayloadEnvironmentSourceDefault
+	default:
+		return ""
+	}
+}
+
+func toSignalProcessingAuditPayloadPriority(value string) api.SignalProcessingAuditPayloadPriority {
+	switch value {
+	case "P0":
+		return api.SignalProcessingAuditPayloadPriorityP0
+	case "P1":
+		return api.SignalProcessingAuditPayloadPriorityP1
+	case "P2":
+		return api.SignalProcessingAuditPayloadPriorityP2
+	case "P3":
+		return api.SignalProcessingAuditPayloadPriorityP3
+	case "P4":
+		return api.SignalProcessingAuditPayloadPriorityP4
+	default:
+		return ""
+	}
+}
+
+func toSignalProcessingAuditPayloadPrioritySource(value string) api.SignalProcessingAuditPayloadPrioritySource {
+	switch value {
+	case "rego":
+		return api.SignalProcessingAuditPayloadPrioritySourceRego
+	case "severity":
+		return api.SignalProcessingAuditPayloadPrioritySourceSeverity
+	case "default":
+		return api.SignalProcessingAuditPayloadPrioritySourceDefault
+	default:
+		return ""
+	}
+}
+
+// BR-SP-106: Signal mode conversion for audit payloads
+func toSignalProcessingAuditPayloadSignalMode(value string) api.SignalProcessingAuditPayloadSignalMode {
+	switch value {
+	case signalprocessingv1alpha1.SignalModeReactive:
+		return api.SignalProcessingAuditPayloadSignalModeReactive
+	case signalprocessingv1alpha1.SignalModeProactive:
+		return api.SignalProcessingAuditPayloadSignalModeProactive
+	default:
+		return api.SignalProcessingAuditPayloadSignalModeReactive // Default to reactive
+	}
+}
+
+func toSignalProcessingAuditPayloadCriticality(value string) api.SignalProcessingAuditPayloadCriticality {
+	switch strings.ToLower(value) {
+	case "critical":
+		return api.SignalProcessingAuditPayloadCriticalityCritical
+	case "high":
+		return api.SignalProcessingAuditPayloadCriticalityHigh
+	case "warning":
+		return api.SignalProcessingAuditPayloadCriticalityWarning
+	case "low":
+		return api.SignalProcessingAuditPayloadCriticalityLow
+	default:
+		return ""
+	}
+}

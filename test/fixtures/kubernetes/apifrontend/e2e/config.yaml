@@ -1,0 +1,130 @@
+server:
+  port: 8443
+  # 50 (was 5): trackSSEConnection wraps every /a2a/invoke, /mcp, and
+  # /a2a/status request (not just SSE-Accept ones), so with a cap this low
+  # ANY concurrent A2A/MCP call from another parallel Ginkgo E2E process
+  # transiently consumes a slot -- causing TC-E2E-SSE-CAP-01 to intermittently
+  # see 503s on connections that should have been within cap. 50 gives a
+  # generous margin above realistic concurrent E2E traffic while keeping the
+  # cap meaningfully enforced. Keep test/e2e/apifrontend/streaming_test.go's
+  # AF_E2E_MAX_SSE fallback in sync with this value.
+  maxSSEConnections: 50
+  tls:
+    certDir: /etc/apifrontend/tls
+    required: true
+
+agent:
+  kaBaseURL: "https://kubernaut-agent.kubernaut-system.svc:8443"
+  kaMCPEndpoint: "https://kubernaut-agent.kubernaut-system.svc:8443/api/v1/mcp/"
+  dsBaseURL: "https://data-storage-service.kubernaut-system.svc:8080"
+  # #1985 / BR-AUDIT-005 v2.0: gates /readyz on DataStorage's own reachability.
+  # Without this, AF falls back to config.DefaultConfig()'s dev-only
+  # "http://localhost:9091/readyz" placeholder, which is unreachable
+  # in-cluster and leaves the pod permanently NotReady.
+  # DD-PLATFORM-010: the cross-service /readyz check lives on dsBaseURL's own
+  # port (8080, TLS-required) as an unauthenticated top-level route -- not
+  # the dedicated kubelet-only health port (8081), which is never exposed
+  # cross-pod.
+  dsHealthURL: "https://data-storage-service.kubernaut-system.svc:8080/readyz"
+  dsBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  kaBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  kaTlsCaFile: /etc/apifrontend/inter-service-ca/ca.crt
+  dsTlsCaFile: /etc/apifrontend/inter-service-ca/ca.crt
+  llm:
+    provider: gemini
+    model: mock-model
+    endpoint: "http://mock-llm.kubernaut-system.svc:8080"
+    apiKeyFile: "/etc/apifrontend/llm-credentials/llm-api-key"
+
+session:
+  namespace: kubernaut-system
+  disconnectTTL: 2m
+  retentionTTL: 720h
+
+mcp:
+  enabled: true
+  sessionIdleTimeout: 5m
+
+interactive:
+  enabled: true
+  awaitSessionTimeout: 10s
+  bridgeInactivityTimeout: 15s
+
+agentCard:
+  url: "https://apifrontend.kubernaut-system.svc:8443"
+
+auth:
+  issuerURL: "https://dex:5556/dex"
+  jwksURL: "https://dex:5556/dex/keys"
+  audience: "kubernaut-apifrontend"
+  oidcCaFile: /etc/apifrontend/inter-service-ca/ca.crt
+
+rbac:
+  groupMapping:
+    sre: sre
+    ai-orchestrator: ai-orchestrator
+    cicd: cicd
+    observability: observability
+    l3-audit: l3-audit
+    remediation-approver: remediation-approver
+
+severityTriage:
+  enabled: true
+  prometheusURL: "http://prometheus-svc.kubernaut-system.svc:9090"
+  maxQueriesPerCall: 10
+  maxRulesEvaluated: 100
+  cacheTTLSeconds: 30
+  llmConfidence: 0.7
+
+logging:
+  level: debug
+
+rateLimit:
+  ipRequestsPerSec: 10000
+  userRequestsPerSec: 100
+  maxConcurrentSessions: 50
+  toolCallsPerMinute: 600
+
+shutdown:
+  drainSeconds: 3
+
+resilience:
+  ka:
+    connectTimeout: 2s
+    requestTimeout: 5s
+    cbMaxRequests: 3
+    cbInterval: 5s
+    cbTimeout: 10s
+    cbFailureThreshold: 3
+    retryMax: 1
+    retryInitBackoff: 100ms
+    retryMaxBackoff: 1s
+    # 429 included: KA enforces a concurrency throttle (chi.Throttle);
+    # ADR-048-ADDENDUM-001 requires clients to retry with backoff on
+    # throttle responses instead of failing fast. Under concurrent E2E
+    # load, KA's throttle can transiently reject select_workflow/
+    # discover_workflows calls (#1911 fullpipeline CI failure RCA).
+    retryableStatuses: [429, 502, 503, 504]
+  ds:
+    connectTimeout: 2s
+    requestTimeout: 5s
+    cbMaxRequests: 3
+    cbInterval: 5s
+    cbTimeout: 10s
+    cbFailureThreshold: 3
+    retryMax: 1
+    retryInitBackoff: 100ms
+    retryMaxBackoff: 1s
+    retryableStatuses: [502, 503, 504]
+  k8s:
+    connectTimeout: 2s
+    requestTimeout: 5s
+    cbMaxRequests: 5
+    cbInterval: 10s
+    cbTimeout: 30s
+    cbFailureThreshold: 10
+    retryMax: 0
+    retryableStatuses: []
+  prometheus:
+    connectTimeout: 2s
+    requestTimeout: 5s

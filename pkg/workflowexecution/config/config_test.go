@@ -1,0 +1,175 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package config_test
+
+import (
+	"os"
+	"path/filepath"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
+)
+
+var _ = Describe("UT-WE-054-CFG-001 [IA-5]: WE FleetOAuth2 config parses, validates, and defaults correctly at startup (BR-INTEGRATION-054)", func() {
+	Context("Validation", func() {
+		It("accepts valid config with Fleet OAuth2 enabled", func() {
+			cfg := weconfig.DefaultConfig()
+			cfg.Fleet.OAuth2.Enabled = true
+			cfg.Fleet.OAuth2.TokenURL = "https://dex.local/token"
+			cfg.Fleet.OAuth2.CredentialsSecretRef = "fleet-oauth2"
+
+			err := cfg.Validate()
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("rejects OAuth2 enabled without tokenURL", func() {
+			cfg := weconfig.DefaultConfig()
+			cfg.Fleet.OAuth2.Enabled = true
+			cfg.Fleet.OAuth2.CredentialsSecretRef = "fleet-oauth2"
+
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tokenURL"))
+		})
+
+		It("rejects OAuth2 enabled without credentialsSecretRef", func() {
+			cfg := weconfig.DefaultConfig()
+			cfg.Fleet.OAuth2.Enabled = true
+			cfg.Fleet.OAuth2.TokenURL = "https://dex.local/token"
+
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("credentialsSecretRef"))
+		})
+
+		It("accepts config with OAuth2 disabled when fleet.endpoint is unset (WE never calls the MCP Gateway, so OAuth2 is irrelevant)", func() {
+			cfg := weconfig.DefaultConfig()
+			cfg.Fleet.OAuth2.Enabled = false
+
+			err := cfg.Validate()
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("rejects OAuth2 disabled when fleet.endpoint is set (Issue #1984 Phase D, ADR-068: OAuth2 is mandatory for all MCP Gateway connections -- oauth2.enabled=false previously permitted WE to reach the MCP Gateway completely unauthenticated once endpoint was configured)", func() {
+			cfg := weconfig.DefaultConfig()
+			cfg.Fleet.Endpoint = "https://mcp-gateway:8443"
+			cfg.Fleet.OAuth2.Enabled = false
+
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("oauth2.enabled"))
+		})
+	})
+
+	Context("YAML parsing with scopes", func() {
+		It("parses explicit scopes from YAML", func() {
+			yamlContent := `
+execution:
+  namespace: kubernaut-workflows
+  cooldownPeriod: 5m
+fleet:
+  endpoint: "http://mcp-gateway:1975/mcp"
+  mcpGatewayTLSCAFile: "/etc/workflowexecution/mcp-gateway/ca.crt"
+  oauth2:
+    enabled: true
+    tokenURL: "https://dex.local/token"
+    credentialsSecretRef: "fleet-creds"
+    scopes:
+      - openid
+      - groups
+      - mcp-write
+`
+			tmpDir, err := os.MkdirTemp("", "we-cfg-*")
+			Expect(err).ToNot(HaveOccurred())
+			defer func() { _ = os.RemoveAll(tmpDir) }()
+
+			cfgPath := filepath.Join(tmpDir, "config.yaml")
+			Expect(os.WriteFile(cfgPath, []byte(yamlContent), 0o600)).To(Succeed())
+
+			cfg, err := weconfig.LoadFromFile(cfgPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.Fleet.OAuth2.Scopes).To(Equal([]string{"openid", "groups", "mcp-write"}))
+			Expect(cfg.Fleet.MCPGatewayTLSCAFile).To(Equal("/etc/workflowexecution/mcp-gateway/ca.crt"))
+		})
+
+		It("defaults to nil scopes when omitted from YAML", func() {
+			yamlContent := `
+execution:
+  namespace: kubernaut-workflows
+  cooldownPeriod: 5m
+fleet:
+  endpoint: "http://mcp-gateway:1975/mcp"
+  oauth2:
+    enabled: true
+    tokenURL: "https://dex.local/token"
+    credentialsSecretRef: "fleet-creds"
+`
+			tmpDir, err := os.MkdirTemp("", "we-cfg-*")
+			Expect(err).ToNot(HaveOccurred())
+			defer func() { _ = os.RemoveAll(tmpDir) }()
+
+			cfgPath := filepath.Join(tmpDir, "config.yaml")
+			Expect(os.WriteFile(cfgPath, []byte(yamlContent), 0o600)).To(Succeed())
+
+			cfg, err := weconfig.LoadFromFile(cfgPath)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(cfg.Fleet.OAuth2.Scopes).To(BeNil())
+		})
+	})
+})
+
+var _ = Describe("UT-WE-2392-CFG: failed execution retention configuration (BR-WE-014, AU-11, ASVS V5.1.x)", func() {
+	It("UT-WE-2392-CFG-001: defaults retention off with a bounded 600-second period", func() {
+		cfg := weconfig.DefaultConfig()
+
+		Expect(cfg.Execution.RetainFailedExecutions).To(BeFalse())
+		Expect(cfg.Execution.FailedExecutionRetentionSeconds).To(Equal(int64(600)))
+	})
+
+	It("UT-WE-2392-CFG-002: parses retention settings from YAML", func() {
+		yamlContent := `
+execution:
+  namespace: kubernaut-workflows
+  cooldownPeriod: 5m
+  retainFailedExecutions: true
+  failedExecutionRetentionSeconds: 900
+`
+		tmpDir, err := os.MkdirTemp("", "we-retention-cfg-*")
+		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+		cfgPath := filepath.Join(tmpDir, "config.yaml")
+		Expect(os.WriteFile(cfgPath, []byte(yamlContent), 0o600)).To(Succeed())
+
+		cfg, err := weconfig.LoadFromFile(cfgPath)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(cfg.Execution.RetainFailedExecutions).To(BeTrue())
+		Expect(cfg.Execution.FailedExecutionRetentionSeconds).To(Equal(int64(900)))
+		Expect(cfg.Execution.FailedExecutionRetention()).To(Equal(15 * time.Minute))
+	})
+
+	It("UT-WE-2392-CFG-003: rejects enabled retention with a non-positive period", func() {
+		cfg := weconfig.DefaultConfig()
+		cfg.Execution.RetainFailedExecutions = true
+		cfg.Execution.FailedExecutionRetentionSeconds = 0
+
+		Expect(cfg.Validate()).To(HaveOccurred())
+	})
+})

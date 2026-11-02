@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kubernaut Roadmap: forward-looking view. Shipped history (v1.3-v1.5) lives in ROADMAP.md / CHANGELOG.md, not here. -->
+<svg width="1860" height="460" viewBox="40 25 1860 460" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <path id="Path" fill="#ffffff" stroke="none" d="M 56 35 L 1880 35 L 1880 473 L 56 473 Z"/>
+    <text id="Roadmap" xml:space="preserve" x="69" y="77" font-family="Helvetica Neue" font-size="52" font-weight="300" fill="#cc0000">Roadmap</text>
+    <text id="Subtitle" xml:space="preserve" x="69" y="112" font-family="Helvetica Neue" font-size="15" fill="#666666">What's next — built on v1.3–v1.5 (shipped) and v1.6 fleet operations (release candidate)</text>
+
+    <!-- Card 1: Fleet Operations (v1.6 - in progress) -->
+    <rect id="accent1" x="69" y="150" width="405" height="4" fill="#d97706"/>
+    <text id="badge1" xml:space="preserve" x="69" y="172" font-family="Helvetica Neue" font-size="11" font-weight="700" letter-spacing="1.5" fill="#d97706">IN PROGRESS · V1.6.0-RC1</text>
+    <text id="title1" xml:space="preserve" x="69" y="200" font-family="Helvetica Neue" font-size="19" font-weight="700" fill="#cc0000">Fleet Operations</text>
+    <text id="tagline1" xml:space="preserve" x="69" y="222" font-family="Helvetica Neue" font-size="12.5" font-style="italic" fill="#333333">From one cluster to your entire fleet</text>
+    <text id="bullet1-1" xml:space="preserve" x="77" y="250" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Multi-cluster investigation (MCP Gateway, OAuth2)</text>
+    <text id="bullet1-2" xml:space="preserve" x="77" y="271" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Fleet remediation (Jobs/Tekton/AAP via gateway)</text>
+    <text id="bullet1-3" xml:space="preserve" x="77" y="292" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Centralized observability (cluster-tagged audit)</text>
+    <text id="bullet1-4" xml:space="preserve" x="77" y="313" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Federated scope: ACM/OCM or FMC (GitOps) —</text>
+    <text id="bullet1-4b" xml:space="preserve" x="92" y="330" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">Rancher/Clusterpedia adapters planned</text>
+
+    <!-- Card 2: Custom Investigation Agents (v1.7 - planned) -->
+    <rect id="accent2" x="528" y="150" width="405" height="4" fill="#cc0000"/>
+    <text id="badge2" xml:space="preserve" x="528" y="172" font-family="Helvetica Neue" font-size="11" font-weight="700" letter-spacing="1.5" fill="#cc0000">PLANNED · V1.7</text>
+    <text id="title2" xml:space="preserve" x="528" y="200" font-family="Helvetica Neue" font-size="19" font-weight="700" fill="#cc0000">Custom Investigation Agents</text>
+    <text id="tagline2" xml:space="preserve" x="528" y="222" font-family="Helvetica Neue" font-size="12.5" font-style="italic" fill="#333333">Inject your team's know-how into the investigation</text>
+    <text id="bullet2-1" xml:space="preserve" x="536" y="250" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Custom SOPs as agents — e.g. budget checks, known</text>
+    <text id="bullet2-1b" xml:space="preserve" x="551" y="267" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">conditions for a resource — like user-provided RAG</text>
+    <text id="bullet2-2" xml:space="preserve" x="536" y="288" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ AuthBridge / OpenShell: credential injection, audit,</text>
+    <text id="bullet2-2b" xml:space="preserve" x="551" y="305" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">sandbox isolation, shadow tee</text>
+    <text id="bullet2-3" xml:space="preserve" x="536" y="330" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ kube-mcp-server as default K8s access layer</text>
+
+    <!-- Card 3: Collective Intelligence (unscheduled) -->
+    <rect id="accent3" x="987" y="150" width="405" height="4" fill="#999999"/>
+    <text id="badge3" xml:space="preserve" x="987" y="172" font-family="Helvetica Neue" font-size="11" font-weight="700" letter-spacing="1.5" fill="#999999">FUTURE · UNSCHEDULED</text>
+    <text id="title3" xml:space="preserve" x="987" y="200" font-family="Helvetica Neue" font-size="19" font-weight="700" fill="#cc0000">Collective Intelligence</text>
+    <text id="tagline3" xml:space="preserve" x="987" y="222" font-family="Helvetica Neue" font-size="12.5" font-style="italic" fill="#333333">Multiple AI perspectives, one root cause</text>
+    <text id="bullet3-1" xml:space="preserve" x="995" y="250" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Multi-Agent Consensus RCA</text>
+    <text id="bullet3-2" xml:space="preserve" x="995" y="271" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Remediation History Analysis</text>
+
+    <!-- Card 4: Operational Expansion (unscheduled) -->
+    <rect id="accent4" x="1446" y="150" width="405" height="4" fill="#999999"/>
+    <text id="badge4" xml:space="preserve" x="1446" y="172" font-family="Helvetica Neue" font-size="11" font-weight="700" letter-spacing="1.5" fill="#999999">FUTURE · UNSCHEDULED</text>
+    <text id="title4" xml:space="preserve" x="1446" y="200" font-family="Helvetica Neue" font-size="19" font-weight="700" fill="#cc0000">Operational Expansion</text>
+    <text id="tagline4" xml:space="preserve" x="1446" y="222" font-family="Helvetica Neue" font-size="12.5" font-style="italic" fill="#333333">New domains, same intelligent approach</text>
+    <text id="bullet4-1" xml:space="preserve" x="1454" y="250" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Cost Optimization – AI-driven right-sizing</text>
+    <text id="bullet4-2" xml:space="preserve" x="1454" y="271" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Threat Remediation – security response</text>
+    <text id="bullet4-3" xml:space="preserve" x="1454" y="292" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ Non-Kubernetes workflows (VMs, cloud, IaC)</text>
+    <text id="bullet4-4" xml:space="preserve" x="1454" y="313" font-family="Helvetica Neue" font-size="12.5" fill="#1a1a1a">→ ITSM integration (Jira/ServiceNow)</text>
+
+    <path id="footer-divider" fill="#000000" stroke="#eeeeee" d="M 69 390 L 1851 390"/>
+    <text id="footer-note" xml:space="preserve" x="69" y="415" font-family="Helvetica Neue" font-size="12" fill="#666666">Shipped: v1.3 (agentic-first rewrite &amp; hardening), v1.4 (prompt-injection guardrails &amp; operator overrides), v1.5 (live investigation control, MCP/A2A/console) — see ROADMAP.md and CHANGELOG.md for full history.</text>
+</svg>

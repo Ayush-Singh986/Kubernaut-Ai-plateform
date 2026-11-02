@@ -1,0 +1,251 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package config
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// ToolCallOverride specifies a tool call that the mock-LLM should return
+// for a given scenario instead of following the normal DAG path.
+type ToolCallOverride struct {
+	Name      string                 `yaml:"name"`
+	Arguments map[string]interface{} `yaml:"arguments,omitempty"`
+
+	// NextToolCall recursively chains an additional tool call after this
+	// one's result arrives, allowing next_tool_call: to nest arbitrarily
+	// deep in YAML (issue #1853). E.g.:
+	//   tool_call: {name: investigate}
+	//   next_tool_call:
+	//     name: discover_workflows
+	//     next_tool_call:
+	//       name: select_workflow
+	NextToolCall *ToolCallOverride `yaml:"next_tool_call,omitempty"`
+
+	// FallbackArguments replaces Arguments in its entirety when at least one
+	// "$from_tool:<tool>:<field>" placeholder in Arguments cannot be resolved
+	// (the referenced tool was never called earlier in this conversation).
+	// This mirrors tool schemas with mutually exclusive argument sets -- e.g.
+	// kubernaut_investigate accepts EITHER rr_id (continue/take over an
+	// existing session) OR namespace/kind/name (create a new RR) -- so a
+	// scenario scripted for the "continue" case can gracefully degrade to
+	// the "create new" case instead of sending a half-resolved/literal
+	// template string. Added for issue #1853 after a live cluster showed
+	// af_investigate failing this exact way when invoked with no prior
+	// kubernaut_remediate call in the session.
+	FallbackArguments map[string]interface{} `yaml:"fallback_arguments,omitempty"`
+}
+
+// UsageOverride scripts distinctive per-scenario token counts for E2E
+// token assertions (issue #2387). All fields are plain ints (not pointers):
+// a nil Usage pointer means "no override, keep the response builders'
+// deterministic defaults", so existing scenarios are unaffected.
+type UsageOverride struct {
+	PromptTokens     int `yaml:"prompt_tokens"`
+	CompletionTokens int `yaml:"completion_tokens"`
+	TotalTokens      int `yaml:"total_tokens"`
+}
+
+// ScenarioOverride defines optional per-scenario overrides from a YAML config file.
+type ScenarioOverride struct {
+	WorkflowID string             `yaml:"workflow_id,omitempty"`
+	Confidence *float64           `yaml:"confidence,omitempty"`
+	ForceText  *bool              `yaml:"force_text,omitempty"`
+	ToolCall   *ToolCallOverride  `yaml:"tool_call,omitempty"`
+	ToolCalls  []ToolCallOverride `yaml:"tool_calls,omitempty"`
+	Usage      *UsageOverride     `yaml:"usage,omitempty"`
+}
+
+// ScenarioSelectorOverride defines a declarative scenario selector injected via YAML.
+// Consumers (e.g., AF E2E tests) use this to map prompt keywords or signal-name
+// patterns to specific tool call responses without modifying mock-LLM code.
+//
+// When MatchLastOnly is true, keyword matching uses only the last user message
+// instead of the full conversation history. This prevents prior-turn keywords
+// from shadowing later-turn keywords in multi-turn ADK agent conversations.
+type ScenarioSelectorOverride struct {
+	Name           string            `yaml:"name"`
+	Keywords       []string          `yaml:"keywords,omitempty"`
+	SignalPatterns []string          `yaml:"signal_patterns,omitempty"`
+	Caller         string            `yaml:"caller,omitempty"`
+	Phase          string            `yaml:"phase,omitempty"`
+	WorkflowID     string            `yaml:"workflow_id,omitempty"`
+	ActionType     string            `yaml:"action_type,omitempty"`
+	ToolCall       ToolCallOverride  `yaml:"tool_call"`
+	MatchLastOnly  bool              `yaml:"match_last_only,omitempty"`
+	RepeatToolCall bool              `yaml:"repeat_tool_call,omitempty"`
+	ThoughtText    string            `yaml:"thought_text,omitempty"`
+	NextToolCall   *ToolCallOverride `yaml:"next_tool_call,omitempty"`
+}
+
+// KeywordScenarioOverride is retained for source compatibility with existing
+// test fixtures. New scenarios should use ScenarioSelectorOverride.
+//
+// Deprecated: use ScenarioSelectorOverride.
+type KeywordScenarioOverride = ScenarioSelectorOverride
+
+// TranscriptStepOverride defines one exact user-turn/tool-call pair in an
+// explicit A2A conversation transcript. Unlike ScenarioSelectorOverride, the
+// user message is matched as a complete, case-insensitive string.
+type TranscriptStepOverride struct {
+	User     string           `yaml:"user"`
+	ToolCall ToolCallOverride `yaml:"tool_call"`
+}
+
+// TranscriptScenarioOverride defines the ordered turns of one A2A journey.
+// Each step is selected from the current last user message, not accumulated
+// assistant text or prior tool-call arguments.
+type TranscriptScenarioOverride struct {
+	Name   string                   `yaml:"name"`
+	Caller string                   `yaml:"caller,omitempty"`
+	Phase  string                   `yaml:"phase,omitempty"`
+	Steps  []TranscriptStepOverride `yaml:"steps"`
+}
+
+// Overrides holds the parsed YAML override configuration.
+type Overrides struct {
+	Mode                string                       `yaml:"mode"`
+	Scenarios           map[string]ScenarioOverride  `yaml:"scenarios"`
+	ScenarioSelectors   []ScenarioSelectorOverride   `yaml:"scenario_selectors,omitempty"`
+	KeywordScenarios    []ScenarioSelectorOverride   `yaml:"keyword_scenarios,omitempty"` // Deprecated: use scenario_selectors.
+	TranscriptScenarios []TranscriptScenarioOverride `yaml:"transcript_scenarios,omitempty"`
+}
+
+// LoadYAMLOverrides reads a YAML overrides file. If the path is empty or the
+// file does not exist, it returns an empty Overrides struct and no error,
+// enabling graceful fallback to deterministic defaults.
+func LoadYAMLOverrides(path string) (*Overrides, error) {
+	if path == "" {
+		return &Overrides{Scenarios: map[string]ScenarioOverride{}}, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &Overrides{Scenarios: map[string]ScenarioOverride{}}, nil
+		}
+		return nil, err
+	}
+
+	var o Overrides
+	if err := yaml.Unmarshal(data, &o); err != nil {
+		return nil, err
+	}
+
+	if o.Scenarios == nil {
+		o.Scenarios = map[string]ScenarioOverride{}
+	}
+	if err := validateScenarioSelectors(o.ScenarioSelectors); err != nil {
+		return nil, err
+	}
+	if err := validateScenarioSelectors(o.KeywordScenarios); err != nil {
+		return nil, err
+	}
+	if err := validateTranscriptScenarios(o.TranscriptScenarios); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func validateScenarioSelectors(selectors []ScenarioSelectorOverride) error {
+	seen := make(map[string]struct{}, len(selectors))
+	for _, selector := range selectors {
+		name := strings.ToLower(strings.TrimSpace(selector.Name))
+		if _, exists := seen[name]; exists {
+			return errors.New("scenario selector names must be unique")
+		}
+		seen[name] = struct{}{}
+		if err := validateScenarioSelector(selector); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateScenarioSelector(selector ScenarioSelectorOverride) error {
+	if strings.TrimSpace(selector.Name) == "" {
+		return errors.New("scenario selector name is required")
+	}
+	if selector.Caller != "" && selector.Caller != "af" && selector.Caller != "ka" {
+		return errors.New("scenario selector caller must be one of: af, ka")
+	}
+	if selector.Phase != "" && !validScenarioSelectorPhase(selector.Phase) {
+		return errors.New("scenario selector phase is invalid")
+	}
+	if len(selector.Keywords) == 0 && len(selector.SignalPatterns) == 0 {
+		return errors.New("scenario selector must define at least one keyword or signal pattern")
+	}
+	if err := validateNonEmptyScenarioValues(selector.Keywords, "scenario selector keyword must not be empty"); err != nil {
+		return err
+	}
+	if err := validateNonEmptyScenarioValues(selector.SignalPatterns, "scenario selector signal pattern must not be empty"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(selector.ToolCall.Name) == "" {
+		return errors.New("scenario selector tool call name is required")
+	}
+	return nil
+}
+
+func validateNonEmptyScenarioValues(values []string, message string) error {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return errors.New(message)
+		}
+	}
+	return nil
+}
+
+func validScenarioSelectorPhase(phase string) bool {
+	switch phase {
+	case "rca", "investigation", "workflow_discovery", "workflow_selection", "remediation":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateTranscriptScenarios(transcripts []TranscriptScenarioOverride) error {
+	seen := make(map[string]struct{}, len(transcripts))
+	for _, transcript := range transcripts {
+		if strings.TrimSpace(transcript.Name) == "" {
+			return errors.New("transcript scenario name is required")
+		}
+		name := strings.ToLower(strings.TrimSpace(transcript.Name))
+		if _, exists := seen[name]; exists {
+			return errors.New("transcript scenario names must be unique")
+		}
+		seen[name] = struct{}{}
+		if len(transcript.Steps) == 0 {
+			return errors.New("transcript scenario must define at least one step")
+		}
+		for _, step := range transcript.Steps {
+			if strings.TrimSpace(step.User) == "" {
+				return errors.New("transcript step user message is required")
+			}
+			if strings.TrimSpace(step.ToolCall.Name) == "" {
+				return errors.New("transcript step tool call name is required")
+			}
+		}
+	}
+	return nil
+}

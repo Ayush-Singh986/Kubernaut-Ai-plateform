@@ -1,0 +1,207 @@
+# Notification Routing Configuration - Spec-Field-Based Routing
+#
+# BR-NOT-065: Channel Routing Based on Spec Fields
+# BR-NOT-066: Alertmanager-Compatible Configuration Format
+# DD-WE-004: WorkflowExecution Exponential Backoff Skip Reasons
+# BR-KA-200: Investigation Outcome Reporting
+#
+# Issue #91: Routing now uses spec fields + metadata instead of labels.
+# Match keys correspond to spec field names (type, severity, phase,
+# review-source, priority) and spec.context / spec.extensions keys
+# (skip-reason, investigation-outcome, environment, etc.).
+#
+# Use as a ConfigMap for the Notification Controller.
+#
+# Usage:
+#   kubectl create configmap notification-routing-config \
+#     --from-file=routing.yaml=notification_routing_config.yaml \
+#     -n kubernaut-system
+#
+# Cross-Team References:
+#   - NOTICE_WE_EXPONENTIAL_BACKOFF_DD_WE_004.md (Q7, Q8)
+#   - Spec fields set by RemediationOrchestrator (mandatory per BR-NOT-065)
+
+# Global routing configuration (camelCase format)
+route:
+  # Group notifications by these attributes to reduce alert noise
+  groupBy:
+    - environment
+    - skip-reason
+    - investigation-outcome
+    - remediation-request
+
+  # Wait time before sending first notification for a group
+  groupWait: 30s
+
+  # Time to wait before sending notification about new alerts in a group
+  groupInterval: 5m
+
+  # Time to wait before re-sending a notification
+  repeatInterval: 4h
+
+  # Child routes - evaluated in order, first match wins
+  routes:
+    # =================================================================
+    # CRITICAL: PreviousExecutionFailed (DD-WE-004)
+    # =================================================================
+    # Workflow ran and FAILED during execution.
+    # Cluster state is UNKNOWN - manual intervention required.
+    # Route to PagerDuty for immediate 24/7 alerting.
+    #
+    - match:
+        skip-reason: PreviousExecutionFailed
+      receiver: pagerduty-oncall-critical
+      groupWait: 0s  # Send immediately
+      repeatInterval: 15m  # Remind every 15 minutes
+
+    # =================================================================
+    # HIGH: ExhaustedRetries (DD-WE-004)
+    # =================================================================
+    # 5+ pre-execution failures - infrastructure issues.
+    # Cluster state is KNOWN (unchanged) - team awareness required.
+    # Route to Slack #ops for team awareness.
+    #
+    - match:
+        skip-reason: ExhaustedRetries
+      receiver: slack-ops-high
+      groupWait: 1m
+      repeatInterval: 1h
+
+    # =================================================================
+    # LOW: Temporary Conditions (DD-WE-004)
+    # =================================================================
+    # ResourceBusy: Another WFE is running on target (auto-resolves)
+    # RecentlyRemediated: Cooldown/backoff period active (auto-resolves)
+    # Route to console only (bulk notifications per BR-ORCH-034).
+    #
+    - match:
+        skip-reason: ResourceBusy
+      receiver: console-only-bulk
+      groupWait: 5m
+      groupInterval: 30m
+
+    - match:
+        skip-reason: RecentlyRemediated
+      receiver: console-only-bulk
+      groupWait: 5m
+      groupInterval: 30m
+
+    # =================================================================
+    # SKIP: Resolved (BR-KA-200)
+    # =================================================================
+    # Alert self-resolved during Kubernaut Agent (KA) investigation.
+    # No human action required - prevent alert fatigue.
+    # Route to silent receiver (no delivery).
+    #
+    - match:
+        investigation-outcome: resolved
+      receiver: silent-noop
+      repeatInterval: 168h  # 1 week (effectively disable repeats)
+
+    # =================================================================
+    # OPS: Investigation Inconclusive (BR-KA-200)
+    # =================================================================
+    # Kubernaut Agent (KA) could not determine root cause.
+    # Human review required to understand the alert.
+    # Route to Slack #ops for triage.
+    #
+    - match:
+        investigation-outcome: inconclusive
+      receiver: slack-ops-inconclusive
+      groupWait: 1m
+      repeatInterval: 2h
+
+    # =================================================================
+    # Production Critical (any notification type)
+    # =================================================================
+    # Catch-all for production environment critical notifications
+    # that don't match specific skip-reason rules.
+    #
+    - match:
+        environment: production
+        severity: critical
+      receiver: pagerduty-oncall-critical
+
+    # =================================================================
+    # Production High (escalation type)
+    # =================================================================
+    # Escalation notifications in production go to Slack ops.
+    #
+    - match:
+        environment: production
+        type: Escalation
+      receiver: slack-ops-high
+
+    # =================================================================
+    # Staging/Development (low priority)
+    # =================================================================
+    # Non-production notifications go to Slack #dev
+    #
+    - match:
+        environment: staging
+      receiver: slack-dev-low
+
+    - match:
+        environment: development
+      receiver: slack-dev-low
+
+    - match:
+        environment: test
+      receiver: slack-dev-low
+
+  # Default fallback receiver (when no routes match)
+  receiver: slack-default
+
+# Receiver definitions
+receivers:
+  # ===================================================================
+  # SILENT: No delivery (BR-KA-200 resolved alerts)
+  # ===================================================================
+  - name: silent-noop
+
+  # ===================================================================
+  # OPS: Slack for inconclusive investigations (BR-KA-200)
+  # ===================================================================
+  - name: slack-ops-inconclusive
+    slackConfigs:
+      - channel: '#kubernaut-ops-triage'
+        credentialRef: slack-webhook
+
+  # ===================================================================
+  # CRITICAL: PagerDuty for 24/7 on-call alerting
+  # ===================================================================
+  - name: pagerduty-oncall-critical
+    pagerdutyConfigs:
+      - credentialRef: pagerduty-routing-key
+        severity: critical
+
+  # ===================================================================
+  # HIGH: Slack #ops for team awareness
+  # ===================================================================
+  - name: slack-ops-high
+    slackConfigs:
+      - channel: '#kubernaut-ops'
+        credentialRef: slack-webhook
+
+  # ===================================================================
+  # LOW: Console only for bulk notifications
+  # ===================================================================
+  - name: console-only-bulk
+    consoleConfigs:
+      - enabled: true
+
+  # ===================================================================
+  # MEDIUM: Slack for dev environments
+  # ===================================================================
+  - name: slack-dev-low
+    slackConfigs:
+      - channel: '#kubernaut-dev'
+        credentialRef: slack-webhook
+
+  # ===================================================================
+  # DEFAULT: Slack fallback
+  # ===================================================================
+  - name: slack-default
+    slackConfigs:
+      - channel: '#kubernaut-alerts'
+        credentialRef: slack-webhook

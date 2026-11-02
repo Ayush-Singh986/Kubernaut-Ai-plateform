@@ -1,0 +1,386 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package reconstruction
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/go-faster/jx"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+)
+
+// ParsedAuditData contains structured data extracted from audit events for RR reconstruction.
+// BR-AUDIT-006: RemediationRequest Reconstruction from Audit Traces
+type ParsedAuditData struct {
+	// Metadata
+	EventType             string
+	CorrelationID         string
+	ClusterID             string // DD-AUDIT-003 v2.2: cluster provenance for fleet reconstruction (CC8.1)
+	RemediationRequestUID string // DD-AUDIT-010: immutable RR identity
+
+	// Gateway fields (from gateway.signal.received)
+	SignalType        string
+	SignalName        string
+	SignalFingerprint string // BR-AUDIT-005: SHA256 deduplication fingerprint
+	SignalLabels      map[string]string
+	SignalAnnotations map[string]string
+	OriginalPayload   string
+
+	// Orchestrator fields (from orchestrator.lifecycle.created)
+	TimeoutConfig *TimeoutConfigData
+
+	// Orchestrator completion/failure fields (from orchestrator.lifecycle.completed/failed)
+	Outcome      string            // "success" or "failure"
+	DurationMs   int64             // orchestration duration in milliseconds
+	FailurePhase string            // phase where failure occurred
+	ErrorDetails *ErrorDetailsData // DD-ERROR-001 standardized error details
+
+	// AI Analysis fields (Gap #4)
+	ProviderData string // from aianalysis.analysis.completed (stored as JSON string)
+
+	// Workflow fields (Gap #5-6)
+	SelectedWorkflowRef *WorkflowRefData  // from workflowexecution.selection.completed
+	ExecutionRef        *ExecutionRefData // from workflowexecution.execution.started
+}
+
+// TimeoutConfigData represents timeout configuration extracted from audit events.
+type TimeoutConfigData struct {
+	Global     string
+	Processing string
+	Analyzing  string
+	Executing  string
+}
+
+// WorkflowRefData represents workflow reference extracted from workflowexecution.selection.completed event (Gap #5).
+type WorkflowRefData struct {
+	WorkflowID      string
+	Version         string
+	ContainerImage  string
+	ContainerDigest string
+}
+
+// ExecutionRefData represents execution reference extracted from workflowexecution.execution.started event (Gap #6).
+type ExecutionRefData struct {
+	APIVersion            string
+	Kind                  string
+	Name                  string
+	Namespace             string
+	ClusterID             string
+	RemediationRequestUID string
+}
+
+// ErrorDetailsData represents standardized error details extracted from failed audit events (DD-ERROR-001).
+type ErrorDetailsData struct {
+	Message       string
+	Code          string
+	Component     string
+	RetryPossible bool
+}
+
+// ParseAuditEvent extracts structured data from an audit event for RR reconstruction.
+// TDD GREEN: Minimal implementation to pass current tests.
+func ParseAuditEvent(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	var parsed *ParsedAuditData
+	var err error
+
+	switch event.EventType {
+	case "gateway.signal.received":
+		parsed, err = parseGatewaySignalReceived(event)
+	case "apifrontend.rr.created":
+		parsed, err = parseApifrontendRRCreated(event)
+	case "orchestrator.lifecycle.created":
+		parsed, err = parseOrchestratorLifecycleCreated(event)
+	case "orchestrator.lifecycle.completed":
+		parsed, err = parseOrchestratorLifecycleCompleted(event)
+	case "orchestrator.lifecycle.failed":
+		parsed, err = parseOrchestratorLifecycleFailed(event)
+	case "aianalysis.analysis.completed":
+		parsed, err = parseAIAnalysisCompleted(event)
+	case "workflowexecution.selection.completed":
+		parsed, err = parseWorkflowSelectionCompleted(event)
+	case "workflowexecution.execution.started":
+		parsed, err = parseExecutionWorkflowStarted(event)
+	default:
+		return nil, fmt.Errorf("unsupported event type: %s", event.EventType)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// DD-AUDIT-003 v2.2: Extract cluster_id from event envelope (top-level column, not event_data)
+	if event.ClusterID.IsSet() && !event.ClusterID.Null {
+		parsed.ClusterID = event.ClusterID.Value
+	}
+
+	return parsed, nil
+}
+
+func parseGatewaySignalReceived(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.GatewayAuditPayload
+
+	// Validate required fields
+	if payload.SignalName == "" {
+		return nil, fmt.Errorf("missing signal_name in gateway.signal.received event")
+	}
+
+	data := &ParsedAuditData{
+		EventType:         event.EventType,
+		CorrelationID:     event.CorrelationID,
+		SignalType:        normalizeSignalType(string(payload.SignalType)),
+		SignalName:        payload.SignalName,
+		SignalFingerprint: payload.Fingerprint, // BR-AUDIT-005: SHA256 deduplication identity
+		SignalLabels:      make(map[string]string),
+		SignalAnnotations: make(map[string]string),
+	}
+
+	// Extract optional labels
+	if payload.SignalLabels.IsSet() {
+		data.SignalLabels = payload.SignalLabels.Value
+	}
+
+	// Extract optional annotations
+	if payload.SignalAnnotations.IsSet() {
+		data.SignalAnnotations = payload.SignalAnnotations.Value
+	}
+
+	// Extract optional original payload
+	if payload.OriginalPayload.IsSet() {
+		originalPayloadBytes, err := json.Marshal(payload.OriginalPayload.Value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal original_payload: %w", err)
+		}
+		data.OriginalPayload = string(originalPayloadBytes)
+	}
+
+	return data, nil
+}
+
+//nolint:unparam // error return matches the shared func(ogenclient.AuditEvent) (*ParsedAuditData, error) signature all ParseAuditEvent switch cases assign to the same parsed/err pair; parseGatewaySignalReceived (a sibling case) does return real errors (Issue #1546 Tier 4)
+func parseOrchestratorLifecycleCreated(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.RemediationOrchestratorAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	// Extract TimeoutConfig if present
+	if payload.TimeoutConfig.IsSet() {
+		tc := payload.TimeoutConfig.Value
+		data.TimeoutConfig = &TimeoutConfigData{
+			Global:     getOptString(tc.Global),
+			Processing: getOptString(tc.Processing),
+			Analyzing:  getOptString(tc.Analyzing),
+			Executing:  getOptString(tc.Executing),
+		}
+	}
+
+	return data, nil
+}
+
+// parseOrchestratorLifecycleCompleted extracts outcome/duration from orchestrator.lifecycle.completed event.
+// BR-AUDIT-005 v2.0: RR status reconstruction (CC8.1)
+//
+//nolint:unparam // error return required for ParseAuditEvent switch-case signature consistency (see parseOrchestratorLifecycleCreated)
+func parseOrchestratorLifecycleCompleted(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.RemediationOrchestratorAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	if payload.Outcome.IsSet() {
+		data.Outcome = string(payload.Outcome.Value)
+	}
+	if payload.DurationMs.IsSet() {
+		data.DurationMs = payload.DurationMs.Value
+	}
+
+	return data, nil
+}
+
+// parseOrchestratorLifecycleFailed extracts error_details from orchestrator.lifecycle.failed event.
+// BR-AUDIT-005 v2.0 Gap #7: Standardized error_details for RR reconstruction (CC8.1)
+//
+//nolint:unparam // error return required for ParseAuditEvent switch-case signature consistency (see parseOrchestratorLifecycleCreated)
+func parseOrchestratorLifecycleFailed(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.RemediationOrchestratorAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	if payload.Outcome.IsSet() {
+		data.Outcome = string(payload.Outcome.Value)
+	}
+	if payload.DurationMs.IsSet() {
+		data.DurationMs = payload.DurationMs.Value
+	}
+	if payload.FailurePhase.IsSet() {
+		data.FailurePhase = string(payload.FailurePhase.Value)
+	}
+	if payload.ErrorDetails.IsSet() {
+		ed := payload.ErrorDetails.Value
+		data.ErrorDetails = &ErrorDetailsData{
+			Message:       ed.Message,
+			Code:          ed.Code,
+			Component:     string(ed.Component),
+			RetryPossible: ed.RetryPossible,
+		}
+	}
+
+	return data, nil
+}
+
+// parseApifrontendRRCreated extracts genesis fields from an apifrontend.rr.created
+// event (Issue #2043). AF-created RRs (via kubernaut_remediate) bypass Gateway
+// entirely and never emit gateway.signal.received; this is their sole source of
+// Spec.SignalName/SignalType/SignalFingerprint for reconstruction (CC8.1 parity).
+func parseApifrontendRRCreated(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.ApifrontendRRCreatedPayload
+
+	if payload.SignalName == "" {
+		return nil, fmt.Errorf("missing signal_name in apifrontend.rr.created event")
+	}
+
+	return &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+		SignalName:    payload.SignalName,
+		// SignalType is not carried by ApifrontendRRCreatedPayload; AF-created
+		// RRs always hardcode it to "alert" (buildRRObject, af_create_rr.go),
+		// so this mirrors production rather than guessing.
+		SignalType:        "alert",
+		SignalFingerprint: payload.Fingerprint,
+	}, nil
+}
+
+// getOptString extracts the value from an OptString, returning empty string if not set.
+func getOptString(opt ogenclient.OptString) string {
+	if opt.IsSet() {
+		return opt.Value
+	}
+	return ""
+}
+
+// normalizeSignalType returns "alert" for legacy prometheus-alert/kubernetes-event values.
+// All adapters now normalize to "alert" per OpenAPI spec; reconstruction preserves that.
+func normalizeSignalType(s string) string {
+	switch s {
+	case "prometheus-alert", "kubernetes-event":
+		return "alert"
+	}
+	return s
+}
+
+// parseAIAnalysisCompleted extracts provider data from aianalysis.analysis.completed event (Gap #4).
+//
+//nolint:unparam // error return required for ParseAuditEvent switch-case signature consistency (see parseOrchestratorLifecycleCreated)
+func parseAIAnalysisCompleted(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.AIAnalysisAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	// Extract provider data (Gap #4)
+	// ProviderResponseSummary is stored as JSON in the Spec field of RemediationRequest
+	// BR-AUDIT-005 v2.0: Field renamed from ProviderData to ProviderResponseSummary in ogenclient
+	if payload.ProviderResponseSummary.IsSet() {
+		// Use ogen's encoder to properly handle nested Opt types
+		encoder := &jx.Encoder{}
+		payload.ProviderResponseSummary.Value.Encode(encoder)
+		data.ProviderData = string(encoder.Bytes())
+	}
+
+	return data, nil
+}
+
+// parseWorkflowSelectionCompleted extracts workflow reference from workflowexecution.selection.completed event (Gap #5).
+//
+//nolint:unparam // error return required for ParseAuditEvent switch-case signature consistency (see parseOrchestratorLifecycleCreated)
+func parseWorkflowSelectionCompleted(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.WorkflowExecutionAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	// Extract workflow reference (Gap #5)
+	data.SelectedWorkflowRef = &WorkflowRefData{
+		WorkflowID:     payload.WorkflowID,
+		Version:        payload.WorkflowVersion,
+		ContainerImage: payload.ContainerImage,
+	}
+	if payload.ExecutionClusterID.IsSet() {
+		data.ClusterID = payload.ExecutionClusterID.Value
+	}
+	if payload.RemediationRequestUID.IsSet() {
+		data.RemediationRequestUID = payload.RemediationRequestUID.Value.String()
+	}
+
+	return data, nil
+}
+
+// parseExecutionWorkflowStarted extracts execution reference from workflowexecution.execution.started event (Gap #6).
+//
+//nolint:unparam // error return required for ParseAuditEvent switch-case signature consistency (see parseOrchestratorLifecycleCreated)
+func parseExecutionWorkflowStarted(event ogenclient.AuditEvent) (*ParsedAuditData, error) {
+	payload := event.EventData.WorkflowExecutionAuditPayload
+
+	data := &ParsedAuditData{
+		EventType:     event.EventType,
+		CorrelationID: event.CorrelationID,
+	}
+
+	// Extract execution reference (Gap #6)
+	// ExecutionRef points to the WorkflowExecution CRD, not the PipelineRun
+	// Per BR-AUDIT-005: Link RR to WFE CRD for complete lifecycle tracking
+	// Note: ExecutionRef is always created because WFE CRD always exists when this event is emitted
+	// PipelinerunName is optional and only for troubleshooting (stored separately in audit payload)
+	data.ExecutionRef = &ExecutionRefData{
+		APIVersion: "workflowexecution.kubernaut.ai/v1alpha1",
+		Kind:       "WorkflowExecution",
+		Name:       payload.ExecutionName, // WFE CRD name
+		Namespace:  event.Namespace.Value,
+	}
+	if payload.ExecutionResourceKind.IsSet() {
+		data.ExecutionRef.Kind = payload.ExecutionResourceKind.Value
+	}
+	if payload.ExecutionResourceName.IsSet() {
+		data.ExecutionRef.Name = payload.ExecutionResourceName.Value
+	}
+	if payload.ExecutionResourceNamespace.IsSet() {
+		data.ExecutionRef.Namespace = payload.ExecutionResourceNamespace.Value
+	}
+	if payload.ExecutionClusterID.IsSet() {
+		data.ExecutionRef.ClusterID = payload.ExecutionClusterID.Value
+		data.ClusterID = payload.ExecutionClusterID.Value
+	}
+	if payload.RemediationRequestUID.IsSet() {
+		data.ExecutionRef.RemediationRequestUID = payload.RemediationRequestUID.Value.String()
+		data.RemediationRequestUID = payload.RemediationRequestUID.Value.String()
+	}
+
+	return data, nil
+}

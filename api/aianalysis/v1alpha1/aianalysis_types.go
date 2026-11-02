@@ -1,0 +1,1014 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+
+// ========================================
+// AIAnalysisSpec - Design Decision: DD-CONTRACT-002
+// V1.0: KA only (no LLM config fields)
+// ========================================
+
+// AIAnalysisSpec defines the desired state of AIAnalysis.
+//
+// ADR-001: Spec Immutability
+// AIAnalysis represents an immutable event (AI investigation).
+// Once created by RemediationOrchestrator, spec cannot be modified to ensure:
+// - Audit trail integrity (AI investigation matches original RCA request)
+// - No tampering with RCA targets post-KA validation
+// - No workflow selection modification after AI recommendation
+//
+// To re-analyze, delete and recreate the AIAnalysis CRD.
+//
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable after creation (ADR-001)"
+type AIAnalysisSpec struct {
+	// ========================================
+	// PARENT REFERENCE (Audit/Lineage)
+	// ========================================
+	// Reference to parent RemediationRequest CRD for audit trail
+	// +kubebuilder:validation:Required
+	RemediationRequestRef corev1.ObjectReference `json:"remediationRequestRef"`
+
+	// Remediation ID for audit correlation (DD-WORKFLOW-002 v2.2)
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	RemediationID string `json:"remediationId"`
+
+	// ========================================
+	// ANALYSIS REQUEST (DD-CONTRACT-002)
+	// ========================================
+	// Complete analysis request with structured context
+	// +kubebuilder:validation:Required
+	AnalysisRequest AnalysisRequest `json:"analysisRequest"`
+
+	// ========================================
+	// TIMEOUT CONFIGURATION (DD-TIMEOUT-002)
+	// Replaces deprecated annotation-based timeout (security + validation)
+	// ========================================
+	// TimesOutAt is the absolute deadline for the Investigating phase,
+	// propagated verbatim from RemediationRequest.Status.TimeoutConfig.Analyzing
+	// by the RemediationOrchestrator creator at AIAnalysis creation time
+	// (DD-TIMEOUT-002). An absolute timestamp (rather than a relative
+	// duration) avoids clock-skew ambiguity between RO and the AIAnalysis
+	// controller. If nil, the AIAnalysis controller falls back to its
+	// configured default investigation duration.
+	// +optional
+	TimesOutAt *metav1.Time `json:"timesOutAt,omitempty"`
+
+	// BR-FLEET-054: Remote cluster identifier for fleet-managed signals.
+	// When non-empty, identifies the remote cluster where the signal originated.
+	// Propagated from RemediationRequest.Spec.ClusterID by the Remediation Orchestrator.
+	// +optional
+	ClusterID string `json:"clusterID,omitempty"`
+}
+
+// AnalysisType represents a type of analysis to perform.
+// +kubebuilder:validation:Enum=Investigation;RootCause;WorkflowSelection
+type AnalysisType string
+
+const (
+	AnalysisTypeInvestigation     AnalysisType = "Investigation"
+	AnalysisTypeRootCause         AnalysisType = "RootCause"
+	AnalysisTypeWorkflowSelection AnalysisType = "WorkflowSelection"
+)
+
+// AIAnalysisReason represents the umbrella failure or completion reason.
+// Per K8s convention, reasons cover all terminal states (success and failure).
+// +kubebuilder:validation:Enum=AnalysisCompleted;WorkflowResolutionFailed;WorkflowNotNeeded;NoWorkflowSelected;RegoEvaluationError;TransientError;APIError;InteractiveCancelled;ParentCancelled
+type AIAnalysisReason string
+
+const (
+	ReasonAnalysisCompleted        AIAnalysisReason = "AnalysisCompleted"
+	ReasonWorkflowResolutionFailed AIAnalysisReason = "WorkflowResolutionFailed"
+	ReasonWorkflowNotNeeded        AIAnalysisReason = "WorkflowNotNeeded"
+	ReasonNoWorkflowSelected       AIAnalysisReason = "NoWorkflowSelected"
+	ReasonRegoEvaluationError      AIAnalysisReason = "RegoEvaluationError"
+	ReasonTransientError           AIAnalysisReason = "TransientError"
+	ReasonAPIError                 AIAnalysisReason = "APIError"
+	ReasonInteractiveCancelled     AIAnalysisReason = "InteractiveCancelled"
+	ReasonParentCancelled          AIAnalysisReason = "ParentCancelled"
+)
+
+// PolicyDecision represents the Rego policy evaluation outcome.
+// +kubebuilder:validation:Enum=Approved;ManualReviewRequired;Denied;DegradedMode
+type PolicyDecision string
+
+const (
+	PolicyDecisionApproved             PolicyDecision = "Approved"
+	PolicyDecisionManualReviewRequired PolicyDecision = "ManualReviewRequired"
+	PolicyDecisionDenied               PolicyDecision = "Denied"
+	PolicyDecisionDegradedMode         PolicyDecision = "DegradedMode"
+)
+
+// AnalysisRequest contains the structured analysis request
+// DD-CONTRACT-002: Self-contained context for AIAnalysis
+type AnalysisRequest struct {
+	// Signal context from SignalProcessing enrichment
+	// +kubebuilder:validation:Required
+	SignalContext SignalContextInput `json:"signalContext"`
+
+	// Analysis types to perform
+	// +kubebuilder:validation:MinItems=1
+	AnalysisTypes []AnalysisType `json:"analysisTypes"`
+}
+
+// SignalContextInput contains enriched signal context from SignalProcessing
+// DD-CONTRACT-002: Structured types replace map[string]string anti-pattern
+type SignalContextInput struct {
+	// Signal fingerprint for correlation
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=64
+	Fingerprint string `json:"fingerprint"`
+
+	// Signal severity: critical, high, warning, info, unknown (normalized by SignalProcessing Rego - DD-SEVERITY-001 v1.1, ADR-066)
+	// +kubebuilder:validation:Enum=critical;high;warning;info;unknown
+	Severity string `json:"severity"`
+
+	// Signal name (e.g., OOMKilled, CrashLoopBackOff)
+	// Normalized by SignalProcessing: proactive names mapped to base names (BR-SP-106)
+	// +kubebuilder:validation:Required
+	SignalName string `json:"signalName"`
+
+	// SignalMode indicates whether this is a reactive or proactive signal.
+	// BR-AI-084: Proactive Signal Mode Prompt Strategy
+	// Copied from SignalProcessing status by RemediationOrchestrator.
+	// Used by Kubernaut Agent to switch investigation prompt (RCA vs. predict & prevent).
+	// +kubebuilder:validation:Enum=reactive;proactive
+	SignalMode string `json:"signalMode"`
+
+	// Environment classification
+	// GAP-C3-01 FIX: Changed from enum to free-text (values defined by Rego policies)
+	// Examples: "production", "staging", "development", "qa-eu", "canary"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Environment string `json:"environment"`
+
+	// Business priority
+	// GAP-C3-01 RELATED: Changed from enum to free-text for consistency
+	// Best practice examples: P0 (critical), P1 (high), P2 (normal), P3 (low)
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	BusinessPriority string `json:"businessPriority"`
+
+	// GAP-C3-02 FIX: RiskTolerance REMOVED - now in CustomLabels via Rego policies
+	// Per DD-WORKFLOW-001 v1.4: risk_tolerance is customer-derived, not system-controlled
+
+	// GAP-C3-03 FIX: BusinessCategory REMOVED - now in CustomLabels via Rego policies
+	// Per DD-WORKFLOW-001 v1.4: business_category is customer-derived, not mandatory
+
+	// Target resource identification
+	TargetResource TargetResource `json:"targetResource"`
+
+	// Complete enrichment results from SignalProcessing
+	// GAP-C3-04 FIX: Uses shared types from pkg/shared/types/enrichment.go
+	// +kubebuilder:validation:Required
+	EnrichmentResults sharedtypes.EnrichmentResults `json:"enrichmentResults"`
+
+	// SignalAnnotations from the original alert (e.g., description, summary from AlertManager).
+	// Untrusted content — sanitized by KA prompt builder before reaching the LLM.
+	// +optional
+	SignalAnnotations map[string]string `json:"signalAnnotations,omitempty"`
+
+	// Cluster is the optional cluster business classification (e.g. "production",
+	// "staging-eu") derived by SignalProcessing's Rego policy from fleet
+	// cluster-registration labels (BR-FLEET-003, #1511). Copied from
+	// SignalProcessing.Status.ClusterClassification. Empty when fleet mode is
+	// disabled, the cluster is unregistered, or no Rego `cluster` rule matched --
+	// a normal, non-error outcome (unlike Severity, which is mandatory).
+	// Propagates to Kubernaut Agent's discovery tool-call `cluster` parameter for
+	// DataStorage workflow-discovery filtering.
+	// +optional
+	Cluster string `json:"cluster,omitempty"`
+}
+
+// TargetResource identifies the Kubernetes resource being remediated
+type TargetResource struct {
+	// Resource kind (e.g., Pod, Deployment, StatefulSet)
+	Kind string `json:"kind"`
+	// Resource name
+	Name string `json:"name"`
+	// Resource namespace. Empty for cluster-scoped resources (e.g., Node, PersistentVolume).
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// APIVersion disambiguates the resource's API group when the Kind exists in
+	// multiple groups (e.g. Route in route.openshift.io vs serving.knative.dev).
+	// Format: "group/version" (e.g. "route.openshift.io/v1"). Issue #1040.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+}
+
+// ========================================
+// TYPE ALIASES FOR CONVENIENCE (GAP-C3-04 FIX)
+// ========================================
+// These aliases allow AIAnalysis code to reference types without
+// the sharedtypes prefix while maintaining single source of truth.
+// Authoritative types in pkg/shared/types/enrichment.go
+
+// EnrichmentResults alias - use sharedtypes.EnrichmentResults in new code
+type EnrichmentResults = sharedtypes.EnrichmentResults
+
+// OwnerChainEntry alias - use sharedtypes.OwnerChainEntry in new code
+type OwnerChainEntry = sharedtypes.OwnerChainEntry
+
+// DetectedLabels alias - use sharedtypes.DetectedLabels in new code
+type DetectedLabels = sharedtypes.DetectedLabels
+
+// KubernetesContext alias - use sharedtypes.KubernetesContext in new code
+type KubernetesContext = sharedtypes.KubernetesContext
+
+// NamespaceContext alias (Issue #113) - use sharedtypes.NamespaceContext in new code
+type NamespaceContext = sharedtypes.NamespaceContext
+
+// WorkloadDetails alias (Issue #113) - use sharedtypes.WorkloadDetails in new code
+type WorkloadDetails = sharedtypes.WorkloadDetails
+
+// BusinessClassification alias - use sharedtypes.BusinessClassification in new code
+type BusinessClassification = sharedtypes.BusinessClassification
+
+// ========================================
+// APPROVAL CONTEXT (BR-AI-059, BR-AI-076)
+// ========================================
+
+// ApprovalContext contains rich context for approval notifications
+type ApprovalContext struct {
+	// Reason why approval is required
+	Reason string `json:"reason"`
+	// ConfidenceScore from AI analysis (0.0-1.0)
+	// +kubebuilder:validation:Minimum=0.0
+	// +kubebuilder:validation:Maximum=1.0
+	ConfidenceScore float64 `json:"confidenceScore"`
+	// ConfidenceLevel: "low" | "medium" | "high"
+	// +kubebuilder:validation:Enum=low;medium;high
+	ConfidenceLevel string `json:"confidenceLevel"`
+	// InvestigationSummary from KA analysis
+	InvestigationSummary string `json:"investigationSummary"`
+	// EvidenceCollected that led to this conclusion
+	EvidenceCollected []string `json:"evidenceCollected,omitempty"`
+	// RecommendedActions with rationale
+	RecommendedActions []RecommendedAction `json:"recommendedActions"`
+	// AlternativesConsidered with pros/cons
+	AlternativesConsidered []AlternativeApproach `json:"alternativesConsidered,omitempty"`
+	// WhyApprovalRequired explains the need for human review
+	WhyApprovalRequired string `json:"whyApprovalRequired"`
+	// PolicyEvaluation contains Rego policy evaluation details (BR-AI-030)
+	PolicyEvaluation *PolicyEvaluation `json:"policyEvaluation,omitempty"`
+}
+
+// PolicyEvaluation contains Rego policy evaluation results
+type PolicyEvaluation struct {
+	// Policy name that was evaluated
+	PolicyName string `json:"policyName"`
+	// Rules that matched
+	MatchedRules []string `json:"matchedRules,omitempty"`
+	// Decision from policy evaluation
+	Decision PolicyDecision `json:"decision"`
+	// PolicyHash is the SHA256 hash of the Rego policy that produced this decision
+	// Provides audit trail and policy version attribution for compliance requirements (BR-AI-030)
+	// Expected format: 64-character hexadecimal string (SHA256 hash); empty if no policy was loaded
+	// +optional
+	PolicyHash string `json:"policyHash,omitempty"`
+}
+
+// RecommendedAction describes a remediation action with rationale
+type RecommendedAction struct {
+	// WorkflowId is the catalog workflow identifier for this recommendation
+	WorkflowId string `json:"workflowId"`
+	// Rationale explaining why this action is recommended
+	Rationale string `json:"rationale"`
+}
+
+// AlternativeApproach describes an alternative approach with pros/cons
+type AlternativeApproach struct {
+	// Approach description
+	Approach string `json:"approach"`
+	// ProsCons analysis
+	ProsCons string `json:"prosCons"`
+}
+
+// ========================================
+// AIAnalysisStatus (DD-CONTRACT-002)
+// ========================================
+
+// AIAnalysis phase constants
+const (
+	// PhasePending is the initial phase when AIAnalysis is first created
+	PhasePending = "Pending"
+	// PhaseInvestigating calls KA for investigation
+	PhaseInvestigating = "Investigating"
+	// PhaseAnalyzing evaluates Rego policies for approval determination
+	PhaseAnalyzing = "Analyzing"
+	// PhaseCompleted indicates successful completion
+	PhaseCompleted = "Completed"
+	// PhaseFailed indicates a permanent failure
+	PhaseFailed = "Failed"
+)
+
+// AIAnalysis SubReason constants (subset of the full kubebuilder enum on
+// AIAnalysisStatus.SubReason below) for values referenced from multiple
+// call sites in pkg/aianalysis/handlers.
+const (
+	// SubReasonWorkflowNotFound indicates no matching workflow was found in the catalog
+	SubReasonWorkflowNotFound = "WorkflowNotFound"
+	// SubReasonNoMatchingWorkflows indicates the catalog query returned zero candidates
+	SubReasonNoMatchingWorkflows = "NoMatchingWorkflows"
+	// SubReasonTransientError indicates a retryable error occurred (network, API, timeout)
+	SubReasonTransientError = "TransientError"
+	// SubReasonProblemResolved indicates KA reported the problem self-resolved (no workflow needed)
+	SubReasonProblemResolved = "ProblemResolved"
+	// SubReasonLowConfidence indicates workflow selection confidence fell below threshold
+	SubReasonLowConfidence = "LowConfidence"
+	// SubReasonMaxRetriesExceeded indicates a transient error persisted past the retry budget
+	SubReasonMaxRetriesExceeded = "MaxRetriesExceeded"
+)
+
+// AIAnalysis HumanReviewReason constants (subset of the full kubebuilder enum
+// on AIAnalysisStatus.HumanReviewReason below) for values referenced from
+// multiple call sites in pkg/aianalysis/handlers.
+const (
+	// HumanReviewReasonRCAIncomplete indicates KA could not determine the remediation target
+	HumanReviewReasonRCAIncomplete = "rca_incomplete"
+	// HumanReviewReasonNoMatchingWorkflows indicates investigation succeeded but no workflow matched (#768)
+	HumanReviewReasonNoMatchingWorkflows = "no_matching_workflows"
+	// HumanReviewReasonLowConfidence indicates workflow selection confidence fell below threshold
+	HumanReviewReasonLowConfidence = "low_confidence"
+)
+
+// AIAnalysisStatus defines the observed state of AIAnalysis.
+type AIAnalysisStatus struct {
+	// ObservedGeneration is the most recent generation observed by the controller.
+	// Used to prevent duplicate reconciliations and ensure idempotency.
+	// Per DD-CONTROLLER-001: Standard pattern for all Kubernetes controllers.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Phase tracking (no "Approving" or "Recommending" phase - simplified 4-phase flow)
+	// Per reconciliation-phases.md v2.0: Pending → Investigating → Analyzing → Completed/Failed
+	// +kubebuilder:validation:Enum=Pending;Investigating;Analyzing;Completed;Failed
+	Phase   string `json:"phase"`
+	Message string `json:"message,omitempty"`
+	// Reason provides the umbrella failure or completion category.
+	// +optional
+	Reason AIAnalysisReason `json:"reason,omitempty"`
+	// SubReason provides specific failure cause within the Reason category
+	// BR-KA-197: Maps to needs_human_review triggers from KA
+	// BR-KA-200: Added InvestigationInconclusive, ProblemResolved for new investigation outcomes
+	// +kubebuilder:validation:Enum=WorkflowNotFound;ImageMismatch;ParameterValidationFailed;NoMatchingWorkflows;LowConfidence;LLMParsingError;ValidationError;TransientError;PermanentError;InvestigationInconclusive;ProblemResolved;NotActionable;MaxRetriesExceeded;SessionRegenerationExceeded;RcaIncomplete;InvestigationFailed;OperatorEscalation;DecisionExpired
+	// +optional
+	SubReason string `json:"subReason,omitempty"`
+
+	// Timestamps
+	StartedAt   *metav1.Time `json:"startedAt,omitempty"`
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// ========================================
+	// RCA / WORKFLOW SELECTION RESULT (God-struct decomposition, #2189 follow-up)
+	// ========================================
+	// RCAResult bundles the investigation outcome (root cause, selected
+	// workflow, alternatives, actionability). Nil until KA's investigation
+	// produces a result; callers MUST nil-check before dereferencing
+	// (same convention as KASession/InteractiveSession/PostRCAContext below).
+	// +optional
+	RCAResult *RCAResult `json:"rcaResult,omitempty"`
+
+	// ========================================
+	// APPROVAL SIGNALING (God-struct decomposition, #2189 follow-up)
+	// ========================================
+	// Approval bundles human-approval-gating signals. Nil until the
+	// Analyzing phase's Rego evaluation runs.
+	// +optional
+	Approval *ApprovalStatus `json:"approval,omitempty"`
+
+	// ========================================
+	// HUMAN REVIEW SIGNALING (BR-KA-197, God-struct decomposition #2189 follow-up)
+	// Set by Kubernaut Agent when AI cannot produce reliable result
+	// ========================================
+	// Review bundles human-review signaling (KA decision: RCA
+	// incomplete/unreliable) and the shadow-agent alignment verdict.
+	// +optional
+	Review *ReviewStatus `json:"review,omitempty"`
+
+	// ========================================
+	// INVESTIGATION METADATA (God-struct decomposition, #2189 follow-up)
+	// ========================================
+	// InvestigationMetadata bundles KA execution bookkeeping (investigation
+	// ID/duration, warnings, validation history, degraded-mode flag, total
+	// analysis time, consecutive-failure retry counter).
+	// +optional
+	InvestigationMetadata *InvestigationMetadata `json:"investigationMetadata,omitempty"`
+
+	// ========================================
+	// INVESTIGATION SESSION (BR-AA-KA-064)
+	// Tracks the async submit/poll session with Kubernaut Agent
+	// ========================================
+	// KASession tracks the async KA session for submit/poll pattern
+	// +optional
+	KASession *KASession `json:"investigationSession,omitempty"`
+
+	// ========================================
+	// INTERACTIVE SESSION (DD-INTERACTIVE-002)
+	// Tracks the dynamic takeover session for MCP interactive mode (#703)
+	// ========================================
+	// InteractiveSession tracks who is currently driving the investigation.
+	// Populated when a user takes over via MCP; nil during autonomous mode.
+	// DD-INTERACTIVE-002: Every RR is takeover-capable; this is observability-only.
+	// +optional
+	InteractiveSession *InteractiveSessionInfo `json:"interactiveSession,omitempty"`
+
+	// ========================================
+	// POST-RCA CONTEXT (ADR-056)
+	// Runtime-computed cluster characteristics from Kubernaut Agent
+	// ========================================
+	// PostRCAContext holds data computed by Kubernaut Agent after RCA (e.g., DetectedLabels).
+	// Immutable once set — use CEL validation on the PostRCAContext type.
+	// +optional
+	PostRCAContext *PostRCAContext `json:"postRCAContext,omitempty"`
+
+	// Conditions
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// RCAResult bundles the investigation outcome produced by KA's root-cause
+// analysis and workflow selection (God-struct decomposition, #2189 follow-up:
+// AIAnalysisStatus previously carried these as 5 separate top-level fields).
+type RCAResult struct {
+	// ========================================
+	// ROOT CAUSE ANALYSIS RESULTS
+	// ========================================
+	// Identified root cause
+	RootCause string `json:"rootCause,omitempty"`
+	// Root cause analysis details
+	RootCauseAnalysis *RootCauseAnalysis `json:"rootCauseAnalysis,omitempty"`
+
+	// ========================================
+	// SELECTED WORKFLOW (DD-CONTRACT-002)
+	// ========================================
+	// Selected workflow for execution (populated when phase=Completed)
+	SelectedWorkflow *SelectedWorkflow `json:"selectedWorkflow,omitempty"`
+	// TerminalOutcome is the server-owned typed investigation terminal state.
+	// An absent SelectedWorkflow is not sufficient to establish no-match.
+	// +optional
+	// +kubebuilder:validation:Enum=workflow_selected;problem_resolved;evidence_transport_unavailable;history_enrichment_unavailable;rca_incomplete;no_matching_workflows;workflow_discovery_failed;cancelled
+	TerminalOutcome sharedtypes.TerminalOutcome `json:"terminalOutcome,omitempty"`
+	// WorkflowDiscoveryStatus records the phase-aware workflow discovery gate.
+	// +optional
+	// +kubebuilder:validation:Enum=not_started;started;completed_selected;completed_no_match;failed;skipped_due_to_failure
+	WorkflowDiscoveryStatus sharedtypes.WorkflowDiscoveryStatus `json:"workflowDiscoveryStatus,omitempty"`
+	// HistoryStatus distinguishes empty target history from an unavailable
+	// history/evidence transport.
+	// +optional
+	// +kubebuilder:validation:Enum=available;empty;transport_unavailable;schema_error;not_requested
+	HistoryStatus sharedtypes.HistoryStatus `json:"historyStatus,omitempty"`
+	// SelectionAssessment is non-executable context for rejected proposals.
+	// It cannot be used by RO/WFE to construct a WorkflowExecution (DD-KA-2496).
+	// +optional
+	SelectionAssessment *SelectionAssessment `json:"selectionAssessment,omitempty"`
+
+	// ========================================
+	// ALTERNATIVE WORKFLOWS (Dec 2025)
+	// ========================================
+	// Alternative workflows considered but not selected.
+	// INFORMATIONAL ONLY - NOT for automatic execution.
+	// Helps operators make informed approval decisions and provides audit trail.
+	// Per KA team: Alternatives are for CONTEXT, not EXECUTION.
+	// +optional
+	AlternativeWorkflows []AlternativeWorkflow `json:"alternativeWorkflows,omitempty"`
+
+	// #388: LLM's assessment of whether the alert warrants action.
+	// Empty when not yet assessed (pre-investigation or error paths).
+	// "Actionable" when the LLM determines the alert warrants action (default for all processed alerts).
+	// "NotActionable" when the LLM determines the alert is benign (e.g., orphaned PVCs).
+	// +kubebuilder:validation:Enum=Actionable;NotActionable
+	// +optional
+	Actionability string `json:"actionability,omitempty"`
+}
+
+// ApprovalStatus bundles human-approval-gating signals set by the Analyzing
+// phase's Rego evaluation (God-struct decomposition, #2189 follow-up).
+type ApprovalStatus struct {
+	// True if approval is required (confidence < 80% or policy requires)
+	ApprovalRequired bool `json:"approvalRequired"`
+	// Reason why approval is required (when ApprovalRequired=true)
+	ApprovalReason string `json:"approvalReason,omitempty"`
+	// Rich context for approval notification
+	ApprovalContext *ApprovalContext `json:"approvalContext,omitempty"`
+}
+
+// ReviewStatus bundles human-review signaling set by Kubernaut Agent when
+// the AI cannot produce a reliable result, plus the shadow-agent alignment
+// verdict (BR-KA-197, BR-AI-601; God-struct decomposition #2189 follow-up).
+type ReviewStatus struct {
+	// True if human review required (KA decision: RCA incomplete/unreliable)
+	// BR-KA-197: Triggers NotificationRequest creation in RO
+	// BR-496 v2: Set when root_owner missing (rca_incomplete) or validation/confidence issues.
+	NeedsHumanReview bool `json:"needsHumanReview"`
+	// Reason why human review needed (when NeedsHumanReview=true)
+	// BR-KA-197: Maps to KA's human_review_reason enum values
+	// BR-AI-601: alignment_check_failed added for shadow agent alignment verdicts
+	// #2019/#2020: decision_expired added for a discovered-and-presented
+	// workflow whose decision was not answered before the interactive
+	// session's inactivity timeout (distinct from no_matching_workflows).
+	// +kubebuilder:validation:Enum=workflow_not_found;image_mismatch;parameter_validation_failed;no_matching_workflows;low_confidence;llm_parsing_error;investigation_inconclusive;rca_incomplete;alignment_check_failed;operator_escalation;decision_expired
+	// +optional
+	HumanReviewReason string `json:"humanReviewReason,omitempty"`
+
+	// Shadow agent alignment verdict from KA (BR-AI-601, #1076).
+	// When CircuitBreakerActivated=true, the investigation was terminated early
+	// and LLM results (RootCauseAnalysis, SelectedWorkflow) may be incomplete
+	// or compromised. Users should treat shadow findings as the primary content.
+	// +optional
+	AlignmentVerdict *AlignmentVerdictStatus `json:"alignmentVerdict,omitempty"`
+}
+
+// InvestigationMetadata bundles KA execution bookkeeping: correlation ID,
+// duration, non-fatal warnings, validation-attempt history, degraded-mode
+// flag, and the retry counter used by BR-AI-009's backoff logic
+// (God-struct decomposition, #2189 follow-up).
+type InvestigationMetadata struct {
+	// EvidenceStatus is the bounded server-owned evidence projection copied from
+	// KA. It is additive and does not alter existing reason/subreason routing.
+	// +optional
+	EvidenceStatus *EvidenceStatus `json:"evidenceStatus,omitempty"`
+
+	// ========================================
+	// INVESTIGATION DETAILS
+	// ========================================
+	// KA investigation ID for correlation
+	// +kubebuilder:validation:MaxLength=253
+	InvestigationID string `json:"investigationId,omitempty"`
+	// NOTE: TokensUsed REMOVED (Dec 2025)
+	// Reason: LLM token tracking is KA's responsibility (it calls the LLM)
+	// Observability: KA exposes kubernaut_agent_llm_token_usage_total Prometheus metric
+	// Correlation: Use InvestigationID to link AIAnalysis CRD to KA metrics
+	// Design Decision: DD-COST-001 - Cost observability is provider's responsibility
+	// Investigation duration in seconds
+	// +kubebuilder:validation:Minimum=0
+	InvestigationTime int64 `json:"investigationTime,omitempty"`
+
+	// ========================================
+	// KA RESPONSE METADATA
+	// ========================================
+	// Non-fatal warnings from KA (e.g., low confidence)
+	Warnings []string `json:"warnings,omitempty"`
+	// ValidationAttemptsHistory contains complete history of all KA validation attempts
+	// Per DD-KA-001 v1.4: KA retries up to 3 times with LLM self-correction
+	// This field provides audit trail for operator notifications and debugging
+	// +optional
+	ValidationAttemptsHistory []ValidationAttempt `json:"validationAttemptsHistory,omitempty"`
+
+	// ========================================
+	// OPERATIONAL STATUS
+	// ========================================
+	// DegradedMode indicates if the analysis ran with degraded capabilities
+	// (e.g., Rego policy evaluation failed, using safe defaults)
+	DegradedMode bool `json:"degradedMode,omitempty"`
+	// TotalAnalysisTime is the total duration of the analysis in milliseconds
+	// +kubebuilder:validation:Minimum=0
+	TotalAnalysisTime int64 `json:"totalAnalysisTime,omitempty"`
+	// ConsecutiveFailures tracks retry attempts for exponential backoff
+	// BR-AI-009: Reset to 0 on success, increment on transient failure
+	// Used with pkg/shared/backoff for retry logic with jitter
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ConsecutiveFailures int32 `json:"consecutiveFailures,omitempty"`
+}
+
+// GetRCAResult returns Status.RCAResult, or a zero-value *RCAResult if nil,
+// so read call sites can chain field access without repeating a nil-guard.
+// God-struct decomposition (#2189 follow-up): RCAResult/Approval/Review/
+// InvestigationMetadata are pointer bundles (nil until their owning phase
+// populates them), unlike the flat bool/string fields they replaced.
+func (s *AIAnalysisStatus) GetRCAResult() *RCAResult {
+	if s.RCAResult == nil {
+		return &RCAResult{}
+	}
+	return s.RCAResult
+}
+
+// EnsureRCAResult initializes Status.RCAResult if nil and returns it, for
+// write call sites (mirrors the pre-existing KASession/InteractiveSession
+// nil-init-then-mutate convention used throughout this package's handlers).
+func (s *AIAnalysisStatus) EnsureRCAResult() *RCAResult {
+	if s.RCAResult == nil {
+		s.RCAResult = &RCAResult{}
+	}
+	return s.RCAResult
+}
+
+// GetApproval returns Status.Approval, or a zero-value *ApprovalStatus if
+// nil. See GetRCAResult doc comment.
+func (s *AIAnalysisStatus) GetApproval() *ApprovalStatus {
+	if s.Approval == nil {
+		return &ApprovalStatus{}
+	}
+	return s.Approval
+}
+
+// EnsureApproval initializes Status.Approval if nil and returns it. See
+// EnsureRCAResult doc comment.
+func (s *AIAnalysisStatus) EnsureApproval() *ApprovalStatus {
+	if s.Approval == nil {
+		s.Approval = &ApprovalStatus{}
+	}
+	return s.Approval
+}
+
+// GetReview returns Status.Review, or a zero-value *ReviewStatus if nil.
+// See GetRCAResult doc comment.
+func (s *AIAnalysisStatus) GetReview() *ReviewStatus {
+	if s.Review == nil {
+		return &ReviewStatus{}
+	}
+	return s.Review
+}
+
+// EnsureReview initializes Status.Review if nil and returns it. See
+// EnsureRCAResult doc comment.
+func (s *AIAnalysisStatus) EnsureReview() *ReviewStatus {
+	if s.Review == nil {
+		s.Review = &ReviewStatus{}
+	}
+	return s.Review
+}
+
+// GetInvestigationMetadata returns Status.InvestigationMetadata, or a
+// zero-value *InvestigationMetadata if nil. See GetRCAResult doc comment.
+func (s *AIAnalysisStatus) GetInvestigationMetadata() *InvestigationMetadata {
+	if s.InvestigationMetadata == nil {
+		return &InvestigationMetadata{}
+	}
+	return s.InvestigationMetadata
+}
+
+// EnsureInvestigationMetadata initializes Status.InvestigationMetadata if
+// nil and returns it. See EnsureRCAResult doc comment.
+func (s *AIAnalysisStatus) EnsureInvestigationMetadata() *InvestigationMetadata {
+	if s.InvestigationMetadata == nil {
+		s.InvestigationMetadata = &InvestigationMetadata{}
+	}
+	return s.InvestigationMetadata
+}
+
+// PostRCAContext holds data computed by Kubernaut Agent after the RCA phase.
+// ADR-056: DetectedLabels are computed at runtime by KA's LabelDetector
+// and returned in the KA response for storage in the AIAnalysis status.
+// This data is used by Rego policies for approval gating (e.g., stateful
+// workload detection) and is immutable once set.
+//
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.setAt) || self == oldSelf",message="postRCAContext is immutable once setAt is populated (ADR-056)"
+type PostRCAContext struct {
+	// DetectedLabels contains cluster characteristics computed by KA's
+	// LabelDetector during get_namespaced_resource_context or get_cluster_resource_context tool invocations.
+	// +optional
+	DetectedLabels *sharedtypes.DetectedLabels `json:"detectedLabels,omitempty"`
+	// SetAt records when the PostRCAContext was populated.
+	// Used as the immutability guard: once SetAt is non-nil, the entire
+	// PostRCAContext becomes immutable via CEL validation.
+	// +optional
+	SetAt *metav1.Time `json:"setAt,omitempty"`
+}
+
+// KASession tracks the async Kubernaut Agent session lifecycle.
+// BR-AA-KA-064.4: AA controller session tracking
+// BR-AA-KA-064.5: Session regeneration on 404 (KA restart)
+// Renamed from InvestigationSession to avoid CRD name collision with
+// the root InvestigationSession type in api/investigationsession/v1alpha1/.
+type KASession struct {
+	// Session ID returned by Kubernaut Agent on submit (cleared on session loss)
+	ID string `json:"id,omitempty"`
+	// Generation counter tracking session regenerations (0 = first session, incremented on 404)
+	// +kubebuilder:validation:Minimum=0
+	Generation int32 `json:"generation"`
+	// Interactive indicates the session was submitted with interactive=true (IS CRD present at submit time).
+	// BR-INTERACTIVE-010: Used to detect takeover/deletion state mismatches during polling.
+	// +optional
+	Interactive bool `json:"interactive,omitempty"`
+	// LastPolled timestamp of the last poll attempt
+	// +optional
+	LastPolled *metav1.Time `json:"lastPolled,omitempty"`
+	// CreatedAt timestamp when the current session was created
+	// +optional
+	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+	// PollCount tracks the number of handleSessionRunning reconciles for
+	// observability. #2204 (2026-08-20): no longer tied to a fixed poll
+	// interval -- the AgentSession watch drives most reconciles, with a
+	// deadline-driven backstop requeue (InvestigatingHandler.backstopRequeueAfter)
+	// as the only remaining safety net.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	PollCount int32 `json:"pollCount,omitempty"`
+	// ConsecutiveGetResultErrors tracks consecutive 409 errors from GetSessionResult.
+	// #1390: After 3 consecutive 409s, the session is regenerated to break the polling loop.
+	// Reset to 0 on any successful GetSessionResult call.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ConsecutiveGetResultErrors int32 `json:"consecutiveGetResultErrors,omitempty"`
+	// BackoffUntil is the earliest time the Investigating handler is allowed
+	// to run again after a session-lost regeneration. #2080 recurrence: the
+	// controller's own self-watch predicate (aiAnalysisUpdatePredicate) wakes
+	// the reconciler immediately whenever ID changes -- which handleSessionLost's
+	// regeneration writes do on every attempt -- bypassing the RequeueAfter
+	// backoff it just computed. This durable deadline is checked BEFORE the
+	// handler runs (reconcileInvestigating), regardless of what woke the
+	// reconciler, so an early wake-up is absorbed instead of spending another
+	// regeneration attempt.
+	// +optional
+	BackoffUntil *metav1.Time `json:"backoffUntil,omitempty"`
+}
+
+// InteractiveSessionInfo tracks the dynamic takeover session for MCP interactive mode.
+// DD-INTERACTIVE-002: Observability-only status field showing who is driving the investigation.
+// BR-INTERACTIVE-007: Operators can see the current driver via kubectl.
+type InteractiveSessionInfo struct {
+	// SessionID is the KA-assigned interactive session identifier
+	// +optional
+	SessionID string `json:"sessionId,omitempty"`
+	// MCPSessionID is the go-sdk MCP session identifier
+	// +optional
+	MCPSessionID string `json:"mcpSessionId,omitempty"`
+	// ActingUser is the resolved identity currently driving the investigation
+	// +optional
+	ActingUser string `json:"actingUser,omitempty"`
+	// ActingUserGroups are the groups of the user driving the investigation
+	// (BR-INTERACTIVE-001, #774)
+	// +optional
+	ActingUserGroups []string `json:"actingUserGroups,omitempty"`
+	// StartedAt is when the user took over
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// CompletedAt is when the user disconnected (KA resumed autonomous)
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+}
+
+// RootCauseAnalysis contains detailed RCA results
+type RootCauseAnalysis struct {
+	// Brief summary of root cause
+	Summary string `json:"summary"`
+	// Severity classified by SignalProcessing Rego policy (BR-SP-105); KA's RCA must preserve this input value.
+	// DD-SEVERITY-001 v1.1: Aligned with KA/workflow catalog (critical, high, warning, info, unknown)
+	// +kubebuilder:validation:Enum=critical;high;warning;info;unknown
+	// +optional
+	Severity string `json:"severity,omitempty"`
+	// Signal type determined by RCA (may differ from input)
+	SignalType string `json:"signalType"`
+	// Contributing factors
+	ContributingFactors []string `json:"contributingFactors,omitempty"`
+	// RemediationTarget identifies the actual resource the LLM determined should be remediated.
+	// BR-KA-212: The LLM may identify a higher-level resource (e.g., Deployment) rather than
+	// the Pod that generated the signal. The WFE creator should prefer this over the RR's
+	// TargetResource when available to ensure the correct resource is patched.
+	// +optional
+	RemediationTarget *RemediationTarget `json:"remediationTarget,omitempty"`
+}
+
+// RemediationTarget identifies the Kubernetes resource identified by the LLM as the
+// actual target for remediation. This may differ from the signal's source resource
+// (e.g., the signal comes from a Pod, but the Deployment should be patched).
+type RemediationTarget struct {
+	// Kind is the Kubernetes resource kind (e.g., "Deployment", "StatefulSet", "DaemonSet")
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+	// Name is the resource name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+	// Namespace is the resource namespace. Empty for cluster-scoped resources (e.g., Node, PersistentVolume).
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// APIVersion disambiguates the resource's API group when the Kind exists in
+	// multiple groups (e.g. Route in route.openshift.io vs serving.knative.dev).
+	// Format: "group/version" (e.g. "route.openshift.io/v1"). Issue #1040.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+}
+
+// SelectedWorkflow contains the AI-selected workflow for execution
+// DD-CONTRACT-002: Output format for RO to create WorkflowExecution
+// Field-by-field per Issue #2284: on K8s v1.31.x, whole-object "self ==
+// oldSelf" spuriously evaluates false when a nullable:true field
+// (declaredParameterNames) holds nil on both sides, rejecting identical
+// idempotent resubmits and causing an infinite reconcile loop. engineConfig
+// is excluded from the comparison entirely: x-kubernetes-preserve-unknown-fields
+// makes it CEL-inaccessible ("undefined field 'engineConfig'" at compile
+// time) -- a documented, narrow trade-off (see EngineConfig's own doc
+// comment for the precedent of pushing that validation to the Go/RO layer).
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.selectedAt) || (self.workflowId == oldSelf.workflowId && self.workflowName == oldSelf.workflowName && self.actionType == oldSelf.actionType && self.version == oldSelf.version && self.executionBundle == oldSelf.executionBundle && self.confidence == oldSelf.confidence && self.rationale == oldSelf.rationale && (has(self.executionBundleDigest) == has(oldSelf.executionBundleDigest)) && (!has(self.executionBundleDigest) || self.executionBundleDigest == oldSelf.executionBundleDigest) && (has(self.executionEngine) == has(oldSelf.executionEngine)) && (!has(self.executionEngine) || self.executionEngine == oldSelf.executionEngine) && (has(self.serviceAccountName) == has(oldSelf.serviceAccountName)) && (!has(self.serviceAccountName) || self.serviceAccountName == oldSelf.serviceAccountName) && (has(self.dependencies) == has(oldSelf.dependencies)) && (!has(self.dependencies) || self.dependencies == oldSelf.dependencies) && (has(self.resources) == has(oldSelf.resources)) && (!has(self.resources) || self.resources == oldSelf.resources) && (has(self.parameters) == has(oldSelf.parameters)) && (!has(self.parameters) || self.parameters == oldSelf.parameters) && (has(self.selectedAt) == has(oldSelf.selectedAt)) && (!has(self.selectedAt) || self.selectedAt == oldSelf.selectedAt) && (has(self.declaredParameterNames) == has(oldSelf.declaredParameterNames)) && (!has(self.declaredParameterNames) || self.declaredParameterNames == oldSelf.declaredParameterNames))",message="selectedWorkflow is immutable once selectedAt is populated (Issue #1661, DD-WORKFLOW-018)"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.selectedAt) || ((has(self.repeatJustification) == has(oldSelf.repeatJustification)) && (!has(self.repeatJustification) || self.repeatJustification == oldSelf.repeatJustification) && (has(self.workflowSelectionConfidence) == has(oldSelf.workflowSelectionConfidence)) && (!has(self.workflowSelectionConfidence) || self.workflowSelectionConfidence == oldSelf.workflowSelectionConfidence) && (has(self.repeatJustificationRequired) == has(oldSelf.repeatJustificationRequired)) && (!has(self.repeatJustificationRequired) || self.repeatJustificationRequired == oldSelf.repeatJustificationRequired) && (has(self.priorWorkflowMatch) == has(oldSelf.priorWorkflowMatch)) && (!has(self.priorWorkflowMatch) || self.priorWorkflowMatch == oldSelf.priorWorkflowMatch) && (has(self.repeatValidationOutcome) == has(oldSelf.repeatValidationOutcome)) && (!has(self.repeatValidationOutcome) || self.repeatValidationOutcome == oldSelf.repeatValidationOutcome) && (has(self.handoffDigest) == has(oldSelf.handoffDigest)) && (!has(self.handoffDigest) || self.handoffDigest == oldSelf.handoffDigest) && (has(self.priorRemediationUIDs) == has(oldSelf.priorRemediationUIDs)) && (!has(self.priorRemediationUIDs) || self.priorRemediationUIDs == oldSelf.priorRemediationUIDs))",message="selection metadata is immutable once selectedAt is populated (DD-KA-2496)"
+type SelectedWorkflow struct {
+	// WorkflowSnapshot is the catalog-resolved execution snapshot
+	// (WorkflowID/WorkflowName/ActionType/Version/ExecutionBundle/
+	// ExecutionBundleDigest/ExecutionEngine/EngineConfig/ServiceAccountName/
+	// Dependencies/Resources/DeclaredParameterNames), inline-embedded so its
+	// field list can never drift from WorkflowExecution.Spec.WorkflowRef,
+	// which embeds the same type (Issue #1661 Change 12, DD-WORKFLOW-018).
+	//
+	// ========================================
+	// CRD-EMBEDDED EXECUTION SNAPSHOT (Issue #1661 Change 11b, DD-WORKFLOW-018)
+	// ========================================
+	// Dependencies/Resources/DeclaredParameterNames are catalog-authoritative
+	// schema data KA already validated during workflow selection (Change 11a).
+	// Embedding them here lets RemediationOrchestrator/WorkflowExecution trust
+	// this CRD snapshot instead of independently re-fetching the workflow from
+	// DataStorage — closing the gap where an in-flight remediation could
+	// observe a RemediationWorkflow that was updated or deleted after
+	// selection completed.
+	sharedtypes.WorkflowSnapshot `json:",inline"`
+
+	// Confidence score (0.0-1.0)
+	// +kubebuilder:validation:Minimum=0.0
+	// +kubebuilder:validation:Maximum=1.0
+	Confidence float64 `json:"confidence"`
+	// Workflow parameters (UPPER_SNAKE_CASE keys per DD-WORKFLOW-003)
+	Parameters map[string]string `json:"parameters,omitempty"`
+	// Rationale explaining why this workflow was selected
+	Rationale string `json:"rationale"`
+
+	// DD-KA-2496 / BR-KA-016: reasoning is not execution configuration. Nil
+	// confidence/flags mean unknown, not zero/false. These freeze with SelectedAt.
+	// +optional
+	RepeatJustification *sharedtypes.RepeatJustification `json:"repeatJustification,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0.0
+	// +kubebuilder:validation:Maximum=1.0
+	WorkflowSelectionConfidence *float64 `json:"workflowSelectionConfidence,omitempty"`
+	// +optional
+	RepeatJustificationRequired *bool `json:"repeatJustificationRequired,omitempty"`
+	// +optional
+	PriorWorkflowMatch *bool `json:"priorWorkflowMatch,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Enum=not_required;accepted;rejected
+	RepeatValidationOutcome string `json:"repeatValidationOutcome,omitempty"`
+	// HandoffDigest is computed by KA, not supplied by the LLM.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	HandoffDigest string `json:"handoffDigest,omitempty"`
+	// PriorRemediationUIDs are trusted target-scoped links for audit/history
+	// reconstruction only, never for live Console delivery or execution.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	PriorRemediationUIDs []string `json:"priorRemediationUIDs,omitempty"`
+
+	// SelectedAt records when this snapshot was first populated. Once
+	// non-nil, the entire SelectedWorkflow becomes immutable via the
+	// XValidation rule above — mirroring PostRCAContext's ADR-056 guard —
+	// to prevent tampering with the execution snapshot RO/WFE will trust.
+	// +optional
+	SelectedAt *metav1.Time `json:"selectedAt,omitempty"`
+}
+
+// SelectionAssessment is a bounded non-executable sibling of SelectedWorkflow.
+// DD-KA-2496: rejected/incomplete explanations remain visible without satisfying
+// the executable reasoning schema. No parameters, bundles or handoff body.
+type SelectionAssessment struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	ProposedWorkflowID string `json:"proposedWorkflowId"`
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	WorkflowName string `json:"workflowName,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0.0
+	// +kubebuilder:validation:Maximum=1.0
+	WorkflowSelectionConfidence *float64 `json:"workflowSelectionConfidence,omitempty"`
+	// +optional
+	RepeatJustification *sharedtypes.RepeatJustificationAssessment `json:"repeatJustification,omitempty"`
+	// +optional
+	RepeatJustificationRequired *bool `json:"repeatJustificationRequired,omitempty"`
+	// +optional
+	PriorWorkflowMatch *bool `json:"priorWorkflowMatch,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Enum=not_required;accepted;rejected
+	RepeatValidationOutcome string `json:"repeatValidationOutcome,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	HandoffDigest string `json:"handoffDigest,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	PriorRemediationUIDs []string `json:"priorRemediationUIDs,omitempty"`
+}
+
+// AlternativeWorkflow contains alternative workflows considered but not selected.
+// INFORMATIONAL ONLY - NOT for automatic execution.
+// Helps operators understand AI reasoning during approval decisions.
+// Per KA team (Dec 5, 2025): Alternatives are for CONTEXT, not EXECUTION.
+type AlternativeWorkflow struct {
+	// Workflow identifier (catalog lookup key)
+	// +kubebuilder:validation:Required
+	WorkflowID string `json:"workflowId"`
+	// Execution bundle OCI reference (digest-pinned) - resolved by KA
+	ExecutionBundle string `json:"executionBundle,omitempty"`
+	// Confidence score (0.0-1.0) - shows why it wasn't selected
+	// +kubebuilder:validation:Minimum=0.0
+	// +kubebuilder:validation:Maximum=1.0
+	Confidence float64 `json:"confidence"`
+	// Rationale explaining why this workflow was considered
+	Rationale string `json:"rationale"`
+}
+
+// ValidationAttempt contains details of a single KA validation attempt
+// Per DD-KA-001 v1.4: KA retries up to 3 times with LLM self-correction
+// Each attempt feeds validation errors back to the LLM for correction
+type ValidationAttempt struct {
+	// Attempt number (1, 2, or 3)
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
+	Attempt int `json:"attempt"`
+	// WorkflowID that the LLM tried in this attempt
+	WorkflowID string `json:"workflowId"`
+	// Whether validation passed (always false for failed attempts in history)
+	IsValid bool `json:"isValid"`
+	// Validation errors encountered
+	Errors []string `json:"errors,omitempty"`
+	// When this attempt occurred
+	Timestamp metav1.Time `json:"timestamp"`
+}
+
+// AlignmentVerdictStatus holds the shadow agent's alignment verdict on the CRD.
+// Produced by KA (InvestigatorWrapper), mapped by AA (ResponseProcessor).
+// BR-AI-601, #1076: When CircuitBreakerActivated=true, primary LLM results
+// may be incomplete or compromised; shadow findings are the primary content.
+type AlignmentVerdictStatus struct {
+	// Result is the overall shadow agent verdict: "clean" or "suspicious".
+	Result string `json:"result"`
+	// CircuitBreakerActivated indicates the investigation was terminated early.
+	CircuitBreakerActivated bool `json:"circuitBreakerActivated"`
+	// Summary is a narrative summary of the shadow agent evaluation.
+	// +optional
+	Summary string `json:"summary,omitempty"`
+	// Flagged is the number of steps flagged as suspicious.
+	Flagged int `json:"flagged"`
+	// Total is the total number of steps evaluated.
+	Total int `json:"total"`
+	// Findings contains per-step suspicious findings.
+	// +optional
+	Findings []AlignmentFindingStatus `json:"findings,omitempty"`
+}
+
+// AlignmentFindingStatus captures a single suspicious step on the CRD.
+type AlignmentFindingStatus struct {
+	// StepIndex is the zero-based index of the evaluated step.
+	StepIndex int `json:"stepIndex"`
+	// StepKind is the kind of step (llm_reasoning, tool_result, signal_input).
+	StepKind string `json:"stepKind"`
+	// Tool is the tool name if StepKind is tool_result.
+	// +optional
+	Tool string `json:"tool,omitempty"`
+	// Explanation is the shadow agent's explanation for flagging this step.
+	Explanation string `json:"explanation"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=aia
+// +kubebuilder:selectablefield:JSONPath=.spec.remediationRequestRef.name
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Confidence",type=number,JSONPath=`.status.rcaResult.selectedWorkflow.confidence`
+// +kubebuilder:printcolumn:name="Approval Required",type=boolean,JSONPath=`.status.approval.approvalRequired`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// AIAnalysis is the Schema for the aianalyses API.
+type AIAnalysis struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   AIAnalysisSpec   `json:"spec,omitempty"`
+	Status AIAnalysisStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// AIAnalysisList contains a list of AIAnalysis.
+type AIAnalysisList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []AIAnalysis `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&AIAnalysis{}, &AIAnalysisList{})
+}

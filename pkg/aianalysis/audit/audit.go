@@ -1,0 +1,860 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package audit provides audit event generation for the AIAnalysis controller.
+// DD-AUDIT-002 V2.2: Uses shared pkg/audit library with zero unstructured data.
+// DD-AUDIT-003: Implements service-specific audit event types.
+// DD-AUDIT-004 V1.3: Direct struct assignment to SetEventData (no map conversion).
+package audit
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/jordigilh/kubernaut/pkg/aianalysis"
+	"github.com/jordigilh/kubernaut/pkg/audit"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// Event type constants (per DD-AUDIT-003)
+const (
+	EventTypeAnalysisCompleted = "aianalysis.analysis.completed"
+	EventTypeAnalysisFailed    = "aianalysis.analysis.failed"
+	EventTypePhaseTransition   = "aianalysis.phase.transition"
+	EventTypeAIAgentCall       = "aianalysis.aiagent.call"
+	EventTypeApprovalDecision  = "aianalysis.approval.decision"
+	EventTypeRegoEvaluation    = "aianalysis.rego.evaluation"
+	EventTypeError             = "aianalysis.error.occurred"
+
+	// Config hot-reload audit-trail parity (GAP-11, Issue #2285): mirrors
+	// gateway.config.{reloaded,rejected}'s component-based shape. component
+	// is "ca_cert" for the TLS_CA_FILE hot-reload watcher today; extensible
+	// to other hot-reloadable components later.
+	EventTypeConfigReloaded = "aianalysis.config.reloaded"
+	EventTypeConfigRejected = "aianalysis.config.rejected"
+
+	// Session audit event types (BR-AA-KA-065.1/.2; repurposed from the
+	// retired HTTP submit/poll design's BR-AA-KA-064 naming -- see
+	// DD-AUDIT-003's AI Analysis Controller event catalog)
+	EventTypeAIAgentSubmit = "aianalysis.aiagent.submit"
+	EventTypeAIAgentResult = "aianalysis.aiagent.result"
+	// aianalysis.aiagent.session_lost (EventTypeAIAgentSessionLost) was
+	// retired, not repurposed, alongside RecordAIAgentSessionLost --
+	// DD-AA-KA-001, BR-AA-KA-065.7 -- its sole caller (handleSessionLost)
+	// was deleted with the regeneration-cap mechanism it audited.
+)
+
+// Event category constant (per DD-AUDIT-003)
+// FIXED: Changed from "aianalysis" to "analysis" to match OpenAPI schema enum (api/openapi/data-storage-v1.yaml:832-920)
+const (
+	EventCategoryAIAnalysis = "analysis"
+)
+
+// Event action constants (per DD-AUDIT-003)
+const (
+	EventActionAnalysisComplete = "analysis_complete"
+	EventActionAnalysisFailed   = "analysis_failed"
+	EventActionPhaseTransition  = "phase_transition"
+	EventActionError            = "error"
+	EventActionAIAgentCall      = "aiagent_call"
+	EventActionApprovalDecision = "approval_decision"
+	EventActionPolicyEvaluation = "policy_evaluation"
+	EventActionConfigReloaded   = "reloaded"
+	EventActionConfigRejected   = "rejected"
+)
+
+// Actor constants (per DD-AUDIT-003)
+const (
+	ActorTypeService            = "service"
+	ActorIDAIAnalysisController = "aianalysis-controller"
+)
+
+// AuditClient handles audit event storage using pkg/audit shared library
+type AuditClient struct {
+	store audit.AuditStore // Uses shared library interface
+	log   logr.Logger
+}
+
+// NewAuditClient creates a new audit client
+func NewAuditClient(store audit.AuditStore, log logr.Logger) *AuditClient {
+	return &AuditClient{
+		store: store,
+		log:   log.WithName("audit"),
+	}
+}
+
+// getCorrelationID returns the correlation ID for an AIAnalysis resource
+// Per DD-AUDIT-CORRELATION-001: Primary source is RemediationRequestRef.Name
+// Falls back to RemediationID if RemediationRequestRef is not set (e.g., in tests)
+func getCorrelationID(analysis *aianalysisv1.AIAnalysis) string {
+	if analysis.Spec.RemediationRequestRef.Name != "" {
+		return analysis.Spec.RemediationRequestRef.Name
+	}
+	// Fallback for tests or edge cases where RemediationRequestRef is not populated
+	return analysis.Spec.RemediationID
+}
+
+func setAnalysisClusterID(event *ogenclient.AuditEventRequest, analysis *aianalysisv1.AIAnalysis) {
+	audit.SetClusterID(event, analysis.Spec.ClusterID)
+}
+
+// RecordAnalysisComplete records analysis completion event
+// This is the primary audit event for AIAnalysis (per DD-AUDIT-003)
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0) - eliminates duplicate type definitions.
+func (c *AuditClient) RecordAnalysisComplete(ctx context.Context, analysis *aianalysisv1.AIAnalysis) {
+	payload := buildAnalysisCompletePayload(analysis)
+
+	// Determine outcome
+	var apiOutcome ogenclient.AuditEventRequestEventOutcome
+	if analysis.Status.Phase == aianalysisv1.PhaseFailed {
+		apiOutcome = audit.OutcomeFailure
+	} else {
+		apiOutcome = audit.OutcomeSuccess
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.2: Direct struct assignment)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeAnalysisCompleted)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionAnalysisComplete) // Fixed: Must match test contract
+	audit.SetEventOutcome(event, apiOutcome)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAuditEventRequestEventDataAianalysisAnalysisCompletedAuditEventRequestEventData(*payload)
+
+	// Fire-and-forget (per Risk #4 / DD-AUDIT-002)
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write audit event",
+			"event_type", event.EventType,
+			"correlation_id", event.CorrelationID,
+		)
+		// Don't fail reconciliation on audit failure (graceful degradation)
+	}
+}
+
+// buildAnalysisCompletePayload builds the AIAnalysisAuditPayload for
+// RecordAnalysisComplete, including the DD-AUDIT-005 provider response
+// summary. Extracted from RecordAnalysisComplete (Wave 6 6c GREEN: funlen
+// remediation) — pure code motion, no behavior change.
+func buildAnalysisCompletePayload(analysis *aianalysisv1.AIAnalysis) *ogenclient.AIAnalysisAuditPayload {
+	im := analysis.Status.GetInvestigationMetadata()
+	approval := analysis.Status.GetApproval()
+	rca := analysis.Status.GetRCAResult()
+
+	// Single source of truth: api/openapi/data-storage-v1.yaml
+	payload := &ogenclient.AIAnalysisAuditPayload{
+		EventType:        EventTypeAnalysisCompleted,
+		AnalysisName:     analysis.Name,
+		Namespace:        analysis.Namespace,
+		Phase:            ogenclient.AIAnalysisAuditPayloadPhase(analysis.Status.Phase),
+		ApprovalRequired: approval.ApprovalRequired,
+		DegradedMode:     im.DegradedMode,
+		WarningsCount:    len(im.Warnings),
+	}
+
+	// Optional fields (OGEN-MIGRATION: Use .SetTo() for optional fields)
+	if approval.ApprovalReason != "" {
+		payload.ApprovalReason.SetTo(approval.ApprovalReason)
+	}
+	if rca.SelectedWorkflow != nil {
+		confidence := float32(rca.SelectedWorkflow.Confidence)
+		payload.Confidence.SetTo(confidence)
+		payload.WorkflowID.SetTo(rca.SelectedWorkflow.WorkflowID)
+	}
+	applySelectionAuditFields(payload, rca)
+	// ADR-055: TargetInOwnerChain removed - remediationTarget is now in RCA
+	if analysis.Status.Reason != "" {
+		payload.Reason.SetTo(string(analysis.Status.Reason))
+	}
+	if analysis.Status.SubReason != "" {
+		payload.SubReason.SetTo(analysis.Status.SubReason)
+	}
+
+	// DD-AUDIT-005: Add provider response summary (consumer perspective)
+	// This complements the aiagent.response.complete event (provider perspective)
+	if im.InvestigationID != "" {
+		summary := ogenclient.ProviderResponseSummary{
+			IncidentID:       im.InvestigationID,
+			AnalysisPreview:  truncateString(rca.RootCause, 500),
+			NeedsHumanReview: determineNeedsHumanReview(analysis),
+			WarningsCount:    len(im.Warnings),
+		}
+		if rca.SelectedWorkflow != nil {
+			summary.SelectedWorkflowID.SetTo(rca.SelectedWorkflow.WorkflowID)
+		}
+		payload.ProviderResponseSummary.SetTo(summary)
+	}
+
+	return payload
+}
+
+// RecordPhaseTransition records a phase transition event
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0).
+func (c *AuditClient) RecordPhaseTransition(ctx context.Context, analysis *aianalysisv1.AIAnalysis, from, to string) {
+	// Idempotency check: Only record if phase actually changed
+	if from == to {
+		c.log.V(1).Info("Skipping phase transition audit - phase unchanged",
+			"phase", from,
+			"name", analysis.Name,
+			"namespace", analysis.Namespace)
+		return
+	}
+
+	// Build structured payload using OpenAPI-generated type
+	payload := &ogenclient.AIAnalysisPhaseTransitionPayload{
+		OldPhase: from,
+		NewPhase: to,
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.2: Direct struct assignment)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypePhaseTransition)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionPhaseTransition)
+	audit.SetEventOutcome(event, audit.OutcomeSuccess)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAIAnalysisPhaseTransitionPayloadAuditEventRequestEventData(*payload)
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write phase transition audit")
+	}
+}
+
+// RecordError records an error event
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0).
+func (c *AuditClient) RecordError(ctx context.Context, analysis *aianalysisv1.AIAnalysis, phase string, err error) {
+	// Build structured payload using OpenAPI-generated type
+	payload := &ogenclient.AIAnalysisErrorPayload{
+		Phase:        phase,
+		ErrorMessage: err.Error(),
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.0: OpenAPI types)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeError)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionError)
+	audit.SetEventOutcome(event, audit.OutcomeFailure)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAIAnalysisErrorPayloadAuditEventRequestEventData(*payload)
+
+	// Note: error_message DB column is populated by Data Storage from event_data JSON
+	// Per ADR-034: Error details stored in event_data for query-ability
+
+	if storeErr := c.store.StoreAudit(ctx, event); storeErr != nil {
+		c.log.Error(storeErr, "Failed to write error audit")
+	}
+}
+
+// RecordAIAgentCall records an AI agent call event
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0).
+func (c *AuditClient) RecordAIAgentCall(ctx context.Context, analysis *aianalysisv1.AIAnalysis, endpoint string, statusCode int, durationMs int) {
+	// Build structured payload using OpenAPI-generated type
+	payload := &ogenclient.AIAnalysisAIAgentCallPayload{
+		Endpoint:       endpoint,
+		HTTPStatusCode: int32(statusCode),
+		DurationMs:     int32(durationMs),
+	}
+
+	// Determine outcome
+	var apiOutcome ogenclient.AuditEventRequestEventOutcome
+	if statusCode >= 400 {
+		apiOutcome = audit.OutcomeFailure
+	} else {
+		apiOutcome = audit.OutcomeSuccess
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.0: OpenAPI types)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeAIAgentCall)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionAIAgentCall) // Fixed: Must match test contract
+	audit.SetEventOutcome(event, apiOutcome)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	audit.SetDuration(event, durationMs)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAuditEventRequestEventDataAianalysisAiagentCallAuditEventRequestEventData(*payload)
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write AI agent call audit")
+	}
+}
+
+// RecordApprovalDecision records an approval decision event
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0).
+func (c *AuditClient) RecordApprovalDecision(ctx context.Context, analysis *aianalysisv1.AIAnalysis, decision string, reason string) {
+	// Derive boolean flags from decision string
+	approvalRequired := decision == aianalysis.OutcomeRequiresApproval
+	autoApproved := decision == aianalysis.OutcomeAutoApproved
+
+	// Build structured payload using OpenAPI-generated type
+	payload := &ogenclient.AIAnalysisApprovalDecisionPayload{
+		ApprovalRequired: approvalRequired,
+		ApprovalReason:   reason,
+		AutoApproved:     autoApproved,
+		Decision:         decision,
+		Reason:           reason,
+		Environment:      analysis.Spec.AnalysisRequest.SignalContext.Environment,
+	}
+
+	// Conditional fields (type-safe pointers)
+	if sw := analysis.Status.GetRCAResult().SelectedWorkflow; sw != nil {
+		payload.Confidence.SetTo(sw.Confidence)
+		payload.WorkflowID.SetTo(sw.WorkflowID)
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.0: OpenAPI types)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeApprovalDecision)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionApprovalDecision)
+	audit.SetEventOutcome(event, audit.OutcomeSuccess)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAIAnalysisApprovalDecisionPayloadAuditEventRequestEventData(*payload)
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write approval decision audit")
+	}
+}
+
+// RecordRegoEvaluation records a Rego policy evaluation event
+//
+// Uses OpenAPI-generated types (DD-AUDIT-004 V2.0).
+// policyHash pins the SHA-256 hash of the policy that produced this evaluation
+// onto the audit trail (BR-AI-030, Issue #1981/#2005); pass "" when no policy
+// was loaded (degraded mode) or evaluation failed before a policy was resolved.
+func (c *AuditClient) RecordRegoEvaluation(ctx context.Context, analysis *aianalysisv1.AIAnalysis, outcome string, degraded bool, durationMs int, reason string, policyHash string) {
+	// Build structured payload using OpenAPI-generated type
+	payload := &ogenclient.AIAnalysisRegoEvaluationPayload{
+		Outcome:    outcome,
+		Degraded:   degraded,
+		DurationMs: int32(durationMs),
+		Reason:     reason,
+	}
+	if policyHash != "" {
+		payload.PolicyHash.SetTo(policyHash)
+	}
+
+	// Map outcome to OpenAPI enum
+	var apiOutcome ogenclient.AuditEventRequestEventOutcome
+	switch outcome {
+	case aianalysis.OutcomeAllow, aianalysis.OutcomeSuccess, aianalysis.OutcomeRequiresApproval, aianalysis.OutcomeAutoApproved:
+		apiOutcome = audit.OutcomeSuccess
+	case aianalysis.OutcomeDeny, aianalysis.OutcomeFailure:
+		apiOutcome = audit.OutcomeFailure
+	default:
+		apiOutcome = audit.OutcomePending
+	}
+
+	// Build audit event (DD-AUDIT-002 V2.0: OpenAPI types)
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeRegoEvaluation)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionPolicyEvaluation)
+	audit.SetEventOutcome(event, apiOutcome)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-001: Use parent RemediationRequest name as correlation ID
+	// This maintains consistency with SignalProcessing, WorkflowExecution, and other services
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	audit.SetDuration(event, durationMs)
+	// Use ogen union constructor (OGEN-MIGRATION)
+	event.EventData = ogenclient.NewAIAnalysisRegoEvaluationPayloadAuditEventRequestEventData(*payload)
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write Rego evaluation audit")
+	}
+}
+
+// RecordConfigReloaded records a hot-reloadable component's reload outcome
+// (GAP-11, Issue #2285: CA hot-reload audit-trail parity). component
+// identifies which hot-reloadable component fired (e.g. "ca_cert" for the
+// TLS_CA_FILE watcher); reloadErr is nil on success (emits
+// aianalysis.config.reloaded) or non-nil on rejection, in which case the
+// previous configuration is kept in place (emits aianalysis.config.rejected).
+//
+// Mirrors Gateway's EmitConfigReloadAudit shape (pkg/gateway/audit_emission.go),
+// the shipped reference implementation for this exact event pair.
+func (c *AuditClient) RecordConfigReloaded(ctx context.Context, component string, reloadErr error) {
+	event := audit.NewAuditEventRequest()
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "Config", component)
+	audit.SetCorrelationID(event, fmt.Sprintf("config-reload-%s-%d", component, time.Now().UnixNano()))
+
+	if reloadErr != nil {
+		audit.SetEventType(event, EventTypeConfigRejected)
+		audit.SetEventAction(event, EventActionConfigRejected)
+		audit.SetEventOutcome(event, audit.OutcomeFailure)
+		event.EventData = ogenclient.NewAIAnalysisConfigRejectedPayloadAuditEventRequestEventData(ogenclient.AIAnalysisConfigRejectedPayload{
+			EventType:       ogenclient.AIAnalysisConfigRejectedPayloadEventTypeAianalysisConfigRejected,
+			Component:       component,
+			RejectionReason: reloadErr.Error(),
+		})
+	} else {
+		audit.SetEventType(event, EventTypeConfigReloaded)
+		audit.SetEventAction(event, EventActionConfigReloaded)
+		audit.SetEventOutcome(event, audit.OutcomeSuccess)
+		event.EventData = ogenclient.NewAIAnalysisConfigReloadedPayloadAuditEventRequestEventData(ogenclient.AIAnalysisConfigReloadedPayload{
+			EventType: ogenclient.AIAnalysisConfigReloadedPayloadEventTypeAianalysisConfigReloaded,
+			Component: component,
+		})
+	}
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write config reload audit", "component", component)
+	}
+}
+
+// ========================================
+// HELPER FUNCTIONS (DD-AUDIT-005)
+// ========================================
+
+// truncateString truncates a string to the specified length, adding "..." if truncated
+// Used for audit event preview fields to limit event payload size
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// determineNeedsHumanReview infers needs_human_review flag from AIAnalysis status
+//
+// DD-AUDIT-005: Consumer perspective on whether Holmes recommended human review
+// This is inferred from AIAnalysis status fields since we don't store the raw Holmes response
+//
+// Logic:
+// - Failed + SubReason set = needs human review
+// - ApprovalRequired + certain approval reasons = needs human review
+// - No selected workflow = needs human review
+func determineNeedsHumanReview(analysis *aianalysisv1.AIAnalysis) bool {
+	// Failed analyses typically need human review
+	if analysis.Status.Phase == aianalysisv1.PhaseFailed {
+		return true
+	}
+
+	// No workflow selected = needs human review
+	if analysis.Status.GetRCAResult().SelectedWorkflow == nil {
+		return true
+	}
+
+	// Approval required due to low confidence or validation issues
+	if analysis.Status.GetApproval().ApprovalRequired {
+		// High-severity approval reasons suggest human review needed
+		highSeverityReasons := map[string]bool{
+			"WorkflowNotFound":          true,
+			"NoMatchingWorkflows":       true,
+			"LowConfidence":             true,
+			"LLMParsingError":           true,
+			"InvestigationInconclusive": true,
+		}
+		if highSeverityReasons[analysis.Status.SubReason] {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ========================================
+// SESSION AUDIT METHODS (BR-AA-KA-065.1/.2)
+// Fired at AgentSession create/Status-read time -- names/event types kept
+// unchanged from the retired BR-AA-KA-064 HTTP submit/poll design for
+// audit-trail/dashboard continuity (DD-AUDIT-003).
+// ========================================
+
+// RecordAIAgentSubmit records a KA submit event (AgentSession Create) with session ID.
+// BR-AA-KA-065.1: Audit trail for session creation
+func (c *AuditClient) RecordAIAgentSubmit(ctx context.Context, analysis *aianalysisv1.AIAnalysis, sessionID string) {
+	payload := ogenclient.AIAnalysisAIAgentCallPayload{
+		Endpoint:       "session_submit",
+		HTTPStatusCode: 200,
+		DurationMs:     0,
+	}
+
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeAIAgentSubmit)
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, "aiagent_submit")
+	audit.SetEventOutcome(event, audit.OutcomeSuccess)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+	event.EventData = ogenclient.NewAuditEventRequestEventDataAianalysisAiagentSubmitAuditEventRequestEventData(payload)
+
+	if err := c.store.StoreAudit(ctx, event); err != nil {
+		c.log.Error(err, "Failed to write AI agent submit audit", "sessionID", sessionID)
+	}
+}
+
+// RecordAIAgentResult records a KA result retrieval (AgentSession Status read) with investigation time.
+// BR-AA-KA-065.1: Audit trail for result retrieval.
+//
+// For backward compatibility with existing audit tests (DD-AUDIT-003), this also
+// emits an EventTypeAIAgentCall event, which is the sync-era equivalent of
+// "KA was called and returned a result." This ensures tests that expect
+// aianalysis.aiagent.call events continue to pass in session mode.
+func (c *AuditClient) RecordAIAgentResult(ctx context.Context, analysis *aianalysisv1.AIAnalysis, investigationTimeMs int64) {
+	// Emit the session-specific result event
+	payload := ogenclient.AIAnalysisAIAgentCallPayload{
+		Endpoint:       "session_result",
+		HTTPStatusCode: 200,
+		DurationMs:     int32(investigationTimeMs),
+	}
+
+	resultEvent := audit.NewAuditEventRequest()
+	audit.SetEventType(resultEvent, EventTypeAIAgentResult)
+	audit.SetEventCategory(resultEvent, EventCategoryAIAnalysis)
+	audit.SetEventAction(resultEvent, "aiagent_result")
+	audit.SetEventOutcome(resultEvent, audit.OutcomeSuccess)
+	audit.SetActor(resultEvent, ActorTypeService, ActorIDAIAnalysisController)
+	audit.SetResource(resultEvent, "AIAnalysis", analysis.Name)
+	audit.SetCorrelationID(resultEvent, getCorrelationID(analysis))
+	audit.SetNamespace(resultEvent, analysis.Namespace)
+	setAnalysisClusterID(resultEvent, analysis)
+	audit.SetDuration(resultEvent, int(investigationTimeMs))
+	resultEvent.EventData = ogenclient.NewAuditEventRequestEventDataAianalysisAiagentResultAuditEventRequestEventData(payload)
+
+	if err := c.store.StoreAudit(ctx, resultEvent); err != nil {
+		c.log.Error(err, "Failed to write AI agent result audit")
+	}
+
+	// Backward compatibility: emit aiagent.call event (DD-AUDIT-003)
+	c.RecordAIAgentCall(ctx, analysis, "/api/v1/incident/analyze", 200, int(investigationTimeMs))
+}
+
+// RecordAnalysisFailed records an audit event for analysis failure.
+//
+// This method implements BR-AUDIT-005 Gap #7: Standardized error details
+// for SOC2 compliance and RR reconstruction.
+//
+// Parameters:
+// - ctx: Context for the operation
+// - analysis: AIAnalysis CRD that failed
+// - err: Error that caused the failure (e.g., Holmes API error)
+//
+// Example Usage:
+//
+//	err := callHolmesAPI(ctx, analysis)
+//	if err != nil {
+//	    if auditErr := c.RecordAnalysisFailed(ctx, analysis, err); auditErr != nil {
+//	        logger.Error(auditErr, "Failed to record analysis failure audit")
+//	    }
+//	    return err
+//	}
+//
+// Event Structure:
+// - event_type: "aianalysis.analysis.failed"
+// - event_category: "analysis"
+// - event_outcome: "failure"
+// - event_data.error_details: Standardized ErrorDetails structure
+func (c *AuditClient) RecordAnalysisFailed(ctx context.Context, analysis *aianalysisv1.AIAnalysis, err error) error {
+	errorDetails := classifyAnalysisFailureError(err)
+
+	// Build audit event per DD-AUDIT-002 V2.0: OpenAPI types
+	event := audit.NewAuditEventRequest()
+	audit.SetEventType(event, EventTypeAnalysisFailed) // DD-AUDIT-003: Use constant
+	audit.SetEventCategory(event, EventCategoryAIAnalysis)
+	audit.SetEventAction(event, EventActionAnalysisFailed) // DD-AUDIT-003: Use constant
+	audit.SetEventOutcome(event, audit.OutcomeFailure)
+	audit.SetActor(event, ActorTypeService, ActorIDAIAnalysisController) // DD-AUDIT-003: Use constants
+	audit.SetResource(event, "AIAnalysis", analysis.Name)
+	// DD-AUDIT-CORRELATION-002: Use rr.Name (not rr.UID) for audit event correlation
+	audit.SetCorrelationID(event, getCorrelationID(analysis))
+	audit.SetNamespace(event, analysis.Namespace)
+	setAnalysisClusterID(event, analysis)
+
+	payload := buildAnalysisFailedPayload(analysis, errorDetails)
+
+	// DD-KA-2496 audit wiring: the event being emitted, not reconciliation's
+	// current phase, determines the union discriminator (AU-3/CC7.2).
+	event.EventData = ogenclient.NewAuditEventRequestEventDataAianalysisAnalysisFailedAuditEventRequestEventData(payload)
+
+	// Store audit event
+	return c.store.StoreAudit(ctx, event)
+}
+
+// classifyAnalysisFailureError classifies err into a standardized
+// sharedaudit.ErrorDetails (Gap #7: SOC2-compliant error_details), covering
+// upstream timeouts, invalid responses, generic upstream failures, and the
+// no-error edge case. Extracted from RecordAnalysisFailed (Wave 6 6c GREEN:
+// funlen remediation) — pure code motion, no behavior change.
+func classifyAnalysisFailureError(err error) *sharedaudit.ErrorDetails {
+	if err == nil {
+		// No error provided (shouldn't happen, but handle gracefully)
+		return sharedaudit.NewErrorDetails(
+			"aianalysis",
+			"ERR_INTERNAL_UNKNOWN",
+			"Analysis failed with unknown error",
+			false,
+		)
+	}
+
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "context deadline exceeded"):
+		return sharedaudit.NewErrorDetails("aianalysis", "ERR_UPSTREAM_TIMEOUT", errMsg, true) // Timeout is transient
+	case strings.Contains(errMsg, "invalid response"):
+		return sharedaudit.NewErrorDetails("aianalysis", "ERR_UPSTREAM_INVALID_RESPONSE", errMsg, false) // Invalid response may not be retryable
+	default:
+		return sharedaudit.NewErrorDetails("aianalysis", "ERR_UPSTREAM_FAILURE", errMsg, true) // Assume upstream errors are transient
+	}
+}
+
+// buildAnalysisFailedPayload builds the AIAnalysisAuditPayload for
+// RecordAnalysisFailed, including the DD-AUDIT-005 provider response summary
+// (always NeedsHumanReview=true for failures). Extracted from
+// RecordAnalysisFailed (Wave 6 6c GREEN: funlen remediation) — pure code
+// motion, no behavior change.
+func buildAnalysisFailedPayload(analysis *aianalysisv1.AIAnalysis, errorDetails *sharedaudit.ErrorDetails) ogenclient.AIAnalysisAuditPayload {
+	im := analysis.Status.GetInvestigationMetadata()
+	approval := analysis.Status.GetApproval()
+	rca := analysis.Status.GetRCAResult()
+
+	// Use structured audit payload (eliminates map[string]interface{})
+	// Per DD-AUDIT-004: Zero unstructured data in audit events
+	payload := ogenclient.AIAnalysisAuditPayload{
+		EventType:        EventTypeAnalysisFailed,
+		AnalysisName:     analysis.Name,
+		Namespace:        analysis.Namespace,
+		Phase:            toAIAnalysisAuditPayloadPhase(analysis.Status.Phase),
+		ApprovalRequired: approval.ApprovalRequired,
+		DegradedMode:     im.DegradedMode,
+		WarningsCount:    len(im.Warnings),
+		ErrorDetails:     toOptErrorDetails(errorDetails), // Gap #7: Standardized error_details for SOC2 compliance
+	}
+
+	// Optional fields (OGEN-MIGRATION: Use .SetTo() for optional fields)
+	if approval.ApprovalReason != "" {
+		payload.ApprovalReason.SetTo(approval.ApprovalReason)
+	}
+	if rca.SelectedWorkflow != nil {
+		confidence := float32(rca.SelectedWorkflow.Confidence)
+		payload.Confidence.SetTo(confidence)
+		payload.WorkflowID.SetTo(rca.SelectedWorkflow.WorkflowID)
+	}
+	applySelectionAuditFields(&payload, rca)
+	// ADR-055: TargetInOwnerChain removed - remediationTarget is now in RCA
+	if analysis.Status.Reason != "" {
+		payload.Reason.SetTo(string(analysis.Status.Reason))
+	}
+	if analysis.Status.SubReason != "" {
+		payload.SubReason.SetTo(analysis.Status.SubReason)
+	}
+
+	// DD-AUDIT-005: Add provider response summary (consumer perspective) if available
+	if im.InvestigationID != "" {
+		summary := ogenclient.ProviderResponseSummary{
+			IncidentID:       im.InvestigationID,
+			AnalysisPreview:  truncateString(rca.RootCause, 500),
+			NeedsHumanReview: true, // Failures always need human review
+			WarningsCount:    len(im.Warnings),
+		}
+		if rca.SelectedWorkflow != nil {
+			summary.SelectedWorkflowID.SetTo(rca.SelectedWorkflow.WorkflowID)
+		}
+		payload.ProviderResponseSummary.SetTo(summary)
+	}
+
+	return payload
+}
+
+// ========================================
+// OGEN-MIGRATION: Helper functions for type conversion
+// ========================================
+
+// applySelectionAuditFields preserves independent confidence, known zero and
+// optional rejected reasoning in both complete/failed payloads (DD-KA-2496).
+// Trusted prior-attempt links belong to audit, never the shared live projection.
+func applySelectionAuditFields(payload *ogenclient.AIAnalysisAuditPayload, rca *aianalysisv1.RCAResult) {
+	if selected := rca.SelectedWorkflow; selected != nil {
+		safe := (katypes.LiveSelectionContext{SelectedWorkflow: &katypes.LiveSelectedWorkflow{
+			WorkflowID: selected.WorkflowID, WorkflowName: selected.WorkflowName,
+			WorkflowSelectionConfidence: selected.WorkflowSelectionConfidence, RepeatJustification: selected.RepeatJustification,
+			RepeatJustificationRequired: selected.RepeatJustificationRequired, PriorWorkflowMatch: selected.PriorWorkflowMatch,
+			RepeatValidationOutcome: selected.RepeatValidationOutcome, HandoffDigest: selected.HandoffDigest,
+		}}).SafeCopy().SelectedWorkflow
+		if safe == nil {
+			return
+		}
+		applySelectedAuditFields(payload, safe)
+		if rationale := sharedtypes.BoundedHistoricalDecisionText(selected.Rationale); rationale != "" {
+			// BR-KA-016/#2533: retain only bounded, sanitized rationale for
+			// target-scoped historical context. It is never execution input.
+			payload.WorkflowRationale.SetTo(rationale)
+		}
+		payload.PriorRemediationUids = append([]string(nil), selected.PriorRemediationUIDs...)
+		return
+	}
+	if assessed := rca.SelectionAssessment; assessed != nil {
+		safe := (katypes.LiveSelectionContext{SelectionAssessment: &katypes.LiveSelectionAssessment{
+			ProposedWorkflowID: assessed.ProposedWorkflowID, WorkflowName: assessed.WorkflowName,
+			WorkflowSelectionConfidence: assessed.WorkflowSelectionConfidence, RepeatJustification: assessed.RepeatJustification,
+			RepeatJustificationRequired: assessed.RepeatJustificationRequired, PriorWorkflowMatch: assessed.PriorWorkflowMatch,
+			RepeatValidationOutcome: assessed.RepeatValidationOutcome, HandoffDigest: assessed.HandoffDigest,
+		}}).SafeCopy().SelectionAssessment
+		if safe == nil {
+			return
+		}
+		assessment := selectionAuditAssessment(safe)
+		assessment.PriorRemediationUids = append([]string(nil), assessed.PriorRemediationUIDs...)
+		payload.SelectionAssessment.SetTo(assessment)
+	}
+}
+
+func applySelectedAuditFields(payload *ogenclient.AIAnalysisAuditPayload, safe *katypes.LiveSelectedWorkflow) {
+	payload.WorkflowName.SetTo(safe.WorkflowName)
+	if safe.WorkflowSelectionConfidence != nil {
+		payload.WorkflowSelectionConfidence.SetTo(*safe.WorkflowSelectionConfidence)
+	}
+	if safe.RepeatJustification != nil {
+		payload.RepeatJustification.SetTo(ogenclient.RepeatJustification{
+			EvidenceBasis: safe.RepeatJustification.EvidenceBasis, PriorOutcomeRelevance: safe.RepeatJustification.PriorOutcomeRelevance,
+			ExpectedMechanism: safe.RepeatJustification.ExpectedMechanism,
+		})
+	}
+	if safe.RepeatJustificationRequired != nil {
+		payload.RepeatJustificationRequired.SetTo(*safe.RepeatJustificationRequired)
+	}
+	if safe.PriorWorkflowMatch != nil {
+		payload.PriorWorkflowMatch.SetTo(*safe.PriorWorkflowMatch)
+	}
+	if safe.RepeatValidationOutcome != "" {
+		payload.RepeatValidationOutcome.SetTo(ogenclient.AIAnalysisAuditPayloadRepeatValidationOutcome(safe.RepeatValidationOutcome))
+	}
+	if safe.HandoffDigest != "" {
+		payload.HandoffDigest.SetTo(safe.HandoffDigest)
+	}
+}
+
+func selectionAuditAssessment(safe *katypes.LiveSelectionAssessment) ogenclient.SelectionAssessment {
+	assessment := ogenclient.SelectionAssessment{ProposedWorkflowID: safe.ProposedWorkflowID}
+	if safe.WorkflowName != "" {
+		assessment.WorkflowName.SetTo(safe.WorkflowName)
+	}
+	if safe.WorkflowSelectionConfidence != nil {
+		assessment.WorkflowSelectionConfidence.SetTo(*safe.WorkflowSelectionConfidence)
+	}
+	if safe.RepeatJustification != nil {
+		parts := ogenclient.RepeatJustificationAssessment{}
+		if safe.RepeatJustification.EvidenceBasis != "" {
+			parts.EvidenceBasis.SetTo(safe.RepeatJustification.EvidenceBasis)
+		}
+		if safe.RepeatJustification.PriorOutcomeRelevance != "" {
+			parts.PriorOutcomeRelevance.SetTo(safe.RepeatJustification.PriorOutcomeRelevance)
+		}
+		if safe.RepeatJustification.ExpectedMechanism != "" {
+			parts.ExpectedMechanism.SetTo(safe.RepeatJustification.ExpectedMechanism)
+		}
+		assessment.RepeatJustification.SetTo(parts)
+	}
+	if safe.RepeatJustificationRequired != nil {
+		assessment.RepeatJustificationRequired.SetTo(*safe.RepeatJustificationRequired)
+	}
+	if safe.PriorWorkflowMatch != nil {
+		assessment.PriorWorkflowMatch.SetTo(*safe.PriorWorkflowMatch)
+	}
+	if safe.RepeatValidationOutcome != "" {
+		assessment.RepeatValidationOutcome.SetTo(ogenclient.SelectionAssessmentRepeatValidationOutcome(safe.RepeatValidationOutcome))
+	}
+	if safe.HandoffDigest != "" {
+		assessment.HandoffDigest.SetTo(safe.HandoffDigest)
+	}
+	return assessment
+}
+
+// Note: componentMapping moved to pkg/shared/audit/ogen_helpers.go for reuse across all services
+
+// toAIAnalysisAuditPayloadPhase converts string phase to ogen enum type.
+func toAIAnalysisAuditPayloadPhase(phase string) ogenclient.AIAnalysisAuditPayloadPhase {
+	switch phase {
+	case "Pending":
+		return ogenclient.AIAnalysisAuditPayloadPhasePending
+	case "Analyzing":
+		return ogenclient.AIAnalysisAuditPayloadPhaseAnalyzing
+	case "Completed":
+		return ogenclient.AIAnalysisAuditPayloadPhaseCompleted
+	case aianalysisv1.PhaseFailed:
+		return ogenclient.AIAnalysisAuditPayloadPhaseFailed
+	default:
+		return "" // Should not happen with valid CRD phases
+	}
+}
+
+// toOptErrorDetails converts sharedaudit.ErrorDetails to ogenclient.OptErrorDetails.
+func toOptErrorDetails(errorDetails *sharedaudit.ErrorDetails) ogenclient.OptErrorDetails {
+	if errorDetails == nil {
+		return ogenclient.OptErrorDetails{}
+	}
+
+	// Use shared helper for type-safe conversion
+	// **Refactoring**: 2026-01-22 - Use pkg/shared/audit/ogen_helpers.go for consistency
+	return sharedaudit.ToOgenOptErrorDetails(errorDetails)
+}

@@ -1,0 +1,567 @@
+package tools
+
+import (
+	"context"
+	"encoding/gob"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/go-logr/logr"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+// PooledToolCallTimeout bounds a single pooled-session KA MCP call
+// (discover_workflows, select_workflow, message, complete, cancel,
+// status, reconnect). Without it, a lost/stuck response on a reused
+// session blocks the caller indefinitely (#1954) — the caller's raw ctx
+// was previously passed straight through with no deadline. 60s covers
+// discover_workflows's legitimate LLM-bound latency (observed 14-25s in
+// KA) with headroom, while staying well under KA's own inactivity
+// backstop (#1949/#1951/#1952). A var, not a const, so tests can shrink
+// it to verify real end-to-end timeout enforcement in milliseconds,
+// mirroring AwaitSessionTimeout's test-override pattern (crd_tools_session.go).
+var PooledToolCallTimeout = 60 * time.Second
+
+// logPooledToolTimeoutFired emits a log line when a pooled KA MCP tool call
+// is aborted by PooledToolCallTimeout (or an inherited parent cancellation)
+// rather than completing normally (#1995) -- without this, an operator
+// investigating a stuck interactive session has no signal distinguishing "the
+// tool call is still legitimately in flight" from "AF already gave up on it
+// N seconds ago and downgraded/errored the response".
+func logPooledToolTimeoutFired(ctx context.Context, toolName, rrID string, start time.Time) {
+	logr.FromContextOrDiscard(ctx).Info("pooled KA tool call timed out or was canceled",
+		"tool", toolName, "rr_id", rrID, "elapsed", time.Since(start).String())
+}
+
+// WorkflowParameter describes a single input parameter for a workflow.
+type WorkflowParameter struct {
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Default     any      `json:"default,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+}
+
+// DiscoverWorkflowsArgs defines the input for kubernaut_discover_workflows.
+type DiscoverWorkflowsArgs struct {
+	RRID       string `json:"rr_id"`
+	WorkflowID string `json:"workflow_id,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	// ClusterID and SessionID are ambient hints the LLM propagates from fleet
+	// context and cross-phase preservation (#2364). Tolerated here so strict
+	// ADK schema validation does not kill the turn; ignored by the handler,
+	// which keys everything off RRID.
+	ClusterID string `json:"cluster_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// WorkflowDetail holds a workflow definition with its parameter schemas.
+type WorkflowDetail struct {
+	WorkflowID  string              `json:"workflow_id"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Kind        string              `json:"kind,omitempty"`
+	Confidence  float64             `json:"confidence,omitempty"`
+	Parameters  []WorkflowParameter `json:"parameters"`
+}
+
+// TargetInfo identifies a Kubernetes resource involved in workflow discovery (#1437).
+type TargetInfo struct {
+	APIVersion string `json:"api_version,omitempty"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	// ClusterID scopes the target to a fleet cluster (#2364): strict ADK
+	// validation rejects unknown nested properties, so spoke-scoped targets
+	// must declare it. Ignored by consumers, which read cluster identity from
+	// server-side RRContext.
+	ClusterID string `json:"cluster_id,omitempty"`
+}
+
+// DiscoverWorkflowsResult is the output of kubernaut_discover_workflows.
+type DiscoverWorkflowsResult struct {
+	katypes.LiveSelectionContext
+	Workflows      []WorkflowDetail `json:"workflows"`
+	Count          int              `json:"count"`
+	SearchedTarget *TargetInfo      `json:"searched_target,omitempty"`
+	SignalTarget   *TargetInfo      `json:"signal_target,omitempty"`
+}
+
+// HandleDiscoverWorkflows implements kubernaut_discover_workflows via KA MCP.
+//
+//nolint:gocritic // hugeParam: args passed by value for simplicity
+func HandleDiscoverWorkflows(ctx context.Context, mcpClient ka.MCPClient, args DiscoverWorkflowsArgs) (DiscoverWorkflowsResult, error) {
+	if args.RRID != "" {
+		if err := validate.RRID(args.RRID); err != nil {
+			return DiscoverWorkflowsResult{}, fmt.Errorf("invalid rr_id: %w", err)
+		}
+	}
+	if mcpClient == nil {
+		return DiscoverWorkflowsResult{}, fmt.Errorf("workflow discovery is not available: MCP client not configured")
+	}
+
+	toolCtx, cancel := context.WithTimeout(ctx, PooledToolCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kaResult, err := mcpClient.DiscoverWorkflows(toolCtx, ka.DiscoverWorkflowsArgs{
+		RRID:       args.RRID,
+		WorkflowID: args.WorkflowID,
+		Kind:       args.Kind,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			logPooledToolTimeoutFired(ctx, "discover_workflows", args.RRID, start)
+			return DiscoverWorkflowsResult{Workflows: []WorkflowDetail{}, Count: 0}, nil
+		}
+		return DiscoverWorkflowsResult{}, fmt.Errorf("discover workflows: %w", err)
+	}
+
+	workflows := make([]WorkflowDetail, 0, len(kaResult.Workflows))
+	for _, w := range kaResult.Workflows {
+		params := make([]WorkflowParameter, 0, len(w.Parameters))
+		for _, p := range w.Parameters {
+			params = append(params, WorkflowParameter{
+				Name:        p.Name,
+				Type:        p.Type,
+				Description: p.Description,
+				Required:    p.Required,
+				Default:     p.Default,
+				Enum:        p.Enum,
+			})
+		}
+		workflows = append(workflows, WorkflowDetail{
+			WorkflowID:  w.WorkflowID,
+			Name:        w.Name,
+			Description: w.Description,
+			Kind:        w.Kind,
+			Confidence:  w.Confidence,
+			Parameters:  params,
+		})
+	}
+
+	result := DiscoverWorkflowsResult{
+		LiveSelectionContext: kaResult.SafeCopy(),
+		Workflows:            workflows,
+		Count:                len(workflows),
+	}
+	if kaResult.SearchedTarget != nil {
+		result.SearchedTarget = &TargetInfo{
+			APIVersion: kaResult.SearchedTarget.APIVersion,
+			Kind:       kaResult.SearchedTarget.Kind,
+			Name:       kaResult.SearchedTarget.Name,
+			Namespace:  kaResult.SearchedTarget.Namespace,
+		}
+	}
+	if kaResult.SignalTarget != nil {
+		result.SignalTarget = &TargetInfo{
+			APIVersion: kaResult.SignalTarget.APIVersion,
+			Kind:       kaResult.SignalTarget.Kind,
+			Name:       kaResult.SignalTarget.Name,
+			Namespace:  kaResult.SignalTarget.Namespace,
+		}
+	}
+	return result, nil
+}
+
+// ValidateWorkflowParameters validates supplied parameters against a discovered schema.
+func ValidateWorkflowParameters(schema []WorkflowParameter, params map[string]any) error {
+	if err := validateDefaults(schema); err != nil {
+		return err
+	}
+
+	knownParams := make(map[string]WorkflowParameter, len(schema))
+	for _, p := range schema {
+		knownParams[p.Name] = p
+	}
+
+	for key := range params {
+		if _, ok := knownParams[key]; !ok {
+			return fmt.Errorf("unknown parameter %q", key)
+		}
+	}
+
+	for _, p := range schema {
+		val, provided := params[p.Name]
+		if !provided && p.Required {
+			return fmt.Errorf("required parameter %q missing", p.Name)
+		}
+		if !provided {
+			continue
+		}
+		if err := validateParamType(p, val); err != nil {
+			return err
+		}
+		if len(p.Enum) > 0 {
+			strVal := fmt.Sprintf("%v", val)
+			if !slices.Contains(p.Enum, strVal) {
+				return fmt.Errorf("parameter %q value %q not in enum %v", p.Name, strVal, p.Enum)
+			}
+		}
+	}
+	return nil
+}
+
+func validateDefaults(schema []WorkflowParameter) error {
+	for _, p := range schema {
+		if p.Default == nil || p.Required {
+			continue
+		}
+		if err := validateParamType(p, p.Default); err != nil {
+			return fmt.Errorf("default value for parameter %q: %w", p.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateParamType(p WorkflowParameter, val any) error {
+	switch p.Type {
+	case "string":
+		if _, ok := val.(string); !ok {
+			return fmt.Errorf("parameter %q: expected type string, got %T", p.Name, val)
+		}
+	case "int":
+		switch v := val.(type) {
+		case int, int32, int64, float64:
+			_ = v
+		case json.Number:
+			if _, err := v.Int64(); err != nil {
+				return fmt.Errorf("parameter %q: expected type int, got non-integer number", p.Name)
+			}
+		default:
+			return fmt.Errorf("parameter %q: expected type int, got %T", p.Name, val)
+		}
+	case "float":
+		switch val.(type) {
+		case float32, float64, int, int32, int64, json.Number:
+		default:
+			return fmt.Errorf("parameter %q: expected type float, got %T", p.Name, val)
+		}
+	case "bool":
+		if _, ok := val.(bool); !ok {
+			return fmt.Errorf("parameter %q: expected type bool, got %T", p.Name, val)
+		}
+	}
+	return nil
+}
+
+// NewDiscoverWorkflowsTool creates the kubernaut_discover_workflows tool.
+func NewDiscoverWorkflowsTool(mcpClient ka.MCPClient) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "kubernaut_discover_workflows",
+		Description: "Discover available workflows with their parameter schemas for LLM-populated execution. Requires an active interactive driver session — call kubernaut_investigate first.",
+	}, func(ctx agent.Context, args DiscoverWorkflowsArgs) (DiscoverWorkflowsResult, error) {
+		return HandleDiscoverWorkflows(ctx, mcpClient, args)
+	})
+}
+
+// SelectWorkflowArgs defines the input for kubernaut_select_workflow.
+type SelectWorkflowArgs struct {
+	RRID       string         `json:"rr_id"`
+	WorkflowID string         `json:"workflow_id"`
+	Kind       string         `json:"kind,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Namespace  string         `json:"namespace,omitempty"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+	// ClusterID and SessionID are ambient hints the LLM propagates from fleet
+	// context and cross-phase preservation (#2364). Tolerated here so strict
+	// ADK schema validation does not kill the turn; ignored by the handler,
+	// which keys everything off RRID.
+	ClusterID string `json:"cluster_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// SelectWorkflowResult is the output of kubernaut_select_workflow.
+type SelectWorkflowResult struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// HandleSelectWorkflow implements kubernaut_select_workflow via KA MCP.
+//
+//nolint:gocritic // hugeParam: args passed by value for simplicity; not performance-critical
+func HandleSelectWorkflow(ctx context.Context, mcpClient ka.MCPClient, args SelectWorkflowArgs, auditor audit.Emitter) (SelectWorkflowResult, error) {
+	if err := validate.RRID(args.RRID); err != nil {
+		return SelectWorkflowResult{}, fmt.Errorf("invalid rr_id: %w", err)
+	}
+	if mcpClient == nil {
+		return SelectWorkflowResult{}, fmt.Errorf("workflow selection is not available: MCP client not configured")
+	}
+	toolCtx, cancel := context.WithTimeout(ctx, PooledToolCallTimeout)
+	defer cancel()
+	start := time.Now()
+	result, err := mcpClient.SelectWorkflow(toolCtx, ka.SelectWorkflowArgs{
+		RRID:       args.RRID,
+		WorkflowID: args.WorkflowID,
+		Kind:       args.Kind,
+		Name:       args.Name,
+		Namespace:  args.Namespace,
+		Parameters: args.Parameters,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			logPooledToolTimeoutFired(ctx, "select_workflow", args.RRID, start)
+		}
+		return SelectWorkflowResult{}, fmt.Errorf("selecting workflow: %w", err)
+	}
+
+	if auditor != nil {
+		clusterID := ClusterIDFromContext(ctx)
+		detail := map[string]string{
+			"rr_id":       args.RRID,
+			"workflow_id": args.WorkflowID,
+			"decision":    "accept",
+			"status":      result.Status,
+		}
+		if clusterID != "" {
+			detail["cluster_id"] = clusterID
+		}
+		auditor.Emit(ctx, &audit.Event{
+			Type:      audit.EventUserDecision,
+			ClusterID: clusterID,
+			Detail:    detail,
+		})
+	}
+
+	return SelectWorkflowResult{
+		Status:  result.Status,
+		Message: result.Message,
+	}, nil
+}
+
+// NewSelectWorkflowTool creates the kubernaut_select_workflow tool.
+func NewSelectWorkflowTool(mcpClient ka.MCPClient, auditor audit.Emitter) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "kubernaut_select_workflow",
+		Description: "Select a remediation workflow for execution. Triggers enrichment and workflow selection in the backend. Requires an active interactive driver session — call kubernaut_investigate first.",
+	}, func(ctx agent.Context, args SelectWorkflowArgs) (SelectWorkflowResult, error) {
+		return HandleSelectWorkflow(ctx, mcpClient, args, auditor)
+	})
+}
+
+// HandleListWorkflowsKA implements kubernaut_list_workflows via KA MCP,
+// replacing the DS-backed HandleListWorkflows (ds_tools.go) as the
+// production handler for this tool -- #1677 Phase 2f (DD-WORKFLOW-019).
+// Reuses ListWorkflowsArgs/ListWorkflowsResult/WorkflowSummary (ds_tools.go)
+// as the unchanged wire contract for kubernaut_list_workflows callers.
+func HandleListWorkflowsKA(ctx context.Context, mcpClient ka.MCPClient, args ListWorkflowsArgs) (ListWorkflowsResult, error) {
+	if mcpClient == nil {
+		return ListWorkflowsResult{}, fmt.Errorf("workflow catalog is not available: MCP client not configured")
+	}
+
+	kaResult, err := mcpClient.ListWorkflows(ctx, ka.ListWorkflowsArgs{Kind: args.Kind})
+	if err != nil {
+		return ListWorkflowsResult{}, fmt.Errorf("listing workflows: %w", err)
+	}
+
+	summaries := make([]WorkflowSummary, 0, len(kaResult.Workflows))
+	for _, w := range kaResult.Workflows {
+		summaries = append(summaries, WorkflowSummary{
+			ID: w.ID, Name: w.Name, Description: w.Description, Kind: w.Kind,
+		})
+	}
+
+	return ListWorkflowsResult{Workflows: summaries, Count: len(summaries)}, nil
+}
+
+// PresentDecisionArgs defines the input for present_decision.
+// RCAData is the structured root cause analysis data that the LLM passes
+// through from the kubernaut_investigate response into present_decision.
+// This field is required — ADK schema validation enforces self-correction
+// if omitted by the LLM (#1396).
+type RCAData struct {
+	Confidence  float64  `json:"confidence"`
+	CausalChain []string `json:"causal_chain,omitempty"`
+	Target      string   `json:"target"`
+	// ToolCallsCount and LLMTurns are omitempty (#2073/#2074): prompt.txt
+	// never instructs the LLM to compute these bookkeeping fields, so
+	// marking them required made ADK's schema validation reject every
+	// kubernaut_present_decision call. The harness backfills an
+	// authoritative value where available (canonicalGroundedRCA,
+	// enforceGroundingGuard) rather than relying on the LLM to supply them.
+	ToolCallsCount int `json:"tool_calls_count,omitempty"`
+	LLMTurns       int `json:"llm_turns,omitempty"`
+	// PromptTokens/CompletionTokens/TotalTokens are omitempty bookkeeping
+	// like the two fields above (#2387 tokens; raw provider counts, never
+	// costs): prompt.txt never instructs the LLM to compute them — the
+	// harness substitutes authoritative values (canonicalGroundedRCA) — so
+	// they must never be schema-required (#2073/#2074 lesson).
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+	// ClusterID is an ambient hint the LLM propagates from fleet context
+	// (#2364): spoke-scoped RCA must validate. Tolerated here so strict ADK
+	// schema validation (which rejects unknown nested properties too) does not
+	// kill the turn; ignored by consumers, which read cluster identity from
+	// server-side RRContext.
+	ClusterID string `json:"cluster_id,omitempty"`
+}
+
+// #2110 (v1.6 clone #2111): defense-in-depth only -- production code paths
+// must convert RCAData to a plain map[string]any before it can reach an SSE
+// artifact (see agent/phase_guard.go's canonicalGroundedRCA doc comment for
+// why: a2a-go's task manager gob-encodes every artifact for its deep-copy
+// fan-out, and only registered concrete types can be gob-encoded behind an
+// interface{}). Registering RCAData here means that IF some future code
+// path violates that convention and assigns a raw *RCAData/RCAData into an
+// any-typed field reaching that same gob round-trip, it round-trips
+// correctly instead of crashing the a2a task outright -- turning a
+// hard-to-diagnose production crash into a working (if less-audited) path.
+// This must never be treated as a substitute for the map[string]any
+// convention itself: gob.Register does nothing to prevent a struct pointer
+// from being assigned where a map was expected by calling code.
+func init() {
+	gob.Register(&RCAData{})
+}
+
+type PresentDecisionArgs struct {
+	SessionID      string           `json:"session_id"`
+	Summary        string           `json:"summary"`
+	RCA            RCAData          `json:"rca"`
+	Options        []WorkflowOption `json:"options"`
+	SearchedTarget *TargetInfo      `json:"searched_target,omitempty"`
+	SignalTarget   *TargetInfo      `json:"signal_target,omitempty"`
+	// RRID is an ambient cross-phase hint (#2364). It is tolerated here for
+	// strict ADK schema compatibility but is ignored by HandlePresentDecision.
+	RRID string `json:"rr_id,omitempty"`
+}
+
+// WorkflowOption represents a remediation workflow choice.
+type WorkflowOption struct {
+	WorkflowID     string            `json:"workflow_id"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description"`
+	Risk           string            `json:"risk,omitempty"`
+	Recommended    bool              `json:"recommended,omitempty"`
+	Parameters     map[string]string `json:"parameters,omitempty"`
+	RuledOutReason string            `json:"ruled_out_reason,omitempty"`
+}
+
+// PresentDecisionResult is the output of present_decision.
+type PresentDecisionResult struct {
+	Presented bool   `json:"presented"`
+	Message   string `json:"message"`
+}
+
+// HandlePresentDecision formats RCA and options for user presentation.
+func HandlePresentDecision(args PresentDecisionArgs) PresentDecisionResult {
+	msg := fmt.Sprintf("Investigation complete.\n\nSummary: %s", args.Summary)
+	msg += "\n\nAvailable actions:"
+	for i, opt := range args.Options {
+		msg += fmt.Sprintf("\n  %d. %s", i+1, opt.Name)
+		if opt.Description != "" {
+			msg += fmt.Sprintf(" - %s", opt.Description)
+		}
+	}
+	return PresentDecisionResult{
+		Presented: true,
+		Message:   msg,
+	}
+}
+
+// NewPresentDecisionTool creates the present_decision tool (IsLongRunning).
+func NewPresentDecisionTool() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:          "kubernaut_present_decision",
+		Description:   "Present investigation results and remediation options to the user for a decision",
+		IsLongRunning: true,
+	}, func(ctx agent.Context, args PresentDecisionArgs) (PresentDecisionResult, error) {
+		return HandlePresentDecision(args), nil
+	})
+}
+
+// CompleteNoActionArgs defines the input for kubernaut_complete_no_action.
+type CompleteNoActionArgs struct {
+	RRID             string `json:"rr_id"`
+	Reason           string `json:"reason,omitempty"`
+	EscalationReason string `json:"escalation_reason,omitempty"`
+	// ClusterID and SessionID are ambient hints the LLM propagates from fleet
+	// context and cross-phase preservation (#2364 Tier 2). Tolerated here so
+	// strict ADK schema validation does not kill the turn; ignored by the
+	// handler, which keys everything off RRID.
+	ClusterID string `json:"cluster_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// CompleteNoActionResult is the output of kubernaut_complete_no_action.
+type CompleteNoActionResult struct {
+	Status           string `json:"status"`
+	Reason           string `json:"reason,omitempty"`
+	EscalationReason string `json:"escalation_reason,omitempty"`
+}
+
+// HandleCompleteNoAction implements kubernaut_complete_no_action via KA MCP proxy.
+func HandleCompleteNoAction(ctx context.Context, mcpClient ka.MCPClient, args CompleteNoActionArgs, auditor audit.Emitter) (CompleteNoActionResult, error) {
+	if mcpClient == nil {
+		return CompleteNoActionResult{}, fmt.Errorf("complete_no_action not available: MCP client not configured")
+	}
+	if err := validate.RRID(args.RRID); err != nil {
+		return CompleteNoActionResult{}, fmt.Errorf("invalid rr_id: %w", err)
+	}
+	if args.EscalationReason != "" {
+		if err := validate.EscalationReason(args.EscalationReason); err != nil {
+			return CompleteNoActionResult{}, err
+		}
+	}
+
+	toolCtx, cancel := context.WithTimeout(ctx, PooledToolCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kaResult, err := mcpClient.CompleteNoAction(toolCtx, ka.CompleteNoActionArgs{
+		RRID:             args.RRID,
+		Reason:           args.Reason,
+		EscalationReason: args.EscalationReason,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			logPooledToolTimeoutFired(ctx, "complete_no_action", args.RRID, start)
+		}
+		return CompleteNoActionResult{}, fmt.Errorf("complete_no_action: %w", err)
+	}
+
+	if auditor != nil {
+		resultType := string(ogenclient.ApifrontendKAResultReceivedPayloadResultTypeOperatorDismissed)
+		if args.EscalationReason != "" {
+			resultType = string(ogenclient.ApifrontendKAResultReceivedPayloadResultTypeOperatorEscalation)
+		}
+		detail := map[string]string{
+			"rr_id":           args.RRID,
+			"status":          kaResult.Status,
+			"result_type":     resultType,
+			"delegation_type": "interactive",
+			"tool_outcome":    "success",
+		}
+		if args.Reason != "" {
+			detail["reason"] = args.Reason
+		}
+		if args.EscalationReason != "" {
+			detail["escalation_reason"] = args.EscalationReason
+		}
+		clusterID := ClusterIDFromContext(ctx)
+		if clusterID != "" {
+			detail["cluster_id"] = clusterID
+		}
+		auditor.Emit(ctx, &audit.Event{
+			Type:      audit.EventKAResultReceived,
+			ClusterID: clusterID,
+			Detail:    detail,
+		})
+	}
+
+	return CompleteNoActionResult{
+		Status:           kaResult.Status,
+		Reason:           kaResult.Reason,
+		EscalationReason: kaResult.EscalationReason,
+	}, nil
+}

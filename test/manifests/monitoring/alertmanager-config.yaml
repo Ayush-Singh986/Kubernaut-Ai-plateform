@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'alertmanager@example.org'
+
+    # Route configuration
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 1s
+      group_interval: 5s
+      repeat_interval: 12h
+      receiver: 'kubernaut'
+      routes:
+      - match:
+          alertname: TestAlertAlwaysFiring
+        receiver: 'kubernaut'
+        group_wait: 1s
+        repeat_interval: 30s
+      - match:
+          alertname: HighMemoryUsageE2E
+        receiver: 'kubernaut'
+        group_wait: 1s
+        repeat_interval: 1m
+      - match:
+          alertname: PodCrashLoopingE2E
+        receiver: 'kubernaut'
+        group_wait: 1s
+        repeat_interval: 1m
+      - match:
+          alertname: DeploymentReplicasMismatchE2E
+        receiver: 'kubernaut'
+        group_wait: 1s
+        repeat_interval: 1m
+
+    # Receivers configuration
+    receivers:
+    - name: 'kubernaut'
+      webhook_configs:
+      - url: 'http://kubernaut-service.e2e-test:8080/alerts'
+        send_resolved: true
+
+    # Inhibit rules
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']

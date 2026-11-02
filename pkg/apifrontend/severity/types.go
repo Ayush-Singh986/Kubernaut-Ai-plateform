@@ -1,0 +1,177 @@
+package severity
+
+import (
+	"fmt"
+	"strings"
+
+	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+)
+
+// Source identifies which triage tier determined the severity.
+type Source string
+
+// Triage source constants identify which pipeline tier produced the severity.
+const (
+	SourceFiringAlert  Source = "firing_alert"
+	SourcePendingAlert Source = "pending_alert"
+	// SourceNSFiringAlert indicates a namespace-scoped firing alert correlation.
+	// The alert's namespace label matched the target but no resource-specific
+	// key overlap was found. This is a broader correlation than resource-specific
+	// matching -- downstream consumers should weigh accordingly.
+	SourceNSFiringAlert Source = "ns_firing_alert"
+	// SourceNSPendingAlert is the pending equivalent of SourceNSFiringAlert.
+	SourceNSPendingAlert Source = "ns_pending_alert"
+	// SourceClusterFiringAlert indicates a cluster-scoped firing alert correlation.
+	// The alert has no namespace label, so it is matched to any investigation target.
+	// This is the broadest correlation tier -- the alert represents a cluster-wide
+	// condition that may or may not be related to the specific workload under triage.
+	//
+	// #2018/#2021: cluster-scoped tiers are the LAST fallback, checked only after BOTH
+	// firing and pending resource-scoped and namespace-scoped alerts have been
+	// ruled out (bestOverallMatch in triage.go). Specificity always outranks
+	// state -- a merely "pending" resource-specific alert still beats a
+	// continuously "firing" cluster-scoped alert, since the latter carries no
+	// evidence of actually being related to the target workload.
+	SourceClusterFiringAlert Source = "cluster_firing_alert"
+	// SourceClusterPendingAlert is the pending equivalent of SourceClusterFiringAlert.
+	SourceClusterPendingAlert Source = "cluster_pending_alert"
+	SourceRuleEval            Source = "rule_evaluation"
+	SourceRuleLabel           Source = "rule_label"
+	SourceLLMRuleInform       Source = "llm_rule_informed"
+	SourceLLMTriage           Source = "llm_triage"
+)
+
+// TriageInput holds the resource context for severity triage.
+type TriageInput struct {
+	Namespace   string
+	Kind        string
+	Name        string
+	Description string
+	Labels      map[string]string
+	PodNames    []string // Resolved pod names for alert correlation (auto-populated by Triager when PodResolver is set)
+	// ClusterID is the MCP Gateway cluster name used to scope fleet alert and
+	// rule correlation. It is ignored when FleetMode is false, because a local
+	// Prometheus endpoint represents only the local cluster.
+	ClusterID string
+	// FleetMode enables exact cluster attribution. In fleet mode ClusterID must
+	// be non-empty and match the Prometheus "cluster" label; otherwise no alert
+	// or rule is eligible. Local mode ignores ClusterID and cluster labels.
+	FleetMode bool
+	// ConfirmedSignalName, when non-empty and it exactly matches an
+	// ambiguous candidate's AlertName, indicates the user has already
+	// confirmed that specific weak candidate (DD-AF-012). Triage() bypasses
+	// its ambiguity gate only for this exact match -- a different candidate
+	// on a later call still fails closed and asks again.
+	ConfirmedSignalName string
+}
+
+// TriageResult holds the outcome of the severity triage pipeline.
+type TriageResult struct {
+	Severity   string
+	Source     Source
+	AlertName  string
+	RuleName   string
+	Confidence float64
+	// Ambiguous is true when the only correlating evidence found is a
+	// cluster-scoped alert with no verified relationship to the target
+	// resource (namespace/resource key overlap) -- a guess, not a fact
+	// (DD-AF-012, #2027/#2028). Only Tier 1's cluster-scoped branches set
+	// this; resource- and namespace-scoped matches always have a verified
+	// relationship and are never ambiguous.
+	Ambiguous bool
+}
+
+// Canonical severity values (ADR-066). Severity is kept as a plain string
+// (not a named type) on TriageResult for JSON/API compatibility.
+const (
+	SeverityCritical = "critical"
+	SeverityHigh     = "high"
+	SeverityWarning  = "warning"
+	SeverityInfo     = "info"
+)
+
+var severityRank = map[string]int{
+	SeverityCritical: 5,
+	SeverityHigh:     4,
+	SeverityWarning:  3,
+	SeverityInfo:     1,
+}
+
+var validSeverities = map[string]bool{
+	SeverityCritical: true,
+	SeverityHigh:     true,
+	SeverityWarning:  true,
+	SeverityInfo:     true,
+}
+
+// ValidateSeverity checks if the string is a valid canonical severity value.
+func ValidateSeverity(s string) bool {
+	return validSeverities[s]
+}
+
+// NormalizeSeverity lowercases and validates the severity string.
+// Returns SeverityWarning as default for invalid/empty input (ADR-066).
+func NormalizeSeverity(s string) string {
+	lower := strings.TrimSpace(strings.ToLower(s))
+	if validSeverities[lower] {
+		return lower
+	}
+	return SeverityWarning
+}
+
+// CompareSeverity returns > 0 if a is higher severity than b, < 0 if lower, 0 if equal.
+func CompareSeverity(a, b string) int {
+	return severityRank[a] - severityRank[b]
+}
+
+// HighestSeverity returns the highest severity string from a slice.
+// Returns empty string for empty input.
+func HighestSeverity(severities []string) string {
+	if len(severities) == 0 {
+		return ""
+	}
+	best := severities[0]
+	for _, s := range severities[1:] {
+		if CompareSeverity(s, best) > 0 {
+			best = s
+		}
+	}
+	return best
+}
+
+// SensitiveKeys lists label keys that should not appear in LLM prompts.
+// Exported for consistency testing against tools.sensitiveAlertKeys (#1367 F4).
+var SensitiveKeys = map[string]bool{
+	"password": true, "token": true, "secret": true,
+	"key": true, "credential": true, "bearer": true,
+}
+
+// BuildTriagePrompt constructs the LLM prompt for severity triage.
+// Filters sensitive labels from the input.
+func BuildTriagePrompt(input TriageInput, rules interface{}) string {
+	var sb strings.Builder
+	sb.WriteString("Classify the severity of the following Kubernetes incident.\n\n")
+	fmt.Fprintf(&sb, "Resource: %s/%s in namespace %s\n", input.Kind, input.Name, input.Namespace)
+	fmt.Fprintf(&sb, "Description: %s\n\n", input.Description)
+
+	sb.WriteString("Resource labels:\n")
+	for k, v := range input.Labels {
+		if SensitiveKeys[strings.ToLower(k)] {
+			continue
+		}
+		fmt.Fprintf(&sb, "  %s: %s\n", k, v)
+	}
+
+	if ruleSlice, ok := rules.([]prom.Rule); ok && len(ruleSlice) > 0 {
+		sb.WriteString("\nMatching alerting rules (could not evaluate due to insufficient data):\n")
+		for _, r := range ruleSlice {
+			fmt.Fprintf(&sb, "  - %s: %s (configured severity: %s)\n", r.Name, r.Query, r.Labels["severity"])
+			if summary, exists := r.Annotations["summary"]; exists {
+				fmt.Fprintf(&sb, "    Summary: %s\n", summary)
+			}
+		}
+	}
+
+	sb.WriteString("\nRespond with exactly one of: critical, high, warning, info\n")
+	return sb.String()
+}

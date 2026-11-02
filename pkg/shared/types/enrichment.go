@@ -1,0 +1,440 @@
+// Package types provides shared types used across multiple Kubernaut CRDs.
+// These types ensure API contract alignment between services.
+//
+// ========================================
+// AUTHORITATIVE SOURCE - SINGLE SOURCE OF TRUTH
+// ========================================
+//
+// This file is the AUTHORITATIVE SOURCE for:
+//   - EnrichmentResults schema
+//   - DetectedLabels schema (13 fields)
+//   - OwnerChainEntry schema
+//   - KubernetesContext schema (lean, classification-focused)
+//   - NamespaceContext schema
+//   - WorkloadDetails schema
+//   - BusinessClassification schema
+//
+// All services MUST use these type definitions:
+//   - SignalProcessing (populates at incident time via type aliases)
+//   - AIAnalysis (passes to KA via type aliases)
+//   - KA (uses for workflow filtering + LLM context)
+//   - Data Storage (stores workflow metadata constraints)
+//
+// Issue #113: KubernetesContext restructured to lean, classification-focused schema.
+// Per-type workload fields (PodDetails, DeploymentDetails, etc.) replaced with
+// generic WorkloadDetails (kind, name, labels, annotations) for Rego classification.
+// Operational details (replicas, conditions, ports) removed -- LLM fetches on demand.
+//
+// ADR-056: DetectedLabels and OwnerChain removed from EnrichmentResults.
+// DetectedLabels are now computed by KA post-RCA (see PostRCAContext).
+// OwnerChain is resolved by KA via get_namespaced_resource_context / get_cluster_resource_context (ADR-055).
+//
+// Design Decision: DD-WORKFLOW-001 v2.2, DD-CONTRACT-002
+// See: docs/architecture/decisions/DD-WORKFLOW-001-mandatory-label-schema.md
+//
+// +kubebuilder:object:generate=true
+package types
+
+import (
+	"encoding/json"
+)
+
+// ========================================
+// ENRICHMENT RESULTS (DD-CONTRACT-002)
+// ========================================
+
+// EnrichmentResults contains all enrichment data from SignalProcessing.
+// DD-CONTRACT-002: Authoritative enrichment schema for all CRDs.
+// Used by: SignalProcessing (output), AIAnalysis (input)
+//
+// Issue #113: CustomLabels removed from EnrichmentResults. CustomLabels are now
+// accessed via KubernetesContext.CustomLabels (single source, no redundancy).
+type EnrichmentResults struct {
+	// Kubernetes resource context (classification-focused: namespace, workload labels, owner chain)
+	KubernetesContext *KubernetesContext `json:"kubernetesContext,omitempty"`
+
+	// Business classification from SP categorization phase
+	// BR-SP-002, BR-SP-080, BR-SP-081: Business unit, criticality, SLA
+	// Passed through to KA for workflow filtering and Rego approval decisions
+	BusinessClassification *BusinessClassification `json:"businessClassification,omitempty"`
+}
+
+// Criticality represents the business criticality level of a service.
+// BR-SP-081: SLA Requirement Mapping — Dimension 3: Criticality.
+// +kubebuilder:validation:Enum=Critical;High;Medium;Low
+type Criticality string
+
+const (
+	CriticalityCritical Criticality = "Critical"
+	CriticalityHigh     Criticality = "High"
+	CriticalityMedium   Criticality = "Medium"
+	CriticalityLow      Criticality = "Low"
+)
+
+// SLARequirement represents the SLA tier assigned to a service.
+// BR-SP-081: SLA Requirement Mapping — Dimension 4: SLA Tier.
+// +kubebuilder:validation:Enum=Platinum;Gold;Silver;Bronze
+type SLARequirement string
+
+const (
+	SLARequirementPlatinum SLARequirement = "Platinum"
+	SLARequirementGold     SLARequirement = "Gold"
+	SLARequirementSilver   SLARequirement = "Silver"
+	SLARequirementBronze   SLARequirement = "Bronze"
+)
+
+// BusinessClassification contains business context derived from SP categorization.
+// BR-SP-002: Business Classification
+// BR-SP-080: Business Unit Detection
+// BR-SP-081: SLA Requirement Mapping
+type BusinessClassification struct {
+	// Business unit owning the service (e.g., "payments", "platform")
+	BusinessUnit string `json:"businessUnit,omitempty"`
+	// Service owner team or individual
+	ServiceOwner string `json:"serviceOwner,omitempty"`
+	// Business criticality level
+	Criticality Criticality `json:"criticality,omitempty"`
+	// SLA requirement tier
+	SLARequirement SLARequirement `json:"slaRequirement,omitempty"`
+}
+
+// OwnerChainEntry represents a single entry in the K8s ownership chain.
+// DD-WORKFLOW-001 v1.8: SignalProcessing traverses ownerReferences to build this.
+// Example chain for a Pod owned by Deployment:
+//
+//	[0]: {Namespace: "prod", Kind: "ReplicaSet", Name: "api-7d8f9c6b5"}
+//	[1]: {Namespace: "prod", Kind: "Deployment", Name: "api"}
+type OwnerChainEntry struct {
+	// Namespace of the owner resource (empty for cluster-scoped resources like Node)
+	Namespace string `json:"namespace,omitempty"`
+	// Kind of the owner resource (e.g., ReplicaSet, Deployment, StatefulSet, DaemonSet)
+	Kind string `json:"kind"`
+	// Name of the owner resource
+	Name string `json:"name"`
+	// APIVersion of the owner resource from OwnerReference (e.g. "apps/v1").
+	// Issue #1040.
+	APIVersion string `json:"api_version,omitempty"`
+}
+
+// ========================================
+// DETECTED LABELS (DD-WORKFLOW-001 v2.2)
+// ========================================
+
+// DetectedLabels contains auto-detected cluster characteristics.
+// SignalProcessing populates these automatically from K8s resources.
+// Used by KA for:
+//   - Workflow filtering (deterministic SQL WHERE)
+//   - LLM context (natural language in prompt)
+//
+// DETECTION FAILURE HANDLING (DD-WORKFLOW-001 v2.2):
+// All fields are plain `bool` (NOT `*bool`). Uses `FailedDetections` array to track
+// which fields had query failures (RBAC denied, timeout, network error).
+//
+// IMPORTANT DISTINCTION:
+//   - Resource doesn't exist (no PDB) → false value, NOT in FailedDetections
+//   - Query failed (RBAC denied) → false value, field name IN FailedDetections
+//
+// Consumers should check FailedDetections before trusting a false value.
+type DetectedLabels struct {
+	// ========================================
+	// DETECTION FAILURE TRACKING (DD-WORKFLOW-001 v2.2)
+	// ========================================
+	// Lists field names where detection QUERY failed (RBAC, timeout, network error).
+	// If a field is in this array, its value should be ignored.
+	// If empty/nil, all detections succeeded.
+	// Only accepts valid field names: gitOpsManaged, gitOpsTool, pdbProtected, hpaEnabled,
+	// stateful, helmManaged, networkIsolated, serviceMesh, resourceQuotaConstrained,
+	// virtualMachine, liveMigratable, cdiManaged, storageBackend
+	// +kubebuilder:validation:items:Enum={gitOpsManaged,gitOpsTool,pdbProtected,hpaEnabled,stateful,helmManaged,networkIsolated,serviceMesh,resourceQuotaConstrained,virtualMachine,liveMigratable,cdiManaged,storageBackend}
+	FailedDetections []string `json:"failedDetections,omitempty"`
+
+	// ========================================
+	// GITOPS MANAGEMENT
+	// ========================================
+	// True if namespace/deployment is managed by GitOps controller
+	// Detection: ArgoCD annotations, Flux labels
+	GitOpsManaged bool `json:"gitOpsManaged"`
+	// GitOps tool managing this resource
+	// +kubebuilder:validation:Enum=argocd;flux;""
+	GitOpsTool string `json:"gitOpsTool,omitempty"`
+
+	// ========================================
+	// WORKLOAD PROTECTION
+	// ========================================
+	// True if PodDisruptionBudget exists for this workload
+	PDBProtected bool `json:"pdbProtected"`
+	// True if HorizontalPodAutoscaler targets this workload
+	HPAEnabled bool `json:"hpaEnabled"`
+
+	// ========================================
+	// WORKLOAD CHARACTERISTICS
+	// ========================================
+	// True if StatefulSet or has PVCs attached
+	Stateful bool `json:"stateful"`
+	// True if managed by Helm (has helm.sh/chart label)
+	HelmManaged bool `json:"helmManaged"`
+
+	// ========================================
+	// SECURITY POSTURE
+	// ========================================
+	// True if NetworkPolicy exists in namespace
+	NetworkIsolated bool `json:"networkIsolated"`
+	// Service mesh if detected (from sidecar or namespace labels)
+	// +kubebuilder:validation:Enum=istio;linkerd;""
+	ServiceMesh string `json:"serviceMesh,omitempty"`
+
+	// ========================================
+	// RESOURCE CONSTRAINTS (#366, DD-KA-018 v1.4)
+	// ========================================
+	// True if any ResourceQuota exists in namespace
+	ResourceQuotaConstrained bool `json:"resourceQuotaConstrained"`
+
+	// ========================================
+	// VIRTUALIZATION — CNV / KubeVirt (#1378)
+	// ========================================
+	// True if the workload is a VirtualMachine, VirtualMachineInstance,
+	// VirtualMachineInstanceMigration, or DataVolume (owner chain walk).
+	// +optional
+	VirtualMachine bool `json:"virtualMachine"`
+	// True if the VirtualMachine has evictionStrategy=LiveMigrate.
+	// Only evaluated when VirtualMachine is true.
+	// +optional
+	LiveMigratable bool `json:"liveMigratable"`
+	// True if PVCs in the namespace carry cdi.kubevirt.io/storage.import.* annotations.
+	// Only evaluated when VirtualMachine is true.
+	// +optional
+	CDIManaged bool `json:"cdiManaged"`
+	// Storage provisioner backing PVCs in the namespace.
+	// Only evaluated when VirtualMachine is true.
+	// +kubebuilder:validation:Enum="odf-ceph";"lvms";"local";""
+	StorageBackend string `json:"storageBackend,omitempty"`
+}
+
+// NewDetectedLabels creates a DetectedLabels with an initialized (non-nil) FailedDetections slice.
+func NewDetectedLabels() *DetectedLabels {
+	return &DetectedLabels{
+		FailedDetections: make([]string, 0),
+	}
+}
+
+// IsEmpty returns true when no label detection produced a positive result.
+func (d *DetectedLabels) IsEmpty() bool {
+	if d == nil {
+		return true
+	}
+	return !d.GitOpsManaged &&
+		d.GitOpsTool == "" &&
+		!d.PDBProtected &&
+		!d.HPAEnabled &&
+		!d.Stateful &&
+		!d.HelmManaged &&
+		!d.NetworkIsolated &&
+		d.ServiceMesh == "" &&
+		!d.ResourceQuotaConstrained &&
+		!d.VirtualMachine &&
+		!d.LiveMigratable &&
+		!d.CDIManaged &&
+		d.StorageBackend == ""
+}
+
+// ========================================
+// DETECTED LABELS SERIALIZATION (DD-WORKFLOW-001 v2.3)
+// ========================================
+//
+// DetectedLabels.SerializeLabels() produces full JSON (all fields, CRD-safe).
+// models.DetectedLabels (in pkg/datastorage/models) provides sparse JSON for DB contexts.
+//
+// Interface compliance is verified in test/unit/datastorage/detected_labels_serialization_test.go.
+
+// SerializeLabels produces full JSON with all fields present (CRD-safe).
+func (d *DetectedLabels) SerializeLabels() ([]byte, error) {
+	if d == nil {
+		return nil, nil
+	}
+	type Alias DetectedLabels
+	return json.Marshal((*Alias)(d))
+}
+
+// ========================================
+// KUBERNETES CONTEXT (DD-CONTRACT-002, Issue #113)
+// ========================================
+
+// NamespaceContext holds namespace details for classification.
+// Nil for cluster-scoped signals (e.g., Node signals).
+type NamespaceContext struct {
+	// Namespace name
+	Name string `json:"name"`
+	// Namespace labels (used by environment, priority, business classifiers)
+	Labels map[string]string `json:"labels,omitempty"`
+	// Namespace annotations (used by business classifier for kubernaut.ai/ labels)
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// WorkloadDetails contains generic workload context for Rego classification.
+// Replaces per-type fields (PodDetails, DeploymentDetails, StatefulSetDetails, etc.)
+// with a single type that works for any K8s resource kind.
+// Rego policies differentiate by Kind when needed (e.g., input.workload.kind == "Node").
+type WorkloadDetails struct {
+	// Resource kind (e.g., "Deployment", "StatefulSet", "Node", "Pod")
+	Kind string `json:"kind"`
+	// Resource name
+	Name string `json:"name"`
+	// Resource labels (primary classification input for Rego policies)
+	Labels map[string]string `json:"labels,omitempty"`
+	// Resource annotations (used by business classifier for kubernaut.ai/ labels)
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ClusterContext holds cluster-registration labels used as Rego classification
+// input for the optional `cluster` business dimension (BR-FLEET-003, #1511).
+// Populated from ClusterInfo.Labels via ClusterRegistry.Get(signal.ClusterID);
+// nil when the cluster is unregistered or no ClusterRegistry is configured
+// (non-fleet deployments), never an error condition (graceful degradation).
+type ClusterContext struct {
+	// Labels are the Kubernetes metadata.labels on the MCP Gateway's
+	// cluster-registration CRD (EAIGW Backend / Kuadrant MCPServerRegistration),
+	// set by the fleet operator at cluster-onboarding time.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// KubernetesContext contains lean, classification-focused Kubernetes resource context.
+// Issue #113: Restructured from per-type workload fields to generic WorkloadDetails.
+// Only stores data needed for Rego classification (labels, annotations, ownership).
+// Operational details (replicas, conditions, ports) are fetched by the LLM on demand.
+//
+// DD-CONTRACT-002: Type-safe structured data shared across SP, AA, and KA.
+type KubernetesContext struct {
+	// ClusterID identifies the cluster this context was enriched from.
+	// Empty string indicates the local hub cluster.
+	// BR-INTEGRATION-054: Propagated from SignalData.ClusterID so downstream
+	// consumers know which cluster the enrichment data came from.
+	// +optional
+	ClusterID string `json:"clusterID,omitempty"`
+	// Cluster holds the fleet cluster-registration labels used as Rego input
+	// for the optional `cluster` classification dimension (BR-FLEET-003, #1511).
+	// nil when fleet mode is disabled or the cluster is unregistered.
+	// +optional
+	Cluster *ClusterContext `json:"cluster,omitempty"`
+	// Namespace context (nil for cluster-scoped resources like Node)
+	Namespace *NamespaceContext `json:"namespace,omitempty"`
+	// Target workload context (kind, name, labels, annotations)
+	Workload *WorkloadDetails `json:"workload,omitempty"`
+	// Owner chain from target to top-level controller
+	// DD-WORKFLOW-001 v1.8: Used for historical remediation context
+	OwnerChain []OwnerChainEntry `json:"ownerChain,omitempty"`
+	// Custom labels extracted via Rego policies (BR-SP-102)
+	// DD-WORKFLOW-001 v1.9: map[string][]string (subdomain -> list of values)
+	CustomLabels map[string][]string `json:"customLabels,omitempty"`
+	// DegradedMode indicates context was built with partial data
+	// DD-4: K8s Enrichment Failure Handling (target resource not found)
+	DegradedMode bool `json:"degradedMode,omitempty"`
+}
+
+// ========================================
+// STANDALONE TYPES (kept for external consumers)
+// ========================================
+// These types are no longer part of KubernetesContext (Issue #113) but are
+// retained as standalone definitions for any code that needs rich workload details
+// (e.g., KA investigation context built during RCA).
+
+// PodDetails contains pod-level context.
+type PodDetails struct {
+	Name              string            `json:"name"`
+	Phase             string            `json:"phase"` // Running, Pending, Failed
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
+	Containers        []ContainerStatus `json:"containers,omitempty"`
+	RestartCount      int32             `json:"restartCount"`
+	CreationTimestamp string            `json:"creationTimestamp"`
+}
+
+// ContainerStatus contains container-level status.
+type ContainerStatus struct {
+	Name         string `json:"name"`
+	Image        string `json:"image"`
+	Ready        bool   `json:"ready"`
+	RestartCount int32  `json:"restartCount"`
+	State        string `json:"state"` // running, waiting, terminated
+}
+
+// DeploymentDetails contains deployment-level context.
+type DeploymentDetails struct {
+	Name              string            `json:"name"`
+	Replicas          int32             `json:"replicas"`
+	ReadyReplicas     int32             `json:"readyReplicas"`
+	AvailableReplicas int32             `json:"availableReplicas"`
+	Strategy          string            `json:"strategy"` // RollingUpdate, Recreate
+	Labels            map[string]string `json:"labels,omitempty"`
+}
+
+// NodeDetails contains node-level context.
+type NodeDetails struct {
+	Name        string            `json:"name"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Capacity    ResourceList      `json:"capacity"`
+	Allocatable ResourceList      `json:"allocatable"`
+	Conditions  []NodeCondition   `json:"conditions,omitempty"`
+}
+
+// ResourceList contains resource quantities.
+type ResourceList struct {
+	CPU    string `json:"cpu"`    // e.g., "4000m"
+	Memory string `json:"memory"` // e.g., "16Gi"
+}
+
+// NodeCondition contains node condition status.
+type NodeCondition struct {
+	Type   string `json:"type"`   // Ready, MemoryPressure, DiskPressure
+	Status string `json:"status"` // True, False, Unknown
+}
+
+// ServiceSummary contains service targeting information.
+type ServiceSummary struct {
+	Name      string        `json:"name"`
+	Type      string        `json:"type"` // ClusterIP, NodePort, LoadBalancer
+	ClusterIP string        `json:"clusterIP"`
+	Ports     []ServicePort `json:"ports,omitempty"`
+}
+
+// ServicePort contains service port configuration.
+type ServicePort struct {
+	Name       string `json:"name"`
+	Port       int32  `json:"port"`
+	TargetPort string `json:"targetPort"`
+	Protocol   string `json:"protocol"` // TCP, UDP
+}
+
+// IngressSummary contains ingress targeting information.
+type IngressSummary struct {
+	Name  string        `json:"name"`
+	Hosts []string      `json:"hosts"`
+	Rules []IngressRule `json:"rules,omitempty"`
+}
+
+// IngressRule contains ingress rule configuration.
+type IngressRule struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
+}
+
+// ConfigMapSummary contains ConfigMap targeting information.
+type ConfigMapSummary struct {
+	Name string   `json:"name"`
+	Keys []string `json:"keys"` // ConfigMap key names (not full data)
+}
+
+// CatalogStatus represents the lifecycle state of a catalog resource
+// (RemediationWorkflow, ActionType). Shared enum ensures consistent
+// semantics across all catalog CRDs.
+// +kubebuilder:validation:Enum=Active;Invalid;Pending;Deprecated;Archived;Disabled;Superseded
+type CatalogStatus string
+
+const (
+	CatalogStatusActive     CatalogStatus = "Active"
+	CatalogStatusInvalid    CatalogStatus = "Invalid"
+	CatalogStatusPending    CatalogStatus = "Pending"
+	CatalogStatusDeprecated CatalogStatus = "Deprecated"
+	CatalogStatusArchived   CatalogStatus = "Archived"
+	CatalogStatusDisabled   CatalogStatus = "Disabled"
+	CatalogStatusSuperseded CatalogStatus = "Superseded"
+)

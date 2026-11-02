@@ -1,0 +1,47 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: audit-test-v1
+spec:
+  # Audit Test Workflow Schema (BR-WORKFLOW-004)
+  # Used by: DataStorage E2E — 06_workflow_discovery_audit_test.go (DD-WORKFLOW-014 v3.0)
+  version: "1.0.0"
+  description:
+    what: "Test workflow for workflow discovery audit event validation"
+    whenToUse: "For E2E testing of audit trail emission during discovery steps"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "DataStorage service running with audit tables available"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [critical]
+    environment: [production, staging, test]
+    component: [v1/Pod]
+    priority: P0
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace containing the affected pod"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to restart"

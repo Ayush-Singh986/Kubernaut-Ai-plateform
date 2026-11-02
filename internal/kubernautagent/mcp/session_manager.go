@@ -1,0 +1,694 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package mcp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	"github.com/google/uuid"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+)
+
+var (
+	// ErrLeaseHeld indicates the Lease is held by another interactive driver.
+	ErrLeaseHeld = errors.New("lease held by another driver")
+
+	// ErrSessionNotFound indicates no session exists with the given ID.
+	ErrSessionNotFound = errors.New("session not found")
+
+	// ErrEmptyUsername rejects sessions with no authenticated identity (SEC-01).
+	ErrEmptyUsername = errors.New("username must not be empty")
+
+	// ErrMaxSessionsReached rejects new sessions when capacity is exhausted (SEC-03).
+	ErrMaxSessionsReached = errors.New("maximum concurrent sessions reached")
+
+	// ErrSessionExpired indicates the session TTL has been exceeded (SEC-04).
+	ErrSessionExpired = errors.New("session expired")
+)
+
+const (
+	leasePrefix = "kubernaut-interactive-"
+
+	// leaseTTLAnnotation is set on each Lease so an external janitor can
+	// garbage-collect orphaned Leases whose sessions crashed without Release.
+	leaseTTLAnnotation = "kubernaut.io/session-ttl"
+)
+
+// DefaultSessionTTL is the default Lease TTL for interactive sessions.
+// Overridden by InteractiveConfig.SessionTTL at runtime.
+var DefaultSessionTTL = 30 * time.Minute
+
+// LeaseSessionManager implements SessionManager with K8s coordination/v1 Lease
+// for single-driver guarantee (BR-INTERACTIVE-002).
+type LeaseSessionManager struct {
+	client            client.Client
+	namespace         string
+	sessionTTL        time.Duration
+	inactivityTimeout time.Duration
+	maxSessions       int
+	sessions          sync.Map // sessionID -> *sessionEntry
+	rrIndex           sync.Map // rrID -> sessionID
+	activeCount       atomic.Int32
+	logger            logr.Logger
+	onSessionExpired  func(sessionID, rrID, reason string, signalContext *katypes.SignalContext) // called on TTL/inactivity auto-release
+	onReconnect       func(sessionID string)                                                     // called when Takeover detects same-user reconnect
+
+	// janitor is the #2100 backstop: every session Takeover creates is
+	// Tracked here and Untracked on Release, so a session that never gets
+	// explicitly released (crash, panic, code path that returns early
+	// without calling Release) is still reclaimed by the janitor's sweep
+	// instead of leaking Lease capacity until process restart. Nil in
+	// deployments/tests that don't wire one via WithSessionJanitor --
+	// Track/Untrack calls are no-ops in that case.
+	janitor *SessionJanitor
+
+	// sessionMetrics is the #2103 centralization point for
+	// aiagent_mcp_interactive_sessions_active: every Release caller used to
+	// be individually responsible for calling RecordInteractiveSessionEnded,
+	// and most never wired it (CompleteNoActionTool, SelectWorkflowTool,
+	// InvestigateTool's no_matching_workflows goroutine, and #2100's own new
+	// SessionJanitor onExpire callback all leaked this gauge). Wiring the
+	// decrement here instead, paired with activeCount's own Add(-1), makes
+	// every current and future Release() caller correct automatically. Nil
+	// in deployments/tests that don't wire one via WithSessionEndedMetrics --
+	// the call is a no-op in that case.
+	sessionMetrics SessionEndedMetrics
+}
+
+// SessionEndedMetrics is the minimal metrics surface LeaseSessionManager
+// needs to keep aiagent_mcp_interactive_sessions_active accurate for every
+// Release caller (#2103). Implemented structurally by *metrics.Metrics (see
+// tools.ToolMetrics for the parallel interface at the tool-handler layer) --
+// defined locally here, rather than imported, to avoid mcp importing
+// metrics or tools (tools already imports mcp, so the reverse would cycle).
+type SessionEndedMetrics interface {
+	RecordInteractiveSessionEnded()
+}
+
+type sessionEntry struct {
+	session       *InteractiveSession
+	rrID          string
+	metadataMu    sync.RWMutex
+	signalContext *katypes.SignalContext
+	lastActivity  atomic.Value // stores time.Time
+}
+
+// LeaseOption configures optional parameters for LeaseSessionManager.
+type LeaseOption func(*LeaseSessionManager)
+
+// WithSessionTTL overrides the default session TTL used for Lease duration.
+func WithSessionTTL(ttl time.Duration) LeaseOption {
+	return func(m *LeaseSessionManager) {
+		m.sessionTTL = ttl
+	}
+}
+
+// WithInactivityTimeout sets the per-session inactivity timeout (SEC-04).
+func WithInactivityTimeout(timeout time.Duration) LeaseOption {
+	return func(m *LeaseSessionManager) {
+		m.inactivityTimeout = timeout
+	}
+}
+
+// WithMaxConcurrentSessions sets the session capacity limit (SEC-03).
+func WithMaxConcurrentSessions(maxSessions int) LeaseOption {
+	return func(m *LeaseSessionManager) {
+		m.maxSessions = maxSessions
+	}
+}
+
+// WithSessionExpiredCallback sets a callback invoked when GetDriver auto-releases
+// a session due to TTL or inactivity timeout. Enables audit emission (M1) for
+// expiry paths that bypass InvestigateTool's explicit complete/cancel handlers.
+func WithSessionExpiredCallback(fn func(sessionID, rrID, reason string, signalContext *katypes.SignalContext)) LeaseOption {
+	return func(m *LeaseSessionManager) {
+		m.onSessionExpired = fn
+	}
+}
+
+// SetReconnectCallback sets a callback invoked when Takeover detects a same-user
+// reconnect for an existing session. Used to cancel pending grace-period releases
+// in GracefulSessionClosedHandler (BR-INTERACTIVE-001).
+func (m *LeaseSessionManager) SetReconnectCallback(fn func(sessionID string)) {
+	m.onReconnect = fn
+}
+
+// WithSessionJanitor wires a SessionJanitor as a backstop for orphaned
+// sessions (#2100): every session Takeover creates is Tracked with the
+// janitor, and Untracked on Release, so sessions that are never explicitly
+// released are still reclaimed by the janitor's periodic sweep instead of
+// eroding interactive.maxConcurrentSessions capacity indefinitely.
+func WithSessionJanitor(j *SessionJanitor) LeaseOption {
+	return func(m *LeaseSessionManager) {
+		m.janitor = j
+	}
+}
+
+// WithSessionEndedMetrics wires the aiagent_mcp_interactive_sessions_active
+// decrement into Release() itself (#2103), so every current and future
+// Release() caller -- InvestigateTool, SelectWorkflowTool,
+// CompleteNoActionTool, the SessionJanitor backstop, and main.go's own
+// TTL/inactivity/disconnect callbacks -- keeps the gauge accurate without
+// needing its own metrics field.
+func WithSessionEndedMetrics(m SessionEndedMetrics) LeaseOption {
+	return func(mgr *LeaseSessionManager) {
+		if m != nil {
+			mgr.sessionMetrics = m
+		}
+	}
+}
+
+// NewLeaseSessionManager creates a LeaseSessionManager backed by the given K8s client.
+func NewLeaseSessionManager(c client.Client, namespace string, logger logr.Logger, opts ...LeaseOption) SessionManager {
+	return NewLeaseSessionManagerConcrete(c, namespace, logger, opts...)
+}
+
+// NewLeaseSessionManagerConcrete returns the concrete *LeaseSessionManager type
+// for callers that need access to signal metadata storage (e.g., disconnect handler).
+func NewLeaseSessionManagerConcrete(c client.Client, namespace string, logger logr.Logger, opts ...LeaseOption) *LeaseSessionManager {
+	m := &LeaseSessionManager{
+		client:     c,
+		namespace:  namespace,
+		sessionTTL: DefaultSessionTTL,
+		logger:     logger,
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// StoreSignalContext attaches a signal context to an active session entry.
+// Used by handleTakeover to persist autonomous session metadata for later reconstruction.
+func (m *LeaseSessionManager) StoreSignalContext(sessionID string, signal *katypes.SignalContext) {
+	raw, ok := m.sessions.Load(sessionID)
+	if !ok {
+		return
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return
+	}
+	entry.metadataMu.Lock()
+	entry.signalContext = cloneSignalContext(signal)
+	entry.metadataMu.Unlock()
+}
+
+// GetSignalContext retrieves the stored signal context for a session.
+// Returns nil if session not found or no metadata stored.
+func (m *LeaseSessionManager) GetSignalContext(sessionID string) *katypes.SignalContext {
+	raw, ok := m.sessions.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return nil
+	}
+	entry.metadataMu.RLock()
+	defer entry.metadataMu.RUnlock()
+	return cloneSignalContext(entry.signalContext)
+}
+
+// GetSessionInfo returns the correlationID (rrID) and signal context for a session.
+// Must be called BEFORE Release, which deletes the session entry.
+// Returns empty values if session not found.
+func (m *LeaseSessionManager) GetSessionInfo(sessionID string) (rrID string, signalContext *katypes.SignalContext) {
+	raw, ok := m.sessions.Load(sessionID)
+	if !ok {
+		return "", nil
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return "", nil
+	}
+	entry.metadataMu.RLock()
+	defer entry.metadataMu.RUnlock()
+	return entry.rrID, cloneSignalContext(entry.signalContext)
+}
+
+func cloneSignalContext(signal *katypes.SignalContext) *katypes.SignalContext {
+	if signal == nil {
+		return nil
+	}
+	clone := *signal
+	if signal.IsDuplicate != nil {
+		value := *signal.IsDuplicate
+		clone.IsDuplicate = &value
+	}
+	if signal.OccurrenceCount != nil {
+		value := *signal.OccurrenceCount
+		clone.OccurrenceCount = &value
+	}
+	if signal.DeduplicationWindowMinutes != nil {
+		value := *signal.DeduplicationWindowMinutes
+		clone.DeduplicationWindowMinutes = &value
+	}
+	clone.SignalAnnotations = cloneStringMap(signal.SignalAnnotations)
+	clone.SignalLabels = cloneStringMap(signal.SignalLabels)
+	return &clone
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
+func (m *LeaseSessionManager) Takeover(ctx context.Context, rrID string, user UserInfo) (*InteractiveSession, error) {
+	// SEC-01: Reject anonymous/empty identity.
+	if user.Username == "" {
+		return nil, ErrEmptyUsername
+	}
+
+	// SEC-03: Enforce max concurrent sessions.
+	if m.maxSessions > 0 && int(m.activeCount.Load()) >= m.maxSessions {
+		return nil, ErrMaxSessionsReached
+	}
+
+	// UX-03: Check local index first. If the same user already holds the
+	// session, allow reconnect (e.g., after network loss) by returning the
+	// existing session with a refreshed activity timestamp. A different user
+	// gets ErrLeaseHeld with holder context.
+	if sess, err, handled := m.reconnectOrRejectExistingLease(rrID, user); handled {
+		return sess, err
+	}
+
+	sessionID, err := m.acquireLease(ctx, rrID)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.registerNewInteractiveSession(sessionID, rrID, user), nil //nolint:contextcheck // registerNewInteractiveSession's #2100 janitor.Track onExpire callback calls Release at an arbitrary future time (the sweep interval), detached from this Takeover request's ctx -- see drainer.go's identical Release call for the same rationale
+}
+
+// reconnectOrRejectExistingLease checks whether rrID already has an active
+// lease. When held by the same user, it refreshes activity and returns the
+// existing session (reconnect). When held by a different user, or the local
+// index is inconsistent with session state, it returns ErrLeaseHeld. The
+// third return value reports whether the takeover request was fully handled
+// here (true) or should fall through to lease acquisition (false, meaning no
+// existing lease was found).
+// nolint:nilnil // the trailing `handled` bool already disambiguates this
+// (nil, nil, false): callers must (and do, see Takeover above) check
+// `handled` before touching session/err, so there is no scenario where a
+// nil session + nil error is misread as "found, no error" — that is
+// precisely the ambiguity a sentinel error would solve, already solved here
+// by the bool (Issue #1546 Tier 2).
+func (m *LeaseSessionManager) reconnectOrRejectExistingLease(rrID string, user UserInfo) (*InteractiveSession, error, bool) {
+	existingSessionID, ok := m.rrIndex.Load(rrID)
+	if !ok {
+		return nil, nil, false // nolint:nilnil
+	}
+	raw, found := m.sessions.Load(existingSessionID)
+	if !found {
+		return nil, ErrLeaseHeld, true
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return nil, ErrLeaseHeld, true
+	}
+	if entry.session.ActingUser.Username != user.Username {
+		return nil, fmt.Errorf("%w: held by %q since %s",
+			ErrLeaseHeld, entry.session.ActingUser.Username, entry.session.StartedAt.Format(time.RFC3339)), true
+	}
+	entry.lastActivity.Store(time.Now())
+	entry.session.Reconnected = true
+	m.logger.Info("interactive session reconnected (same user)",
+		"session_id", entry.session.SessionID,
+		"rr_id", rrID,
+		"user", user.Username,
+	)
+	if m.onReconnect != nil {
+		m.onReconnect(entry.session.SessionID)
+	}
+	return entry.session, nil, true
+}
+
+// acquireLease creates a new coordination.k8s.io Lease for rrID, reclaiming
+// an expired lease and retrying once if the lease name is already taken.
+func (m *LeaseSessionManager) acquireLease(ctx context.Context, rrID string) (string, error) {
+	sessionID := uuid.New().String()
+	leaseName := leaseName(rrID)
+	leaseDuration := int32(m.sessionTTL.Seconds())
+
+	lease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      leaseName,
+			Namespace: m.namespace,
+			Annotations: map[string]string{
+				leaseTTLAnnotation: m.sessionTTL.String(),
+			},
+		},
+		Spec: coordinationv1.LeaseSpec{
+			HolderIdentity:       &sessionID,
+			LeaseDurationSeconds: &leaseDuration,
+			AcquireTime:          nowMicroTime(),
+		},
+	}
+
+	err := m.client.Create(ctx, lease)
+	if err == nil {
+		return sessionID, nil
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		return "", fmt.Errorf("create lease for rr %q: %w", rrID, err)
+	}
+	if !m.tryReclaimExpiredLease(ctx, leaseName, rrID) {
+		return "", ErrLeaseHeld
+	}
+	if retryErr := m.client.Create(ctx, lease); retryErr != nil {
+		return "", fmt.Errorf("create lease after reclaim for rr %q: %w", rrID, retryErr)
+	}
+	return sessionID, nil
+}
+
+// registerNewInteractiveSession builds the InteractiveSession for a freshly
+// acquired lease and records it in the manager's session/rrID indexes.
+func (m *LeaseSessionManager) registerNewInteractiveSession(sessionID, rrID string, user UserInfo) *InteractiveSession {
+	session := &InteractiveSession{
+		SessionID:     sessionID,
+		CorrelationID: rrID,
+		ActingUser:    user,
+		StartedAt:     time.Now(),
+	}
+
+	entry := &sessionEntry{session: session, rrID: rrID}
+	entry.lastActivity.Store(time.Now())
+	m.sessions.Store(sessionID, entry)
+	m.rrIndex.Store(rrID, sessionID)
+	m.activeCount.Add(1)
+
+	if m.janitor != nil {
+		// #2100: onExpire routes through the same Release path as every
+		// other exit (explicit complete/cancel, TTL, inactivity), so the
+		// Lease is deleted and activeCount decremented identically --
+		// the janitor is a backstop, not a parallel cleanup mechanism.
+		m.janitor.Track(sessionID, session.StartedAt, func(expiredID string) {
+			if err := m.Release(expiredID, "janitor_expired"); err != nil && !errors.Is(err, ErrSessionNotFound) {
+				m.logger.Error(err, "janitor: failed to release expired session", "session_id", expiredID)
+			}
+		})
+	}
+
+	m.logger.Info("interactive session started",
+		"session_id", sessionID,
+		"rr_id", rrID,
+		"user", user.Username,
+	)
+
+	return session
+}
+
+func (m *LeaseSessionManager) Release(sessionID string, reason string) error {
+	raw, ok := m.sessions.Load(sessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return ErrSessionNotFound
+	}
+
+	leaseName := leaseName(entry.rrID)
+	lease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      leaseName,
+			Namespace: m.namespace,
+		},
+	}
+	if err := m.client.Delete(context.Background(), lease); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete lease for session %q: %w", sessionID, err)
+	}
+
+	now := time.Now()
+	entry.session.CompletedAt = &now
+	entry.session.Reason = reason
+
+	m.sessions.Delete(sessionID)
+	m.rrIndex.Delete(entry.rrID)
+	m.activeCount.Add(-1)
+
+	// #2103: centralize the aiagent_mcp_interactive_sessions_active
+	// decrement here, paired with activeCount.Add(-1) above, so every
+	// current and future Release() caller keeps the gauge accurate. Only
+	// reached once the session is confirmed locally found and removed
+	// above -- a double-Release (ErrSessionNotFound) or a hard Lease-delete
+	// error never reaches this line, so this can never double-decrement.
+	if m.sessionMetrics != nil {
+		m.sessionMetrics.RecordInteractiveSessionEnded()
+	}
+
+	if m.janitor != nil {
+		m.janitor.Untrack(sessionID)
+	}
+
+	m.logger.Info("interactive session released",
+		"session_id", sessionID,
+		"rr_id", entry.rrID,
+		"reason", reason,
+	)
+
+	return nil
+}
+
+// GetDriver returns the current driver session for rrID, or ErrSessionNotFound
+// if no interactive session exists (e.g., the RR is in autonomous mode).
+// Issue #1674: typed sentinel replaces the previous ambiguous (nil, nil).
+func (m *LeaseSessionManager) GetDriver(rrID string) (*InteractiveSession, error) {
+	raw, ok := m.rrIndex.Load(rrID)
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	sessionID, ok := raw.(string)
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	raw, ok = m.sessions.Load(sessionID)
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	// SEC-04: Check session TTL expiry.
+	if m.sessionTTL > 0 && time.Since(entry.session.StartedAt) > m.sessionTTL {
+		return nil, m.expireSession(sessionID, rrID, "ttl_expired", "session TTL expired, auto-releasing")
+	}
+
+	// SEC-04: Check inactivity timeout.
+	if m.isInactivityExpired(entry) {
+		return nil, m.expireSession(sessionID, rrID, "inactivity_timeout", "session inactivity timeout, auto-releasing")
+	}
+
+	return entry.session, nil
+}
+
+// isInactivityExpired reports whether entry has exceeded the configured
+// inactivity timeout (SEC-04).
+func (m *LeaseSessionManager) isInactivityExpired(entry *sessionEntry) bool {
+	if m.inactivityTimeout <= 0 {
+		return false
+	}
+	lastAct, ok := entry.lastActivity.Load().(time.Time)
+	if !ok {
+		return false
+	}
+	return time.Since(lastAct) > m.inactivityTimeout
+}
+
+// expireSession releases sessionID for the given expiry reason, notifies
+// onSessionExpired if configured, and returns ErrSessionExpired for the
+// caller (GetDriver) to propagate.
+func (m *LeaseSessionManager) expireSession(sessionID, rrID, reason, logMsg string) error {
+	m.logger.Info(logMsg, "session_id", sessionID, "rr_id", rrID)
+	// Snapshot typed signal context before Release removes the session entry.
+	signalContext := m.GetSignalContext(sessionID)
+	_ = m.Release(sessionID, reason)
+	if m.onSessionExpired != nil {
+		m.onSessionExpired(sessionID, rrID, reason, signalContext)
+	}
+	return ErrSessionExpired
+}
+
+// TouchActivity updates the last activity timestamp for a session (SEC-04).
+// Called by tool handlers on each interaction to reset the inactivity timer.
+func (m *LeaseSessionManager) TouchActivity(rrID string) {
+	raw, ok := m.rrIndex.Load(rrID)
+	if !ok {
+		return
+	}
+	sessionID, ok := raw.(string)
+	if !ok {
+		return
+	}
+	raw, ok = m.sessions.Load(sessionID)
+	if !ok {
+		return
+	}
+	entry, ok := raw.(*sessionEntry)
+	if !ok {
+		return
+	}
+	entry.lastActivity.Store(time.Now())
+}
+
+func (m *LeaseSessionManager) IsDriverActive(rrID string) bool {
+	_, ok := m.rrIndex.Load(rrID)
+	return ok
+}
+
+// ActiveSessionIDs returns the session IDs of all active sessions.
+// Used by SessionDrainer during graceful shutdown (BR-OPS-013).
+func (m *LeaseSessionManager) ActiveSessionIDs() []string {
+	var ids []string
+	m.sessions.Range(func(key, _ any) bool {
+		if id, ok := key.(string); ok {
+			ids = append(ids, id)
+		}
+		return true
+	})
+	return ids
+}
+
+// tryReclaimExpiredLease checks if an existing K8s Lease is expired (e.g.,
+// orphaned after a pod restart where in-memory state was lost). If the Lease's
+// AcquireTime + LeaseDurationSeconds is in the past, it deletes the Lease so
+// the caller can create a fresh one. Returns true if the Lease was reclaimed.
+func (m *LeaseSessionManager) tryReclaimExpiredLease(ctx context.Context, name, rrID string) bool {
+	existing := &coordinationv1.Lease{}
+	key := client.ObjectKey{Namespace: m.namespace, Name: name}
+	if err := m.client.Get(ctx, key, existing); err != nil {
+		return false
+	}
+
+	if existing.Spec.AcquireTime == nil || existing.Spec.LeaseDurationSeconds == nil {
+		return false
+	}
+
+	expiry := existing.Spec.AcquireTime.Add(
+		time.Duration(*existing.Spec.LeaseDurationSeconds) * time.Second,
+	)
+	if time.Now().Before(expiry) {
+		return false
+	}
+
+	if err := m.client.Delete(ctx, existing); err != nil {
+		m.logger.Error(err, "failed to delete expired orphaned Lease",
+			"lease", name, "rr_id", rrID,
+			"expired_at", expiry.Format(time.RFC3339),
+		)
+		return false
+	}
+
+	m.logger.Info("reclaimed expired orphaned Lease (likely pod restart)",
+		"lease", name, "rr_id", rrID,
+		"expired_at", expiry.Format(time.RFC3339),
+	)
+	return true
+}
+
+// ReconcileOrphanedLeases scans for K8s Leases with the interactive prefix in
+// the namespace and deletes any that have expired. This handles the pod-restart
+// scenario where in-memory session state is lost but K8s Leases persist, blocking
+// new sessions until TTL expiry. Should be called once at startup.
+func (m *LeaseSessionManager) ReconcileOrphanedLeases(ctx context.Context) int {
+	leaseList := &coordinationv1.LeaseList{}
+	if err := m.client.List(ctx, leaseList, client.InNamespace(m.namespace)); err != nil {
+		m.logger.Error(err, "failed to list Leases for orphan reconciliation")
+		return 0
+	}
+
+	reclaimed := 0
+	now := time.Now()
+	for i := range leaseList.Items {
+		lease := &leaseList.Items[i]
+		if len(lease.Name) <= len(leasePrefix) || lease.Name[:len(leasePrefix)] != leasePrefix {
+			continue
+		}
+		if lease.Spec.AcquireTime == nil || lease.Spec.LeaseDurationSeconds == nil {
+			continue
+		}
+
+		expiry := lease.Spec.AcquireTime.Add(
+			time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second,
+		)
+		if now.Before(expiry) {
+			continue
+		}
+
+		rrID := lease.Name[len(leasePrefix):]
+		if err := m.client.Delete(ctx, lease); err != nil {
+			m.logger.Error(err, "failed to delete orphaned Lease during reconciliation",
+				"lease", lease.Name, "rr_id", rrID,
+			)
+			continue
+		}
+
+		reclaimed++
+		m.logger.Info("reconciled orphaned Lease at startup",
+			"lease", lease.Name, "rr_id", rrID,
+			"expired_at", expiry.Format(time.RFC3339),
+		)
+	}
+
+	if reclaimed > 0 {
+		m.logger.Info("orphaned Lease reconciliation complete",
+			"reclaimed", reclaimed,
+			"total_scanned", len(leaseList.Items),
+		)
+	}
+	return reclaimed
+}
+
+func leaseName(rrID string) string {
+	// rrID may be namespace-qualified ("default/rr-name"); K8s metadata.name
+	// forbids '/', so replace with '-'.
+	name := leasePrefix + strings.ReplaceAll(rrID, "/", "-")
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
+}
+
+func nowMicroTime() *metav1.MicroTime {
+	t := metav1.NewMicroTime(time.Now())
+	return &t
+}
+
+var _ SessionManager = (*LeaseSessionManager)(nil)

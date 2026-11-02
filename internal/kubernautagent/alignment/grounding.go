@@ -1,0 +1,233 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package alignment
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+)
+
+type groundingResponse struct {
+	Grounded    *bool  `json:"grounded"`
+	Explanation string `json:"explanation"`
+}
+
+// buildGroundingRequest flattens conversation into the grounding-review
+// ChatRequest (with the optional system prompt prepended), returning the
+// request alongside the rendered conversation text (needed by the caller to
+// compute the audit token-length estimate).
+func (e *Evaluator) buildGroundingRequest(conversation []llm.Message) (llm.ChatRequest, string) {
+	maxTokens := e.config.MaxConversationTokens
+	if maxTokens <= 0 {
+		maxTokens = e.config.MaxStepTokens * 50
+	}
+	conversationText := renderConversation(conversation, maxTokens)
+
+	messages := []llm.Message{
+		{Role: "user", Content: conversationText},
+	}
+	if e.prompt != "" {
+		messages = append([]llm.Message{{Role: "system", Content: e.prompt}}, messages...)
+	}
+
+	return llm.ChatRequest{
+		Messages: messages,
+		Options:  llm.ChatOptions{JSONMode: true},
+	}, conversationText
+}
+
+// parseGroundingResponse parses the shadow LLM's raw chat response into a
+// GroundingObservation, fail-closed (Grounded=false) on any malformed
+// response: a duplicate "grounded" key (prompt-injection defense), a JSON
+// parse error, or a missing "grounded" field. Returns the observation, the
+// audit "outcome" tag, and whether the response was fully parsed (used by
+// the caller to decide whether to emit the "grounding review completed"
+// debug log, which only applies to fully-parsed responses).
+func parseGroundingResponse(resp llm.ChatResponse, start time.Time) (obs GroundingObservation, outcome string, fullyParsed bool) {
+	if hasDuplicateGroundedKey(resp.Message.Content) {
+		return GroundingObservation{
+			Grounded:    false,
+			Explanation: "duplicate_key_attack (fail-closed): shadow LLM response contains duplicate 'grounded' key",
+			Usage:       resp.Usage,
+			Duration:    time.Since(start),
+		}, "malformed_response", false
+	}
+
+	content := extractJSON(resp.Message.Content)
+	var parsed groundingResponse
+	if jsonErr := json.Unmarshal([]byte(content), &parsed); jsonErr != nil {
+		return GroundingObservation{
+			Grounded:    false,
+			Explanation: fmt.Sprintf("grounding_review_failed (fail-closed): parse error: %v", jsonErr),
+			Usage:       resp.Usage,
+			Duration:    time.Since(start),
+		}, "parse_error", false
+	}
+
+	if parsed.Grounded == nil {
+		return GroundingObservation{
+			Grounded:    false,
+			Explanation: "grounding_review_failed (fail-closed): shadow LLM response missing 'grounded' field",
+			Usage:       resp.Usage,
+			Duration:    time.Since(start),
+		}, "missing_field", false
+	}
+
+	obs = GroundingObservation{
+		Grounded:    *parsed.Grounded,
+		Explanation: parsed.Explanation,
+		Usage:       resp.Usage,
+		Duration:    time.Since(start),
+	}
+	result := "grounded"
+	if !obs.Grounded {
+		result = "ungrounded"
+	}
+	return obs, result, true
+}
+
+// EvaluateGrounding sends an entire RCA conversation to the shadow LLM for
+// full-context grounding review. It answers: "given the tool evidence, are the
+// RCA conclusions well-grounded?"
+//
+// Fail-closed: all error paths return Grounded=false. The conversation is
+// truncated to maxConversationTokens runes to prevent OOM.
+func (e *Evaluator) EvaluateGrounding(ctx context.Context, conversation []llm.Message, correlationID string) GroundingObservation {
+	start := time.Now()
+
+	if len(conversation) == 0 {
+		return GroundingObservation{
+			Grounded:    false,
+			Explanation: "grounding_review_failed (fail-closed): empty conversation",
+			Duration:    time.Since(start),
+		}
+	}
+
+	req, conversationText := e.buildGroundingRequest(conversation)
+
+	emitAudit := e.auditStore != nil && correlationID != ""
+	if emitAudit {
+		e.emitGroundingRequest(ctx, correlationID, len(conversation), len([]rune(conversationText)))
+	}
+
+	evalCtx, cancel := context.WithTimeout(ctx, e.config.Timeout)
+	resp, err := e.client.Chat(evalCtx, req)
+	cancel()
+
+	if err != nil {
+		obs := GroundingObservation{
+			Grounded:    false,
+			Explanation: fmt.Sprintf("grounding_review_failed (fail-closed): %v", err),
+			Duration:    time.Since(start),
+		}
+		return e.finalizeGroundingObservation(ctx, obs, correlationID, emitAudit, "error")
+	}
+
+	obs, outcome, fullyParsed := parseGroundingResponse(resp, start)
+	if fullyParsed {
+		e.debugLog("grounding review completed",
+			"correlation_id", correlationID,
+			"grounded", obs.Grounded,
+			"conversation_messages", len(conversation))
+	}
+	return e.finalizeGroundingObservation(ctx, obs, correlationID, emitAudit, outcome)
+}
+
+// finalizeGroundingObservation emits the grounding-response audit event
+// (when auditing is enabled for this call) and returns obs unchanged.
+func (e *Evaluator) finalizeGroundingObservation(ctx context.Context, obs GroundingObservation, correlationID string, emitAudit bool, outcome string) GroundingObservation {
+	if emitAudit {
+		e.emitGroundingResponse(ctx, correlationID, obs, outcome)
+	}
+	return obs
+}
+
+// renderConversation flattens a multi-turn conversation into a single string
+// for the grounding review prompt. Content is truncated to maxTokens runes.
+func renderConversation(messages []llm.Message, maxTokens int) string {
+	var b strings.Builder
+	for i, msg := range messages {
+		// #1935/#1936 (BR-AI-086, FedRAMP CC7.2): the model's reasoning/
+		// thinking text lives in a separate field from Content — without
+		// rendering it, the shadow agent's grounding review never saw the
+		// reasoning that anchored an assistant turn's tool_use decisions,
+		// even after the conversation itself stopped being stale.
+		if msg.Reasoning != nil && msg.Reasoning.Text != "" {
+			fmt.Fprintf(&b, "[%s:thinking] %s\n", msg.Role, msg.Reasoning.Text)
+		}
+		fmt.Fprintf(&b, "[%s] %s\n", msg.Role, msg.Content)
+		if i < len(messages)-1 {
+			b.WriteString("---\n")
+		}
+	}
+	result := b.String()
+	if maxTokens > 0 {
+		runes := []rune(result)
+		if len(runes) > maxTokens {
+			result = string(runes[:maxTokens]) + truncationMarker
+		}
+	}
+	return result
+}
+
+// hasDuplicateGroundedKey performs a raw-byte pre-scan for duplicate
+// "grounded" keys in JSON. Mirrors hasDuplicateSuspiciousKey from evaluator.go.
+func hasDuplicateGroundedKey(raw string) bool {
+	return strings.Count(raw, `"grounded"`) > 1
+}
+
+func (e *Evaluator) emitGroundingRequest(ctx context.Context, correlationID string, conversationLen int, tokenEstimate int) {
+	event := audit.NewEvent(audit.EventTypeGroundingRequest, correlationID)
+	event.EventAction = audit.ActionGroundingRequest
+	event.EventOutcome = audit.OutcomePending
+	event.Data["conversation_length"] = conversationLen
+	event.Data["conversation_tokens"] = tokenEstimate
+	e.logger.V(2).Info("emitting alignment.grounding.request",
+		"correlation_id", correlationID,
+		"conversation_length", conversationLen,
+		"conversation_tokens", tokenEstimate)
+	audit.StoreBestEffort(ctx, e.auditStore, event, e.logger)
+}
+
+func (e *Evaluator) emitGroundingResponse(ctx context.Context, correlationID string, obs GroundingObservation, result string) {
+	event := audit.NewEvent(audit.EventTypeGroundingResponse, correlationID)
+	event.EventAction = audit.ActionGroundingResponse
+	switch result {
+	case "grounded":
+		event.EventOutcome = audit.OutcomeSuccess
+	default:
+		event.EventOutcome = audit.OutcomeFailure
+	}
+	event.Data["grounded"] = obs.Grounded
+	event.Data["duration_ms"] = obs.Duration.Milliseconds()
+	event.Data["result"] = result
+	event.Data["prompt_tokens"] = obs.Usage.PromptTokens
+	event.Data["completion_tokens"] = obs.Usage.CompletionTokens
+	event.Data["total_tokens"] = obs.Usage.TotalTokens
+	e.logger.V(2).Info("emitting alignment.grounding.response",
+		"correlation_id", correlationID,
+		"grounded", obs.Grounded,
+		"duration_ms", obs.Duration.Milliseconds(),
+		"result", result)
+	audit.StoreBestEffort(ctx, e.auditStore, event, e.logger)
+}

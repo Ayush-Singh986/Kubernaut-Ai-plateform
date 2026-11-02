@@ -1,0 +1,73 @@
+# Kind cluster configuration for AIAnalysis E2E tests
+# Reference: DD-TEST-001 Port Allocation Strategy
+#
+# Port Allocation (from DD-TEST-001):
+#   Host Port: 8084
+#   NodePort (API): 30084
+#   NodePort (Metrics): 30184
+#   Health Port: 8081
+#   Metrics Port: 9090
+#
+# Usage:
+#   kind create cluster --name aianalysis-e2e --config test/infrastructure/kind-aianalysis-config.yaml
+#
+# Dependencies:
+#   - HolmesGPT-API (port 8080) - can run in-cluster or external
+#   - Data Storage (port 8081/30081) - for audit events
+#   - SignalProcessing CRD (upstream) - for EnrichmentResults
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5  # K8s 1.36.1 (kind v0.32.0 default); matches client-go/controller-runtime v0.36 baseline
+  # Expose AIAnalysis Controller ports via NodePort to host machine
+  # This eliminates kubectl port-forward instability for E2E tests
+  # DD-TEST-007: Mount coverage directory for E2E coverage collection
+  extraMounts:
+  - hostPath: ./coverdata
+    containerPath: /coverdata
+    readOnly: false
+  extraPortMappings:
+  # Service NodePort (for API access if needed)
+  - containerPort: 30084  # AIAnalysis NodePort (per DD-TEST-001)
+    hostPort: 8084        # Port on host machine (localhost:8084)
+    protocol: TCP
+  # Metrics NodePort (for Prometheus scraping)
+  - containerPort: 30184  # AIAnalysis Metrics NodePort (per DD-TEST-001)
+    hostPort: 9184        # Port on host machine (localhost:9184/metrics)
+    protocol: TCP
+  # Health probe NodePort (for liveness/readiness checks from host)
+  - containerPort: 30284  # AIAnalysis Health NodePort
+    hostPort: 8184        # Port on host machine (localhost:8184/healthz)
+    protocol: TCP
+  # Dependency service ports (for E2E health checks)
+  - containerPort: 30188  # Kubernaut Agent Health NodePort (Issue #753)
+    hostPort: 28088       # Port on host machine (localhost:28088/healthz)
+    protocol: TCP
+  - containerPort: 30988  # Kubernaut Agent Metrics NodePort (Issue #753)
+    hostPort: 9088        # Port on host machine (localhost:9088/metrics)
+    protocol: TCP
+  - containerPort: 30088  # Kubernaut Agent API NodePort
+    hostPort: 8088        # Port on host machine (localhost:8088)
+    protocol: TCP
+  - containerPort: 30081  # Data Storage NodePort
+    hostPort: 8091        # Port on host machine (localhost:8091/health)
+    protocol: TCP         # Note: 8091 used to avoid conflicts (8081=AIAnalysis, 8085=gvproxy)
+  - containerPort: 30281  # Data Storage health NodePort (Issue #753)
+    hostPort: 30281       # Port on host machine
+    protocol: TCP
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Increase API server rate limits for parallel E2E testing
+        # With 4 parallel test processes, need headroom for CRD operations
+        max-requests-inflight: "800"
+        max-mutating-requests-inflight: "400"
+    controllerManager:
+      extraArgs:
+        # Increase controller manager QPS for CRD operations
+        kube-api-qps: "100"
+        kube-api-burst: "200"

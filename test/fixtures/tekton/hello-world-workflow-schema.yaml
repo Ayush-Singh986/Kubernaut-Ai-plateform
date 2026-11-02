@@ -1,0 +1,44 @@
+# Test Hello World Tekton Workflow Schema (BR-WORKFLOW-004)
+# Authority: ADR-043
+# E2E Testing: Validates WorkflowExecution controller's Tekton integration
+# Workflow name: test-hello-world (from CRD metadata.name per #329)
+version: "1.0.0"
+description:
+  what: "Simple hello-world workflow for E2E testing of WorkflowExecution controller"
+  whenToUse: "For E2E validation of Tekton-based workflow execution"
+  whenNotToUse: "Not intended for production use"
+  preconditions: "Tekton Pipelines installed in the cluster"
+
+actionType: RestartPod
+
+labels:
+  signalName: test
+  severity: [low]
+  environment: [test]
+  component: apps/v1/Deployment
+  priority: P3
+
+customLabels:
+  test-category: e2e
+  validation-type: success-path
+
+execution:
+  engine: tekton
+
+parameters:
+  - name: TARGET_RESOURCE
+    type: string
+    required: true
+    description: "Target resource being remediated (e.g., 'default/deployment/my-app')"
+    default: "test/deployment/hello"
+  - name: MESSAGE
+    type: string
+    required: false
+    description: "Optional message to echo during execution"
+    default: "Hello from Kubernaut WorkflowExecution!"
+  - name: DELAY_SECONDS
+    type: string
+    required: false
+    description: "Optional delay before completion (for testing running state)"
+    default: "2"
+    pattern: "^[0-9]+$"

@@ -1,0 +1,14 @@
+# Dynamic Toolset Service Configuration
+# This file is loaded as a ConfigMap in Kubernetes
+#
+# Business Requirements:
+# - BR-TOOLSET-016: Service discovery configuration
+# - BR-TOOLSET-019: Multi-namespace service discovery
+# - BR-TOOLSET-026: Service discovery with health validation
+#
+# NOTE: This configuration structure will become the .spec of ToolsetConfig CRD in V1.1 (BR-TOOLSET-044)
+
+service_discovery:
+  discovery_interval: "5m"
+  health_check_interval: "30s"
+  namespaces: [] # Empty means all namespaces

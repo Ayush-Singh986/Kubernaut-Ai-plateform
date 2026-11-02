@@ -1,0 +1,332 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// ============================================================================
+// EffectivenessAssessment CRD Types
+// ============================================================================
+//
+// The EffectivenessAssessment (EA) CRD is created by the Remediation Orchestrator
+// after a remediation workflow completes. The Effectiveness Monitor controller
+// watches EA CRDs and performs 4 assessment checks (health, alert, metrics, hash),
+// emitting component audit events to DataStorage.
+//
+// Architecture: ADR-EM-001 (Effectiveness Monitor Service Integration)
+// Immutability: Spec is immutable after creation (CEL validation, ADR-001)
+// Owner: RemediationRequest (ownerRef for garbage collection)
+//
+// Note: correlation-id and rr-phase were formerly labels; now in spec for immutability.
+// ============================================================================
+
+// Phase constants for EffectivenessAssessment
+const (
+	// PhasePending indicates the EA has been created by RO but EM has not yet reconciled it.
+	PhasePending = "Pending"
+	// PhaseStabilizing indicates EM is waiting for the stabilization window to elapse
+	// before beginning assessment checks. Derived timing fields (ValidityDeadline,
+	// PrometheusCheckAfter, AlertManagerCheckAfter) are pre-computed and persisted
+	// in this phase so operators can observe the assessment timeline immediately.
+	PhaseStabilizing = "Stabilizing"
+	// PhaseAssessing indicates EM is actively performing assessment checks.
+	PhaseAssessing = "Assessing"
+	// PhaseCompleted indicates all assessment checks have finished (or validity expired).
+	PhaseCompleted = "Completed"
+	// PhaseFailed indicates the assessment could not be performed (e.g., target not found).
+	PhaseFailed = "Failed"
+	// PhaseWaitingForPropagation indicates the EM is waiting for an async change
+	// (GitOps sync, operator reconciliation) to propagate before computing the hash.
+	// Only entered when EA.Spec.Config.HashComputeDelay is non-nil and the computed
+	// deferral deadline (creation + HashComputeDelay) is in the future.
+	// Reference: DD-EM-004 v2.0, BR-EM-010.3, Issue #253, Issue #277
+	PhaseWaitingForPropagation = "WaitingForPropagation"
+)
+
+// AssessmentReason constants describe why an assessment completed with a particular outcome.
+// Issue #749: All values use PascalCase per Kubernetes API conventions.
+const (
+	// AssessmentReasonFull indicates all enabled components were assessed successfully.
+	AssessmentReasonFull = "Full"
+	// AssessmentReasonPartial indicates some components were assessed but not all.
+	AssessmentReasonPartial = "Partial"
+	// AssessmentReasonNoExecution indicates no workflow execution was found for this RR.
+	AssessmentReasonNoExecution = "NoExecution"
+	// AssessmentReasonMetricsTimedOut indicates metrics were not available before validity expired.
+	AssessmentReasonMetricsTimedOut = "MetricsTimedOut"
+	// AssessmentReasonExpired indicates the validity window expired with no data collected.
+	AssessmentReasonExpired = "Expired"
+	// AssessmentReasonSpecDrift indicates the target resource spec was modified during assessment.
+	// The remediation is considered unsuccessful — DS score = 0.0 (DD-EM-002 v1.1).
+	AssessmentReasonSpecDrift = "SpecDrift"
+	// AssessmentReasonAlertDecayTimeout indicates the validity window expired while the EM
+	// was actively monitoring alert decay. Unlike "Partial" (alert never checked) or
+	// "Expired" (no data), this means the EM confirmed the resource was healthy but the
+	// Prometheus alert persisted beyond validity — likely a genuine re-occurrence.
+	// Reference: Issue #369, BR-EM-012
+	AssessmentReasonAlertDecayTimeout = "AlertDecayTimeout"
+	// AssessmentReasonUnrecoverable indicates the assessment could not be performed
+	// due to an unrecoverable condition (e.g., target not found). Issue #749.
+	AssessmentReasonUnrecoverable = "Unrecoverable"
+)
+
+// EffectivenessAssessmentSpec defines the desired state of an EffectivenessAssessment.
+//
+// The spec is set by the Remediation Orchestrator at creation time and is immutable.
+// Immutability is enforced by CEL validation (self == oldSelf) to prevent tampering.
+//
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable after creation (ADR-001)"
+type EffectivenessAssessmentSpec struct {
+	// CorrelationID is the name of the parent RemediationRequest.
+	// Used as the correlation ID for audit events (DD-AUDIT-CORRELATION-002).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	CorrelationID string `json:"correlationID"`
+
+	// RemediationRequestPhase is the RemediationRequest's OverallPhase at the time
+	// the EA was created. Captured as an immutable spec field so the EM can branch
+	// assessment logic based on the RR outcome (Verifying, Completed, Failed, TimedOut).
+	// Verifying: happy path — WFE succeeded, EA created while RR awaits assessment (#280).
+	// Previously stored as the mutable label kubernaut.ai/rr-phase; moved to spec
+	// for immutability and security.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Verifying;Completed;Failed;TimedOut
+	RemediationRequestPhase string `json:"remediationRequestPhase"`
+
+	// SignalTarget is the resource that triggered the alert.
+	// Source: RR.Spec.TargetResource (from Gateway alert extraction).
+	// Used by: health assessment, alert resolution, metrics queries (DD-EM-003).
+	// +kubebuilder:validation:Required
+	SignalTarget TargetResource `json:"signalTarget"`
+
+	// RemediationTarget is the resource the workflow modified.
+	// Source: AA.Status.RootCauseAnalysis.RemediationTarget (from KA RCA resolution).
+	// Used by: spec hash computation, drift detection (DD-EM-003).
+	// +kubebuilder:validation:Required
+	RemediationTarget TargetResource `json:"remediationTarget"`
+
+	// Config contains the assessment configuration parameters.
+	// +kubebuilder:validation:Required
+	Config EAConfig `json:"config"`
+
+	// RemediationCreatedAt is the creation timestamp of the parent RemediationRequest.
+	// Set by the RO at EA creation time from rr.CreationTimestamp.
+	// Used by the audit manager to compute resolution_time_seconds in the
+	// assessment.completed event (CompletedAt - RemediationCreatedAt).
+	// +optional
+	RemediationCreatedAt *metav1.Time `json:"remediationCreatedAt,omitempty"`
+
+	// SignalName is the original alert/signal name from the parent RemediationRequest.
+	// Set by the RO at EA creation time from rr.Spec.SignalName.
+	// Used by the audit manager to populate the signal_name field in assessment.completed
+	// events (OBS-1: distinct from CorrelationID which is the RR name).
+	// +optional
+	SignalName string `json:"signalName,omitempty"`
+
+	// PreRemediationSpecHash is the canonical spec hash of the target resource BEFORE
+	// remediation was applied. Copied from rr.Status.EnsureOperatorAudit().PreRemediationSpecHash by the RO
+	// at EA creation time. The EM uses this to compare pre vs post-remediation state
+	// for spec drift detection, eliminating the need to query DataStorage audit events.
+	// Reference: ADR-EM-001, DD-EM-002
+	// +optional
+	PreRemediationSpecHash string `json:"preRemediationSpecHash,omitempty"`
+
+	// BR-FLEET-054: Remote cluster identifier for fleet-managed signals.
+	// When non-empty, the EM routes target-facing reads (health, alert, hash)
+	// to the remote cluster via ReaderFactory.
+	// Propagated from RemediationRequest.Spec.ClusterID by the Remediation Orchestrator.
+	// +optional
+	ClusterID string `json:"clusterID,omitempty"`
+}
+
+// TargetResource identifies a Kubernetes resource by kind, name, and namespace.
+type TargetResource struct {
+	// Kind is the Kubernetes resource kind (e.g., "Deployment", "StatefulSet").
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+	// Name is the resource name.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+	// Namespace is the resource namespace.
+	// Empty for cluster-scoped resources (e.g., Node, PersistentVolume).
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// APIVersion disambiguates the resource's API group when the Kind exists in
+	// multiple groups (e.g. Route in route.openshift.io vs serving.knative.dev).
+	// Format: "group/version" (e.g. "route.openshift.io/v1"). Issue #1040.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+}
+
+// EAConfig contains assessment configuration set by the RO at creation time.
+// StabilizationWindow controls how long the EM waits after remediation before
+// starting assessment checks. HashComputeDelay and AlertCheckDelay are optional
+// Duration-based delays that the RO computes based on target type and signal mode.
+// All other assessment parameters (PrometheusEnabled, AlertManagerEnabled,
+// ValidityWindow) are EM-internal configuration read from effectivenessmonitor.Config.
+// The EM emits individual component audit events to DataStorage; the overall
+// effectiveness score is computed by DataStorage on demand, not by the EM.
+type EAConfig struct {
+	// StabilizationWindow is the duration to wait after remediation before assessment.
+	// Set by the Remediation Orchestrator. The EM uses this to delay assessment
+	// until the system stabilizes post-remediation.
+	// +kubebuilder:validation:Required
+	StabilizationWindow metav1.Duration `json:"stabilizationWindow"`
+
+	// HashComputeDelay is the duration to defer post-remediation spec hash computation
+	// after EA creation. Set by the RO for async-managed targets (GitOps, operator
+	// CRDs) where spec changes propagate after the WorkflowExecution completes.
+	// The EM computes the deferral deadline as: creation + HashComputeDelay.
+	// Nil means compute immediately (sync workflows, backward compatible).
+	// Reference: DD-EM-004, BR-EM-010, BR-RO-103, Issue #277
+	// +optional
+	HashComputeDelay *metav1.Duration `json:"hashComputeDelay,omitempty"`
+
+	// AlertCheckDelay is an additional duration to defer alert resolution checks
+	// beyond the StabilizationWindow. Set by the RO for proactive (predictive) alerts
+	// where the underlying Prometheus alert (e.g. predict_linear) requires extra time
+	// to resolve after remediation.
+	// The EM computes AlertManagerCheckAfter as:
+	//   creation + StabilizationWindow + AlertCheckDelay
+	// Nil means no additional delay (AlertManagerCheckAfter = PrometheusCheckAfter).
+	// Reference: ADR-EM-001, BR-EM-009, Issue #277
+	// +optional
+	AlertCheckDelay *metav1.Duration `json:"alertCheckDelay,omitempty"`
+}
+
+// EffectivenessAssessmentStatus defines the observed state of an EffectivenessAssessment.
+type EffectivenessAssessmentStatus struct {
+	// Phase is the current lifecycle phase of the assessment.
+	// +kubebuilder:validation:Enum=Pending;WaitingForPropagation;Stabilizing;Assessing;Completed;Failed
+	Phase string `json:"phase,omitempty"`
+
+	// ValidityDeadline is the absolute time after which the assessment expires.
+	// Computed by the EM controller on first reconciliation as:
+	//   EA.creationTimestamp + validityWindow (from EM config).
+	// This follows Kubernetes spec/status convention: the RO sets desired state
+	// (StabilizationWindow in spec), and the EM computes observed/derived state
+	// (ValidityDeadline in status). This prevents misconfiguration where
+	// StabilizationWindow > ValidityDeadline.
+	// +optional
+	ValidityDeadline *metav1.Time `json:"validityDeadline,omitempty"`
+
+	// PrometheusCheckAfter is the earliest time to query Prometheus for metrics.
+	// Computed by the EM controller on first reconciliation as:
+	//   EA.creationTimestamp + StabilizationWindow (from EA spec).
+	// Stored in status to avoid recomputation on every reconcile and for
+	// operator observability of the assessment timeline.
+	// +optional
+	PrometheusCheckAfter *metav1.Time `json:"prometheusCheckAfter,omitempty"`
+
+	// AlertManagerCheckAfter is the earliest time to check AlertManager for alert resolution.
+	// Computed by the EM controller on first reconciliation as:
+	//   EA.creationTimestamp + StabilizationWindow + AlertCheckDelay (if set).
+	// When AlertCheckDelay is nil, equals PrometheusCheckAfter.
+	// Stored in status to avoid recomputation on every reconcile and for
+	// operator observability of the assessment timeline.
+	// Reference: ADR-EM-001, Issue #277
+	// +optional
+	AlertManagerCheckAfter *metav1.Time `json:"alertManagerCheckAfter,omitempty"`
+
+	// Components tracks the completion state of each assessment component.
+	Components EAComponents `json:"components,omitempty"`
+
+	// AssessmentReason describes why the assessment completed with this outcome.
+	// +kubebuilder:validation:Enum=Full;Partial;NoExecution;MetricsTimedOut;Expired;SpecDrift;AlertDecayTimeout;Unrecoverable
+	AssessmentReason string `json:"assessmentReason,omitempty"`
+
+	// CompletedAt is the timestamp when the assessment finished.
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// Message provides human-readable details about the current state.
+	Message string `json:"message,omitempty"`
+
+	// Conditions represent the latest available observations of the EA's state.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// EAComponents tracks the completion state and scores of each assessment component.
+// The EM updates these fields as each component check completes.
+// This enables restart recovery: if EM restarts mid-assessment, it can skip
+// already-completed components by checking these flags.
+type EAComponents struct {
+	// HealthAssessed indicates whether the health check has been completed.
+	HealthAssessed bool `json:"healthAssessed,omitempty"`
+	// HealthScore is the health check score (0.0-1.0), nil if not yet assessed.
+	HealthScore *float64 `json:"healthScore,omitempty"`
+
+	// HashComputed indicates whether the spec hash comparison has been completed.
+	HashComputed bool `json:"hashComputed,omitempty"`
+	// PostRemediationSpecHash is the hash of the target resource spec after remediation.
+	PostRemediationSpecHash string `json:"postRemediationSpecHash,omitempty"`
+	// CurrentSpecHash is the most recent hash of the target resource spec,
+	// re-computed on each reconcile after HashComputed is true (DD-EM-002 v1.1).
+	// If it differs from PostRemediationSpecHash, spec drift was detected.
+	CurrentSpecHash string `json:"currentSpecHash,omitempty"`
+
+	// AlertAssessed indicates whether the alert resolution check has been completed.
+	AlertAssessed bool `json:"alertAssessed,omitempty"`
+	// AlertScore is the alert resolution score (0.0 or 1.0), nil if not yet assessed.
+	AlertScore *float64 `json:"alertScore,omitempty"`
+
+	// MetricsAssessed indicates whether the metric comparison has been completed.
+	MetricsAssessed bool `json:"metricsAssessed,omitempty"`
+	// MetricsScore is the metric comparison score (0.0-1.0), nil if not yet assessed.
+	MetricsScore *float64 `json:"metricsScore,omitempty"`
+
+	// AlertDecayRetries tracks the number of times the EM re-checked a firing alert
+	// during decay monitoring. Incremented each reconcile where isAlertDecay returns true.
+	// A non-zero value means the EM confirmed the resource was healthy but the alert
+	// persisted, indicating Prometheus lookback window decay.
+	// Reference: Issue #369, BR-EM-012
+	AlertDecayRetries int32 `json:"alertDecayRetries,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=ea
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.assessmentReason`
+// +kubebuilder:printcolumn:name="CorrelationID",type=string,JSONPath=`.spec.correlationID`
+// +kubebuilder:printcolumn:name="ReadyReason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// EffectivenessAssessment is the Schema for the effectivenessassessments API.
+// It is created by the Remediation Orchestrator and watched by the Effectiveness Monitor.
+type EffectivenessAssessment struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   EffectivenessAssessmentSpec   `json:"spec,omitempty"`
+	Status EffectivenessAssessmentStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// EffectivenessAssessmentList contains a list of EffectivenessAssessment.
+type EffectivenessAssessmentList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []EffectivenessAssessment `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&EffectivenessAssessment{}, &EffectivenessAssessmentList{})
+}

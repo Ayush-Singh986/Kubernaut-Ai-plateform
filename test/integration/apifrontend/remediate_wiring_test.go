@@ -1,0 +1,187 @@
+package apifrontend_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+)
+
+var _ = Describe("kubernaut_remediate wiring (#1332)", func() {
+	rrGVR := schema.GroupVersionResource{Group: "kubernaut.ai", Version: "v1alpha1", Resource: "remediationrequests"}
+	isGVR := schema.GroupVersionResource{Group: "kubernaut.ai", Version: "v1alpha1", Resource: "investigationsessions"}
+
+	It("IT-AF-1332-W01: HandleRemediate creates RR via envtest", func() {
+		ctx := context.Background()
+		ns := defaultFixture
+
+		result, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: k8sClient, DynClient: dynamicClient, ControllerNS: ns, Triager: defaultTestTriagerIT(ns, "Deployment", "web-1332-w01"), ScopeChecker: alwaysManagedScopeChecker()}, &tools.RemediateArgs{
+			Namespace:   ns,
+			Kind:        "Deployment",
+			Name:        "web-1332-w01",
+			Description: "kubernaut_remediate wiring IT",
+			APIVersion:  "apps/v1",
+		}, "it-user")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RRID).To(HavePrefix("rr-"))
+		Expect(result.AlreadyExists).To(BeFalse())
+
+		created, getErr := dynamicClient.Resource(rrGVR).Namespace(ns).Get(ctx, result.RRID, metav1.GetOptions{})
+		Expect(getErr).NotTo(HaveOccurred())
+		Expect(created.GetNamespace()).To(Equal(ns))
+
+		DeferCleanup(func() {
+			_ = dynamicClient.Resource(rrGVR).Namespace(ns).Delete(ctx, result.RRID, metav1.DeleteOptions{})
+		})
+	})
+
+	It("IT-AF-2025-033: HandleRemediate rejects RR creation when ScopeChecker is unavailable", func() {
+		ctx := context.Background()
+		_, err := tools.HandleRemediate(ctx, &tools.ToolDeps{
+			Client:       k8sClient,
+			ControllerNS: defaultFixture,
+			Triager:      defaultTestTriagerIT(defaultFixture, "Deployment", "web-scope-unavailable"),
+		}, &tools.RemediateArgs{
+			Namespace:   defaultFixture,
+			Kind:        "Deployment",
+			Name:        "web-scope-unavailable",
+			Description: "scope checker integration rejection",
+			APIVersion:  "apps/v1",
+		}, "it-user")
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, tools.ErrResourceNotManaged)).To(BeTrue())
+	})
+
+	It("IT-AF-1332-W02: HandleRemediate does NOT create InvestigationSession", func() {
+		ctx := context.Background()
+		ns := defaultFixture
+
+		result, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: k8sClient, DynClient: dynamicClient, ControllerNS: ns, Triager: defaultTestTriagerIT(ns, "Deployment", "web-1332-w02"), ScopeChecker: alwaysManagedScopeChecker()}, &tools.RemediateArgs{
+			Namespace:   ns,
+			Kind:        "Deployment",
+			Name:        "web-1332-w02",
+			Description: "no IS expected",
+			APIVersion:  "apps/v1",
+		}, "it-user")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RRID).To(HavePrefix("rr-"))
+
+		isList, listErr := dynamicClient.Resource(isGVR).Namespace(ns).List(ctx, metav1.ListOptions{})
+		Expect(listErr).NotTo(HaveOccurred())
+		for _, is := range isList.Items {
+			owners := is.GetOwnerReferences()
+			for _, ref := range owners {
+				Expect(ref.Name).NotTo(Equal(result.RRID),
+					"autonomous HandleRemediate must NOT create an IS for RR %s", result.RRID)
+			}
+		}
+
+		DeferCleanup(func() {
+			_ = dynamicClient.Resource(rrGVR).Namespace(ns).Delete(ctx, result.RRID, metav1.DeleteOptions{})
+		})
+	})
+
+	It("IT-AF-1332-W03: HandleRemediate returns existing RR via RRID lookup", func() {
+		ctx := context.Background()
+		ns := defaultFixture
+
+		rrName := fmt.Sprintf("rr-existing-1332-w03-%d", GinkgoRandomSeed())
+		now := time.Now().UTC().Format(time.RFC3339)
+
+		rr := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "kubernaut.ai/v1alpha1",
+				"kind":       "RemediationRequest",
+				"metadata": map[string]interface{}{
+					"name":      rrName,
+					"namespace": ns,
+				},
+				"spec": map[string]interface{}{
+					"signalName":        "test-signal-w03",
+					"signalType":        "alert",
+					"signalFingerprint": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+					"severity":          "warning",
+					"firingTime":        now,
+					"receivedTime":      now,
+					"targetType":        "kubernetes",
+					"targetResource": map[string]interface{}{
+						"kind":      "Deployment",
+						"name":      "web-existing",
+						"namespace": ns,
+					},
+				},
+			},
+		}
+		_, err := dynamicClient.Resource(rrGVR).Namespace(ns).Create(ctx, rr, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = dynamicClient.Resource(rrGVR).Namespace(ns).Delete(ctx, rrName, metav1.DeleteOptions{})
+		})
+
+		result, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: k8sClient, DynClient: dynamicClient, ControllerNS: ns}, &tools.RemediateArgs{
+			RRID: rrName,
+		}, "it-user")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.AlreadyExists).To(BeTrue())
+		Expect(result.RRID).To(Equal(rrName))
+	})
+
+	It("IT-AF-1332-W04: HandleRemediate with non-existent RRID returns graceful not-found", func() {
+		ctx := context.Background()
+		ns := defaultFixture
+
+		result, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: k8sClient, DynClient: dynamicClient, ControllerNS: ns}, &tools.RemediateArgs{
+			RRID: "rr-nonexistent-1332",
+		}, "it-user")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.AlreadyExists).To(BeFalse())
+		Expect(result.Message).To(ContainSubstring("not found"))
+	})
+
+	It("IT-AF-1332-W05: HandleRemediate with nil client returns ErrK8sUnavailable", func() {
+		ctx := context.Background()
+
+		_, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: nil, ControllerNS: defaultFixture}, &tools.RemediateArgs{
+			Namespace:   defaultFixture,
+			Kind:        "Deployment",
+			Name:        "web-nil",
+			Description: "nil client test",
+			APIVersion:  "apps/v1",
+		}, "it-user")
+		Expect(err).To(MatchError(tools.ErrK8sUnavailable))
+	})
+
+	It("IT-AF-1332-W06: HandleRemediate emits audit event via envtest", func() {
+		ctx := context.Background()
+		ns := defaultFixture
+		auditRecorder.Reset()
+
+		result, err := tools.HandleRemediate(ctx, &tools.ToolDeps{Client: k8sClient, DynClient: dynamicClient, ControllerNS: ns, Auditor: auditRecorder, Triager: defaultTestTriagerIT(ns, "Deployment", "web-1332-w06"), ScopeChecker: alwaysManagedScopeChecker()}, &tools.RemediateArgs{
+			Namespace:   ns,
+			Kind:        "Deployment",
+			Name:        "web-1332-w06",
+			Description: "audit wiring IT",
+			APIVersion:  "apps/v1",
+		}, "audit-user-1332")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RRID).NotTo(BeEmpty())
+
+		events := auditRecorder.EventsOfType(audit.EventRRCreated)
+		Expect(events).To(HaveLen(1))
+		Expect(events[0].UserID).To(Equal("audit-user-1332"))
+
+		DeferCleanup(func() {
+			_ = dynamicClient.Resource(rrGVR).Namespace(ns).Delete(ctx, result.RRID, metav1.DeleteOptions{})
+		})
+	})
+})

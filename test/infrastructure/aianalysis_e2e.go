@@ -1,0 +1,1031 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+)
+
+func CreateAIAnalysisClusterHybrid(clusterName, kubeconfigPath string, writer io.Writer) error {
+	ctx := context.Background()
+	namespace := kubernautSystem // Infrastructure always in kubernaut-system; tests use dynamic namespaces
+
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "🚀 AIAnalysis E2E Infrastructure (HYBRID PARALLEL + DISK OPTIMIZATION)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "  Strategy: Build → Export → Prune → Cluster → Load → Deploy")
+	_, _ = fmt.Fprintln(writer, "  Benefits: Fast builds + Aggressive cleanup + Disk tracking")
+	_, _ = fmt.Fprintln(writer, "  Per DD-TEST-002: Hybrid Parallel Setup Standard")
+	_, _ = fmt.Fprintln(writer, "  Per DD-TEST-008: Disk Space Management")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// Track initial disk space
+	LogDiskSpace("START", writer)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	builtImages, err := buildAIAnalysisImages(ctx, writer)
+	if err != nil {
+		return err
+	}
+
+	tarFiles, tarDir, err := prepareAIAnalysisImages(builtImages, writer)
+	if err != nil {
+		return err
+	}
+	if tarDir != "" {
+		defer func() {
+			if removeErr := os.RemoveAll(tarDir); removeErr != nil {
+				_, _ = fmt.Fprintf(writer, "  ⚠️  Failed to remove image archive directory %s: %v\n", tarDir, removeErr)
+			}
+		}()
+	}
+
+	// PHASE 4: Create Kind cluster (AFTER cleanup to maximize available space)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 4: Creating Kind cluster...")
+	if err := createAIAnalysisKindCluster(context.Background(), clusterName, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create Kind cluster: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "📁 Creating namespace...")
+	createNsCmd := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfigPath,
+		"create", "namespace", namespace)
+	nsOutput := &strings.Builder{}
+	createNsCmd.Stdout = io.MultiWriter(writer, nsOutput)
+	createNsCmd.Stderr = io.MultiWriter(writer, nsOutput)
+	if err := createNsCmd.Run(); err != nil {
+		if !strings.Contains(nsOutput.String(), "AlreadyExists") {
+			return fmt.Errorf("failed to create namespace: %w", err)
+		}
+	}
+
+	_, _ = fmt.Fprintln(writer, "📋 Installing AIAnalysis CRD...")
+	if err := installAIAnalysisCRD(kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to install AIAnalysis CRD: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "📋 Installing InvestigationSession CRD...")
+	if err := installInvestigationSessionCRD(kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to install InvestigationSession CRD: %w", err)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// PHASE 5-6: Load images from .tar into Kind and cleanup .tar files
+	// ═══════════════════════════════════════════════════════════════════════
+	// Uses shared helpers for efficient loading and cleanup
+	// FIX: Skip image loading in CI/CD mode (images will be pulled from registry)
+	if os.Getenv("IMAGE_REGISTRY") != "" {
+		_, _ = fmt.Fprintln(writer, "\n⏩ PHASE 5-6: Skipping .tar image loading (CI/CD registry mode)")
+		_, _ = fmt.Fprintln(writer, "   Kind will pull images directly from GHCR as needed")
+	} else {
+		// Local mode: load images from .tar files
+		_, _ = fmt.Fprintln(writer, "\n📦 PHASE 5-6: Loading images from .tar into Kind...")
+		if err := LoadImagesAndCleanup(clusterName, tarFiles, writer); err != nil {
+			return fmt.Errorf("failed to load images and cleanup: %w", err)
+		}
+	}
+
+	if err := prepareAIAnalysisDataStorage(ctx, namespace, kubeconfigPath, builtImages["datastorage"], writer); err != nil {
+		return err
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	workflowUUIDs, err := seedAIAnalysisWorkflows(ctx, namespace, kubeconfigPath, writer)
+	if err != nil {
+		return err
+	}
+
+	if err := deployAIAnalysisServices(ctx, clusterName, namespace, kubeconfigPath, builtImages, workflowUUIDs, writer); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(writer, "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_, _ = fmt.Fprintln(writer, "✅ AIAnalysis E2E Infrastructure Ready (DD-TEST-002 + DD-TEST-008)")
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	LogDiskSpace("FINAL", writer)
+	_, _ = fmt.Fprintln(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	return nil
+}
+
+func prepareAIAnalysisDataStorage(ctx context.Context, namespace, kubeconfigPath, image string, writer io.Writer) error {
+	if err := deployDataStorageClientClusterRole(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to deploy client ClusterRole: %w", err)
+	}
+	if _, err := GenerateInterServiceTLS(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to generate inter-service TLS: %w", err)
+	}
+	if err := GenerateSigningCertSecret(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return fmt.Errorf("failed to generate signing certificate: %w", err)
+	}
+	if err := DeployDataStorageTestServices(ctx, namespace, kubeconfigPath, image, writer); err != nil {
+		return fmt.Errorf("DataStorage infrastructure deployment failed: %w", err)
+	}
+	if err := createAIAnalysisE2EServiceAccount(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create E2E ServiceAccount: %w", err)
+	}
+	return nil
+}
+
+func deployAIAnalysisServices(ctx context.Context, clusterName, namespace, kubeconfigPath string, images, workflowUUIDs map[string]string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 7c: Deploying remaining services in parallel...")
+	results := make(chan struct {
+		name string
+		err  error
+	}, 4)
+	go func() {
+		results <- struct {
+			name string
+			err  error
+		}{"Mock LLM", DeployMockLLMInNamespace(ctx, namespace, kubeconfigPath, images["mock-llm"], workflowUUIDs, nil, writer)}
+	}()
+	go func() {
+		results <- struct {
+			name string
+			err  error
+		}{"Mock LLM Shadow", DeployMockLLMShadowInNamespace(ctx, namespace, kubeconfigPath, images["mock-llm"], writer)}
+	}()
+	go func() {
+		err := DeployKubernautAgentServiceRBAC(ctx, namespace, kubeconfigPath, writer)
+		if err == nil {
+			err = DeployKubernautAgentOnly(ctx, clusterName, kubeconfigPath, namespace, images["kubernautagent"], false, writer)
+		}
+		results <- struct {
+			name string
+			err  error
+		}{"Kubernaut Agent", err}
+	}()
+	go func() {
+		results <- struct {
+			name string
+			err  error
+		}{"AIAnalysis", deployAIAnalysisControllerManifestOnly(ctx, kubeconfigPath, images["aianalysis"], writer)}
+	}()
+	for range 4 {
+		result := <-results
+		if result.err != nil {
+			return fmt.Errorf("failed to deploy %s: %w", result.name, result.err)
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ %s deployed\n", result.name)
+	}
+	if err := waitForAllServicesReady(ctx, namespace, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("services not ready: %w", err)
+	}
+	if err := createEnrichmentFixtures(ctx, kubeconfigPath, writer); err != nil {
+		return fmt.Errorf("failed to create enrichment fixtures: %w", err)
+	}
+	return nil
+}
+
+func DeleteAIAnalysisCluster(clusterName, kubeconfigPath string, testsFailed bool, writer io.Writer) error {
+	// Use shared cleanup function with log export on failure
+	if err := DeleteCluster(clusterName, "aianalysis", testsFailed, writer); err != nil {
+		return err
+	}
+
+	// Remove kubeconfig
+	if kubeconfigPath != "" {
+		_ = os.Remove(kubeconfigPath)
+	}
+
+	return nil
+}
+
+func createAIAnalysisKindCluster(ctx context.Context, clusterName, kubeconfigPath string, writer io.Writer) error {
+	// REFACTORED: Now uses shared CreateKindClusterWithConfig() helper
+	kindConfigPath := os.Getenv("AIANALYSIS_E2E_KIND_CONFIG")
+	if kindConfigPath == "" {
+		kindConfigPath = "test/infrastructure/kind-aianalysis-config.yaml"
+	}
+	opts := KindClusterOptions{
+		ClusterName:               clusterName,
+		KubeconfigPath:            kubeconfigPath,
+		ConfigPath:                kindConfigPath,
+		WaitTimeout:               "60s",
+		DeleteExisting:            false,
+		ReuseExisting:             true, // Original behavior: reuse if exists
+		CleanupOrphanedContainers: true, // Original behavior: cleanup Podman containers on macOS
+		ProjectRootAsWorkingDir:   true, // DD-TEST-007: For ./coverdata resolution in Kind config
+		// UsePodman: this suite's entire image pipeline (BuildImageForKind,
+		// ExportImageToTar, LoadImageFromTar in e2e_images.go/disk_space.go)
+		// shells out to `podman` exclusively, and LoadImageFromTar hardcodes
+		// KIND_EXPERIMENTAL_PROVIDER=podman unconditionally. Without this,
+		// `kind create cluster` falls back to the ambient default provider
+		// (Docker, when the docker binary is present and
+		// KIND_EXPERIMENTAL_PROVIDER isn't set in the shell -- e.g. a bare
+		// `make test-e2e-aianalysis` on a host with both runtimes installed),
+		// while every subsequent `kind load image-archive` call still forces
+		// podman -- a deterministic provider mismatch where kind looks for
+		// the cluster's nodes under the wrong runtime and reports "no nodes
+		// found for cluster". Every other E2E service (gateway, apifrontend,
+		// authwebhook, fleetmetadatacache, shared_e2e) already sets this;
+		// aianalysis was the one outlier. GitHub Actions CI runners never
+		// surfaced this because they don't have a competing Docker install.
+		UsePodman: true,
+	}
+	if err := CreateKindClusterWithConfig(ctx, opts, writer); err != nil {
+		return err
+	}
+
+	// Wait for cluster to be ready (original behavior preserved)
+	return waitForClusterReady(ctx, kubeconfigPath, writer)
+}
+
+func installAIAnalysisCRD(kubeconfigPath string, writer io.Writer) error {
+	// Find CRD file
+	crdPath := findCRDFile("kubernaut.ai_aianalyses.yaml")
+	if crdPath == "" {
+		return fmt.Errorf("AIAnalysis CRD not found")
+	}
+
+	cmd := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "-f", crdPath)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply CRD: %w", err)
+	}
+
+	// Wait for CRD to be established
+	_, _ = fmt.Fprintln(writer, "  Waiting for CRD to be established...")
+	for i := 0; i < 30; i++ {
+		cmd := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfigPath,
+			"get", "crd", "aianalyses.kubernaut.ai")
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("timeout waiting for CRD")
+}
+
+func installInvestigationSessionCRD(kubeconfigPath string, writer io.Writer) error {
+	crdPath := findCRDFile("kubernaut.ai_investigationsessions.yaml")
+	if crdPath == "" {
+		return fmt.Errorf("InvestigationSession CRD not found")
+	}
+
+	cmd := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfigPath,
+		"apply", "-f", crdPath)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply InvestigationSession CRD: %w", err)
+	}
+
+	_, _ = fmt.Fprintln(writer, "  Waiting for InvestigationSession CRD to be established...")
+	for i := 0; i < 30; i++ {
+		cmd := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfigPath,
+			"get", "crd", "investigationsessions.kubernaut.ai")
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("timeout waiting for InvestigationSession CRD")
+}
+
+// createMockLLMConfigMap creates a Kubernetes ConfigMap with workflow UUIDs for Mock LLM
+// DD-TEST-011 Alt 2: ConfigMap Pattern
+// - Test suite seeds workflows in DataStorage FIRST (captures actual UUIDs)
+// - Creates ConfigMap with workflow_name → UUID mapping
+// - Mock LLM reads ConfigMap at startup (no HTTP self-discovery needed)
+// - Deterministic ordering, no timing issues
+// Removed: createMockLLMConfigMap (unused) - Mock LLM now uses direct deployment with seeded workflows
+
+func deployAIAnalysisControllerManifestOnly(ctx context.Context, kubeconfigPath, imageName string, writer io.Writer) error {
+	// Per Consolidated API Migration (January 2026):
+	// Use dynamic image name parameter (built by BuildImageForKind)
+	_, _ = fmt.Fprintln(writer, "  Applying AIAnalysis controller manifest (image already in Kind)...")
+	// Deploy controller with RBAC (extracted from deployAIAnalysisController)
+	manifest := fmt.Sprintf(`
+# ADR-030: AIAnalysis controller configuration (YAML ConfigMap)
+# Per CRD_FIELD_NAMING_CONVENTION.md: camelCase for YAML fields
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aianalysis-config
+  namespace: kubernaut-system
+data:
+  config.yaml: |
+    controller:
+      metricsAddr: ":9090"
+      healthProbeAddr: ":8081"
+      leaderElection: false
+      leaderElectionId: "aianalysis.kubernaut.ai"
+    agent:
+      url: "https://kubernaut-agent:8443"
+      timeout: "60s"
+      sessionPollInterval: "2s"
+    datastorage:
+      url: "https://data-storage-service:8080"
+      healthUrl: "https://data-storage-service:8080/readyz"
+      timeout: "10s"
+      buffer:
+        bufferSize: 20000
+        batchSize: 1000
+        flushInterval: "1s"
+        maxRetries: 3
+    rego:
+      policyPath: "/etc/aianalysis/policies/approval.rego"
+      confidenceThreshold: 0.9
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aianalysis-controller
+  namespace: kubernaut-system
+automountServiceAccountToken: true  # Kubernetes 1.24+ - ensure token is mounted
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aianalysis-controller
+rules:
+- apiGroups: ["kubernaut.ai"]
+  resources: ["aianalyses"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["aianalyses/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["investigationsessions"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["kubernaut.ai"]
+  resources: ["investigationsessions/status"]
+  verbs: ["get", "update", "patch"]
+# AgentSessionCreator.GetOrCreate (DD-AA-KA-001, BR-AA-KA-065.1): mirrors the
+# production Helm chart's aianalysis-controller ClusterRole
+# (operator-managed manifests/aianalysis/aianalysis.yaml) -- "create" for the
+# initial dispatch write, "get"/"list"/"watch" so AA's own AgentSession
+# EventSource informer can sync. Missing this grant here (this hand-rolled
+# E2E manifest had drifted from the Helm chart) is why the controller's cache
+# never synced: it retried "agentsessions is forbidden" every few seconds
+# until controller-runtime's 2-minute CacheSyncTimeout killed mgr.Start(),
+# crash-looping the whole aianalysis-controller pod (CI run 32280464090,
+# "E2E (aianalysis)": 34/36 specs failed, including trivial health checks --
+# consistent with the pod never becoming Ready at all).
+# "delete" (BR-AI-009, DD-AA-KA-001 amendment) is for
+# AgentSessionCreator.DeleteForRetry -- this hand-rolled manifest drifted
+# from the Helm chart a second time (E2E-AA-065's first two CI runs both hit
+# "agentsessions is forbidden" on delete; RCA in DD-AA-KA-001's Gap 5
+# amendment). "update" is for the same DeleteForRetry call: it strips
+# agentsessionv1.TerminalCloseFinalizer itself before deleting (#2214
+# finalizer fix), which needs Update, not just Delete -- this manifest
+# drifted a third time (CI run 32525130330, "E2E (aianalysis)": "cannot
+# update resource \"agentsessions\"" on every capacity-exceeded retry).
+# Keep this rule's verbs in sync with both
+# operator-managed manifests/aianalysis/aianalysis.yaml and
+# config/rbac/role.yaml (kubebuilder marker in
+# internal/controller/aianalysis/aianalysis_controller.go) whenever any of
+# the three changes.
+- apiGroups: ["kubernaut.ai"]
+  resources: ["agentsessions"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aianalysis-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aianalysis-controller
+subjects:
+- kind: ServiceAccount
+  name: aianalysis-controller
+  namespace: kubernaut-system
+---
+# ClusterRole: Kubernaut Agent Client Access (DD-AUTH-014 middleware)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-agent-client
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  resourceNames: ["kubernaut-agent"]
+  verbs: ["create", "get"]
+---
+# RoleBinding: Grant AIAnalysis controller access to Kubernaut Agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aianalysis-controller-agent-access
+  namespace: kubernaut-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubernaut-agent-client
+subjects:
+- kind: ServiceAccount
+  name: aianalysis-controller
+  namespace: kubernaut-system
+---
+# RoleBinding: Grant AIAnalysis controller access to DataStorage for audit writes (DD-AUTH-014)
+# Authority: DD-AUTH-014 (Middleware-based authentication) + BR-AI-009 (Audit trail)
+# Required for: AIAnalysis audit events → DataStorage REST API
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aianalysis-controller-datastorage-access
+  namespace: kubernaut-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: data-storage-client
+subjects:
+- kind: ServiceAccount
+  name: aianalysis-controller
+  namespace: kubernaut-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aianalysis-controller
+  namespace: kubernaut-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aianalysis-controller
+  template:
+    metadata:
+      labels:
+        app: aianalysis-controller
+    spec:
+      serviceAccountName: aianalysis-controller
+      containers:
+      - name: aianalysis
+        image: %s
+        imagePullPolicy: %s
+        ports:
+        - containerPort: 8080
+        - containerPort: 9090
+        - containerPort: 8081
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        # ADR-030: Single -config flag; all functional config in YAML ConfigMap
+        env:
+        - name: CONFIG_PATH
+          value: /etc/aianalysis/config.yaml
+        - name: TLS_CA_FILE
+          value: /etc/tls-ca/ca.crt
+        # DD-TEST-007: GOCOVERDIR for E2E binary coverage (added dynamically below)
+        %s
+        args:
+        - "-config"
+        - "$(CONFIG_PATH)"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/aianalysis
+          readOnly: true
+        - name: rego-policies
+          mountPath: /etc/aianalysis/policies
+          readOnly: true
+        - name: tls-ca
+          mountPath: /etc/tls-ca
+          readOnly: true
+        # DD-TEST-007: Coverage data mount (added dynamically below)
+        %s
+      volumes:
+      - name: config
+        configMap:
+          name: aianalysis-config
+      - name: rego-policies
+        configMap:
+          name: aianalysis-policies
+      - name: tls-ca
+        configMap:
+          name: inter-service-ca
+      # DD-TEST-007: Coverage data volume (added dynamically below)
+      %s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aianalysis-controller
+  namespace: kubernaut-system
+spec:
+  type: NodePort
+  selector:
+    app: aianalysis-controller
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+    nodePort: 30084
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    nodePort: 30184
+  - name: health
+    port: 8081
+    targetPort: 8081
+    nodePort: 30284
+`, imageName, GetImagePullPolicy(),
+		coverageEnvYAML(),
+		coverageVolumeMountYAML(),
+		coverageVolumeYAML())
+	// Deploy the Rego policy ConfigMap (inline fixture, self-contained) BEFORE
+	// the Deployment below, which mounts it as the "rego-policies" volume.
+	//
+	// CI RCA (runs 32220596605 and 32248622464, "E2E (aianalysis)"): applying
+	// the Deployment first and this ConfigMap second raced the kubelet's
+	// volume mount against ConfigMap creation ("configmap \"aianalysis-policies\"
+	// not found"), delaying pod start and eating into this job's timeout
+	// budget. Production's Helm chart isn't affected -- Helm's default
+	// install order always creates ConfigMaps before Deployments regardless
+	// of template file/declaration order (helm.sh/helm/v3/pkg/releaseutil
+	// InstallOrder) -- this ordering bug is test-infrastructure-only.
+	if err := createInlineRegoPolicyConfigMap(ctx, kubeconfigPath, writer); err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	return cmd.Run()
+}
+
+func buildAIAnalysisImages(ctx context.Context, writer io.Writer) (map[string]string, error) {
+	// PHASE 1: Build images IN PARALLEL (before cluster creation)
+	// ═══════════════════════════════════════════════════════════════════════
+	// Per Consolidated API Migration (January 2026):
+	// - Uses BuildImageForKind() for all images
+	// - Returns dynamic image names for later use
+	// - No manual tag generation
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 1: Building images in parallel...")
+	_, _ = fmt.Fprintln(writer, "  ├── Data Storage (1-2 min)")
+	_, _ = fmt.Fprintln(writer, "  ├── Kubernaut Agent (1-2 min)")
+	_, _ = fmt.Fprintln(writer, "  ├── Mock LLM (1-2 min)")
+	_, _ = fmt.Fprintln(writer, "  └── AIAnalysis controller (3-4 min)")
+
+	type imageBuildResult struct {
+		name  string
+		image string
+		err   error
+	}
+
+	buildResults := make(chan imageBuildResult, 4)
+
+	go func() {
+		cfg := E2EImageConfig{
+			ServiceName:      "datastorage",
+			ImageName:        "kubernaut/datastorage",
+			DockerfilePath:   "docker/data-storage.Dockerfile",
+			BuildContextPath: "",
+			EnableCoverage:   os.Getenv("E2E_COVERAGE") == trueFixture,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- imageBuildResult{"datastorage", imageName, err}
+	}()
+
+	go func() {
+		cfg := E2EImageConfig{
+			ServiceName:      "kubernautagent",
+			ImageName:        "kubernaut/kubernautagent",
+			DockerfilePath:   "docker/kubernautagent.Dockerfile",
+			BuildContextPath: "",
+			EnableCoverage:   false,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- imageBuildResult{"kubernautagent", imageName, err}
+	}()
+
+	go func() {
+		cfg := E2EImageConfig{
+			ServiceName:      "aianalysis", // Operator SDK convention: no -controller suffix in image name
+			ImageName:        "kubernaut/aianalysis",
+			DockerfilePath:   "docker/aianalysis.Dockerfile", // Dockerfile can have suffix (but this one doesn't)
+			BuildContextPath: "",
+			EnableCoverage:   os.Getenv("E2E_COVERAGE") == trueFixture,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- imageBuildResult{"aianalysis", imageName, err}
+	}()
+
+	go func() {
+		projectRoot := getProjectRoot()
+		cfg := E2EImageConfig{
+			ServiceName:      "mock-llm",
+			ImageName:        "kubernaut/mock-llm",
+			DockerfilePath:   "test/services/mock-llm/go.Dockerfile",
+			BuildContextPath: projectRoot,
+			EnableCoverage:   false,
+		}
+		imageName, err := BuildImageForKind(ctx, cfg, writer)
+		buildResults <- imageBuildResult{"mock-llm", imageName, err}
+	}()
+
+	builtImages := make(map[string]string)
+	for i := 0; i < 4; i++ {
+		result := <-buildResults
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to build %s image: %w", result.name, result.err)
+		}
+		builtImages[result.name] = result.image
+		_, _ = fmt.Fprintf(writer, "  ✅ %s image built: %s\n", result.name, result.image)
+	}
+	_, _ = fmt.Fprintln(writer, "\n✅ All images built! (~3-4 min parallel)")
+	//nolint:contextcheck // disk-space diagnostics use a short-lived host subprocess.
+	LogDiskSpace("IMAGES_BUILT", writer)
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return builtImages, nil
+}
+
+//nolint:contextcheck // disk-space/export helpers intentionally use their own bounded subprocess contexts.
+func prepareAIAnalysisImages(builtImages map[string]string, writer io.Writer) (tarFiles map[string]string, tarDir string, err error) {
+	defer func() {
+		if err != nil && tarDir != "" {
+			if removeErr := os.RemoveAll(tarDir); removeErr != nil {
+				_, _ = fmt.Fprintf(writer, "  ⚠️  Failed to remove image archive directory %s after preparation failure: %v\n", tarDir, removeErr)
+			}
+		}
+	}()
+
+	// PHASE 2-3: Export images to .tar and aggressive Podman cleanup
+	// ═══════════════════════════════════════════════════════════════════════
+	// This frees ~5-9 GB of disk space by removing Podman cache and intermediate layers
+	// FIX: Skip export/prune in CI/CD mode (images pushed to registry, not stored locally)
+	if ShouldSkipImageExportAndPrune() {
+		_, _ = fmt.Fprintln(writer, "\n⏩ PHASE 2-3: Skipping image export/prune (CI/CD registry mode)")
+		_, _ = fmt.Fprintln(writer, "   Images already pushed to GHCR and will be pulled directly by Kind")
+		LogDiskSpace("EXPORT_SKIPPED", writer)
+	} else {
+		// Local mode: export and prune to save disk space
+		_, _ = fmt.Fprintln(writer, "\n📦 PHASE 2-3: Exporting images to .tar and pruning Podman cache...")
+		var tempErr error
+		tarDir, tempErr = os.MkdirTemp("", "kubernaut-aianalysis-e2e-")
+		if tempErr != nil {
+			return nil, "", fmt.Errorf("failed to create image archive directory: %w", tempErr)
+		}
+		tarFiles, err = ExportImagesAndPrune(builtImages, tarDir, writer)
+		if err != nil {
+			return nil, tarDir, fmt.Errorf("failed to export images and prune: %w", err)
+		}
+	}
+
+	// The Kind config always mounts ./coverdata relative to project root. Create
+	// it for non-coverage runs too, otherwise Kind rejects the hostPath mount.
+	projectRoot := getProjectRoot()
+	coverdataPath := filepath.Join(projectRoot, "coverdata")
+	if err := os.MkdirAll(coverdataPath, 0777); err != nil {
+		return nil, tarDir, fmt.Errorf("failed to create coverdata directory: %w", err)
+	}
+	if os.Getenv("E2E_COVERAGE") == trueFixture {
+		_, _ = fmt.Fprintf(writer, "📁 Creating coverage directory: %s\n", coverdataPath)
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return tarFiles, tarDir, nil
+}
+
+func seedAIAnalysisWorkflows(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) (map[string]string, error) {
+	// PHASE 7b: Seed workflows and create ConfigMap (DD-TEST-011 Alt 2)
+	// ═══════════════════════════════════════════════════════════════════════
+	_, _ = fmt.Fprintln(writer, "\n📦 PHASE 7b: Seeding test workflows and creating ConfigMap...")
+	_, _ = fmt.Fprintln(writer, "  └── DD-TEST-011 Alt 2: ConfigMap Pattern")
+
+	// Wait for DataStorage to be ready (use port-forward)
+	_, _ = fmt.Fprintln(writer, "  ⏳ Waiting for DataStorage to be ready...")
+	dataStorageHealthURL := fmt.Sprintf("http://localhost:%d", 38081)
+
+	// Start port-forward to DataStorage API and health ports
+	// Service name is "data-storage-service" per DD-AUTH-011 (matches production)
+	portForwardCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", namespace, "port-forward", "svc/data-storage-service", "38080:8080", "38081:8081")
+	if err := portForwardCmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start DataStorage port-forward: %w", err)
+	}
+	defer func() {
+		if portForwardCmd.Process != nil {
+			_ = portForwardCmd.Process.Kill()
+		}
+	}()
+
+	// Wait for port-forward to be ready (active polling, not fixed sleep)
+	_, _ = fmt.Fprintln(writer, "  ⏳ Waiting for port-forward to be ready (active polling)...")
+	ready := false
+	for i := 0; i < 30; i++ { // 30 seconds max
+		time.Sleep(1 * time.Second)
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/readyz", dataStorageHealthURL), nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to build readiness request: %w", reqErr)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil && resp.StatusCode == 200 {
+			_ = resp.Body.Close() // Explicitly ignore - health check cleanup
+			ready = true
+			_, _ = fmt.Fprintf(writer, "  ✅ Port-forward ready after %d seconds\n", i+1)
+			break
+		}
+		if resp != nil {
+			_ = resp.Body.Close() // Explicitly ignore - health check cleanup
+		}
+	}
+	if !ready {
+		return nil, fmt.Errorf("port-forward not ready after 30 seconds")
+	}
+
+	// Seed workflows and capture UUIDs (with DD-AUTH-014 authentication)
+	// Pattern: Uses shared workflow_seeding.go library (refactored from duplicate code)
+
+	// DD-WORKFLOW-016: Seed action types before workflow registration.
+	// #1661 Phase 55: DS's Postgres-backed POST /api/v1/action-types endpoint was
+	// removed (DD-WORKFLOW-018); action types are now seeded exclusively as CRDs for
+	// DS's informer-backed cache. Workflows here seed via SeedWorkflowsViaKubectlApply
+	// (real AuthWebhook admission), so this file no longer touches DS's REST API at all.
+	if err := SeedActionTypesViaCRD(ctx, kubeconfigPath, namespace, writer); err != nil {
+		return nil, fmt.Errorf("failed to seed action types (CRD): %w", err)
+	}
+
+	// Inline workflow definitions (CANNOT use test/integration/aianalysis wrapper - import cycle)
+	// Pattern: DD-TEST-011 v2.0 - Use shared SeedWorkflowsViaKubectlApply() function (#1661 Phase 55)
+	// Note: test/integration/aianalysis imports test/infrastructure, creating circular dependency
+	// Acceptable trade-off: Small duplication avoids architectural issues
+	// Source of truth: test/integration/aianalysis/test_workflows.go:GetAIAnalysisTestWorkflows()
+	// BR-KA-191: SchemaParameters MUST match Mock LLM scenario parameters
+	// KA validates LLM response parameters against workflow schema from DataStorage
+	// DD-WORKFLOW-017: SchemaParameters mirror OCI image's /workflow-schema.yaml for documentation.
+	// Actual schema comes from OCI image via pullspec-only registration.
+	oomkillParams := []models.WorkflowParameter{
+		{Name: "TARGET_RESOURCE_KIND", Type: "string", Required: true, Description: "Kubernetes resource kind (Deployment, StatefulSet, DaemonSet)"},
+		{Name: "TARGET_RESOURCE_NAME", Type: "string", Required: true, Description: "Name of the resource to patch"},
+		{Name: "TARGET_NAMESPACE", Type: "string", Required: true, Description: "Namespace of the resource"},
+		{Name: "MEMORY_LIMIT_NEW", Type: "string", Required: true, Description: "New memory limit to apply (e.g., 128Mi, 256Mi, 1Gi)"},
+	}
+	crashloopParams := []models.WorkflowParameter{
+		{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+		{Name: "DEPLOYMENT_NAME", Type: "string", Required: true, Description: "Name of the deployment to restart"},
+		{Name: "GRACE_PERIOD_SECONDS", Type: "integer", Required: false, Description: "Graceful shutdown period in seconds"},
+	}
+	nodeDrainParams := []models.WorkflowParameter{
+		{Name: "NODE_NAME", Type: "string", Required: true, Description: "Name of the node to drain and reboot"},
+		{Name: "DRAIN_TIMEOUT_SECONDS", Type: "integer", Required: false, Description: "Timeout for drain operation in seconds"},
+	}
+	memOptimizeParams := []models.WorkflowParameter{
+		{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+		{Name: "DEPLOYMENT_NAME", Type: "string", Required: true, Description: "Name of the deployment to scale"},
+		{Name: "REPLICA_COUNT", Type: "integer", Required: false, Description: "Target number of replicas"},
+	}
+	genericRestartParams := []models.WorkflowParameter{
+		{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+		{Name: "POD_NAME", Type: "string", Required: true, Description: "Name of the pod to restart"},
+	}
+	testSignalParams := []models.WorkflowParameter{
+		{Name: "NAMESPACE", Type: "string", Required: true, Description: "Target namespace"},
+		{Name: "POD_NAME", Type: "string", Required: true, Description: "Name of the pod to delete"},
+	}
+	// DD-WORKFLOW-017: SchemaImage references real OCI images at quay.io/kubernaut-cicd/test-workflows
+	// Image names don't include the workflow version suffix (e.g., oomkill-increase-memory, not oomkill-increase-memory-v1)
+	const aaWorkflowRegistry = "quay.io/kubernaut-cicd/test-workflows"
+	testWorkflows := []TestWorkflow{
+		{WorkflowID: "oomkill-increase-memory-v1", Name: "OOMKill Recovery - Increase Memory Limits", Description: "Increase memory limits for pods hitting OOMKill", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "staging", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/oomkill-increase-memory:v1.0.0", SchemaParameters: oomkillParams},
+		{WorkflowID: "oomkill-increase-memory-v1", Name: "OOMKill Recovery - Increase Memory Limits", Description: "Increase memory limits for pods hitting OOMKill", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/oomkill-increase-memory:v1.0.0", SchemaParameters: oomkillParams},
+		{WorkflowID: "oomkill-increase-memory-v1", Name: "OOMKill Recovery - Increase Memory Limits", Description: "Increase memory limits for pods hitting OOMKill", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "test", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/oomkill-increase-memory:v1.0.0", SchemaParameters: oomkillParams},
+		{WorkflowID: "crashloop-config-fix-v1", Name: "CrashLoopBackOff - Configuration Fix", Description: "Fix missing configuration causing CrashLoopBackOff", Severity: "high", Component: []string{"apps/v1/Deployment"}, Environment: "staging", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-v1", Name: "CrashLoopBackOff - Configuration Fix", Description: "Fix missing configuration causing CrashLoopBackOff", Severity: "high", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-v1", Name: "CrashLoopBackOff - Configuration Fix", Description: "Fix missing configuration causing CrashLoopBackOff", Severity: "high", Component: []string{"apps/v1/Deployment"}, Environment: "test", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "node-drain-reboot-v1", Name: "NodeNotReady - Drain and Reboot", Description: "Drain node and reboot to resolve NodeNotReady", Severity: "critical", Component: []string{"v1/Node"}, Environment: "staging", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/node-drain-reboot:v1.0.0", SchemaParameters: nodeDrainParams},
+		{WorkflowID: "node-drain-reboot-v1", Name: "NodeNotReady - Drain and Reboot", Description: "Drain node and reboot to resolve NodeNotReady", Severity: "critical", Component: []string{"v1/Node"}, Environment: "production", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/node-drain-reboot:v1.0.0", SchemaParameters: nodeDrainParams},
+		{WorkflowID: "node-drain-reboot-v1", Name: "NodeNotReady - Drain and Reboot", Description: "Drain node and reboot to resolve NodeNotReady", Severity: "critical", Component: []string{"v1/Node"}, Environment: "test", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/node-drain-reboot:v1.0.0", SchemaParameters: nodeDrainParams},
+		{WorkflowID: "memory-optimize-v1", Name: "Memory Optimization - Alternative Approach", Description: "Optimize memory usage after failed scaling attempt", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "staging", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/memory-optimize:v1.0.0", SchemaParameters: memOptimizeParams},
+		{WorkflowID: "memory-optimize-v1", Name: "Memory Optimization - Alternative Approach", Description: "Optimize memory usage after failed scaling attempt", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/memory-optimize:v1.0.0", SchemaParameters: memOptimizeParams},
+		{WorkflowID: "memory-optimize-v1", Name: "Memory Optimization - Alternative Approach", Description: "Optimize memory usage after failed scaling attempt", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "test", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/memory-optimize:v1.0.0", SchemaParameters: memOptimizeParams},
+		{WorkflowID: "generic-restart-v1", Name: "Generic Pod Restart", Description: "Generic pod restart for unknown issues", Severity: "warning", Component: []string{"v1/Pod"}, Environment: "staging", Priority: "*", SchemaImage: aaWorkflowRegistry + "/generic-restart:v1.0.0", SchemaParameters: genericRestartParams},
+		{WorkflowID: "generic-restart-v1", Name: "Generic Pod Restart", Description: "Generic pod restart for unknown issues", Severity: "warning", Component: []string{"v1/Pod"}, Environment: "production", Priority: "*", SchemaImage: aaWorkflowRegistry + "/generic-restart:v1.0.0", SchemaParameters: genericRestartParams},
+		{WorkflowID: "generic-restart-v1", Name: "Generic Pod Restart", Description: "Generic pod restart for unknown issues", Severity: "warning", Component: []string{"v1/Pod"}, Environment: "test", Priority: "*", SchemaImage: aaWorkflowRegistry + "/generic-restart:v1.0.0", SchemaParameters: genericRestartParams},
+		{WorkflowID: "test-signal-handler-v1", Name: "Test Signal Handler", Description: "Generic workflow for test signals (graceful shutdown tests)", Severity: "critical", Component: []string{"v1/Pod"}, Environment: "staging", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/test-signal-handler:v1.0.0", SchemaParameters: testSignalParams},
+		{WorkflowID: "test-signal-handler-v1", Name: "Test Signal Handler", Description: "Generic workflow for test signals (graceful shutdown tests)", Severity: "critical", Component: []string{"v1/Pod"}, Environment: "production", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/test-signal-handler:v1.0.0", SchemaParameters: testSignalParams},
+		{WorkflowID: "test-signal-handler-v1", Name: "Test Signal Handler", Description: "Generic workflow for test signals (graceful shutdown tests)", Severity: "critical", Component: []string{"v1/Pod"}, Environment: "test", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/test-signal-handler:v1.0.0", SchemaParameters: testSignalParams},
+		{WorkflowID: "oomkill-increase-memory-aa-staging-v1", Name: "OOMKill Recovery - AIAnalysis Staging", Description: "Isolated OOMKill workflow for the staging auto-approval test", Severity: "warning", Component: []string{"*"}, Environment: "staging", Priority: "P2", SchemaImage: aaWorkflowRegistry + "/oomkill-increase-memory-aa-staging:v1.0.0", SchemaParameters: oomkillParams},
+		{WorkflowID: "crashloop-config-fix-aa-approval-v1", Name: "CrashLoopBackOff - AIAnalysis Approval", Description: "Isolated CrashLoop workflow for the production approval test", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-approval:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-aa-audit-v1", Name: "CrashLoopBackOff - AIAnalysis Audit", Description: "Isolated warning CrashLoop workflow for the production audit tests", Severity: "warning", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-audit:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-aa-rego-v1", Name: "CrashLoopBackOff - AIAnalysis Rego", Description: "Isolated warning CrashLoop workflow for the staging Rego audit test", Severity: "warning", Component: []string{"apps/v1/Deployment"}, Environment: "staging", Priority: "P1", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-rego:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-aa-session-v1", Name: "CrashLoopBackOff - AIAnalysis Session", Description: "Isolated CrashLoop workflow for the async session test", Severity: "warning", Component: []string{"*"}, Environment: "staging", Priority: "P2", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-session:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-aa-detected-labels-v1", Name: "CrashLoopBackOff - AIAnalysis Detected Labels", Description: "Isolated CrashLoop workflow for the detected labels test", Severity: "critical", Component: []string{"apps/v1/Deployment"}, Environment: "production", Priority: "P0", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-detected-labels:v1.0.0", SchemaParameters: crashloopParams},
+		{WorkflowID: "crashloop-config-fix-aa-data-quality-v1", Name: "CrashLoopBackOff - AIAnalysis Data Quality", Description: "Isolated CrashLoop workflow for the data quality test", Severity: "warning", Component: []string{"*"}, Environment: "production", Priority: "P2", SchemaImage: aaWorkflowRegistry + "/crashloop-config-fix-aa-data-quality:v1.0.0", SchemaParameters: crashloopParams},
+	}
+
+	// #1661 Phase 56 (discovered gap): this suite runs with no live AuthWebhook
+	// (unlike fullpipeline/fleet), so SeedWorkflowsViaKubectlApply's wait on
+	// .status.workflowId can never resolve -- use the direct-CRD-creation path
+	// instead, which computes the same deterministic UUID and stamps status
+	// itself (pkg/shared/contenthash).
+	workflowUUIDs, err := SeedWorkflowsViaDirectCRDCreationFromKubeconfig(ctx, kubeconfigPath, namespace, testWorkflowsToSeedSpecs(testWorkflows), writer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to seed test workflows: %w", err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ Seeded %d workflows via direct CRD creation\n", len(workflowUUIDs))
+
+	// NOTE: ConfigMap creation moved to deployMockLLMInNamespace() (Phase 7c)
+	// This avoids duplication and ensures workflows are passed correctly
+
+	// ═══════════════════════════════════════════════════════════════════════
+	return workflowUUIDs, nil
+}
+
+func waitForAllServicesReady(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	// Build Kubernetes clientset
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Wait for DataStorage pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for DataStorage pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=datastorage", 2*time.Minute, "DataStorage pod should become ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ DataStorage ready\n")
+
+	// Wait for Kubernaut Agent pod to be ready
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for Kubernaut Agent pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=kubernaut-agent", 2*time.Minute, "Kubernaut Agent pod should become ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ Kubernaut Agent ready\n")
+
+	// Wait for AIAnalysis controller pod to be ready
+	// Note: Coverage-instrumented binaries may take longer to start
+	_, _ = fmt.Fprintf(writer, "   ⏳ Waiting for AIAnalysis controller pod to be ready...\n")
+	waitForReadyServicePod(ctx, clientset, namespace, "app=aianalysis-controller", 5*time.Minute, "AIAnalysis controller pod should become ready")
+	_, _ = fmt.Fprintf(writer, "   ✅ AIAnalysis controller ready\n")
+
+	return nil
+}
+func waitForClusterReady(ctx context.Context, kubeconfigPath string, writer io.Writer) error {
+	_, _ = fmt.Fprintln(writer, "  Waiting for cluster to be ready...")
+	for i := 0; i < 60; i++ {
+		cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+			"get", "nodes", "-o", "jsonpath={.items[*].status.conditions[?(@.type=='Ready')].status}")
+		output, err := cmd.Output()
+		if err == nil && containsReady(string(output)) {
+			_, _ = fmt.Fprintln(writer, "  Cluster nodes ready")
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timeout waiting for cluster")
+}
+
+func findCRDFile(name string) string {
+	// Try to find via runtime caller location first
+	_, currentFile, _, ok := runtime.Caller(0)
+	if ok {
+		// Go up to project root (from test/infrastructure/)
+		projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(currentFile)))
+		crdPath := filepath.Join(projectRoot, "config/crd/bases", name)
+		if _, err := os.Stat(crdPath); err == nil {
+			return crdPath
+		}
+	}
+
+	candidates := []string{
+		"config/crd/bases/" + name,
+		"../config/crd/bases/" + name,
+		"../../config/crd/bases/" + name,
+		"../../../config/crd/bases/" + name,
+		"config/crd/" + name,
+		"../config/crd/" + name,
+		"../../config/crd/" + name,
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			absPath, _ := filepath.Abs(path)
+			return absPath
+		}
+	}
+	return ""
+}
+
+func containsReady(s string) bool {
+	return len(s) > 0 && s != "" && (s == "True" || s == "True True")
+}
+
+func createInlineRegoPolicyConfigMap(ctx context.Context, kubeconfigPath string, writer io.Writer) error {
+	// Simplified E2E test policy - requires approval for all production
+	// This is intentionally simpler than production policy for E2E test predictability
+	manifest := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aianalysis-policies
+  namespace: kubernaut-system
+data:
+  approval.rego: |
+    package aianalysis.approval
+    import rego.v1
+
+    default require_approval := false
+
+    is_production if { lower(input.environment) == "production" }
+
+    require_approval if { is_production }
+    require_approval if { is_production; count(input.warnings) > 0 }
+    require_approval if { is_production; count(input.failed_detections) > 0 }
+
+    # Scored risk factors for reason generation (issue #98)
+    risk_factors contains {"score": 70, "reason": "Data quality warnings in production environment"} if {
+        is_production
+        count(input.warnings) > 0
+    }
+    risk_factors contains {"score": 60, "reason": "Data quality issues detected in production environment"} if {
+        is_production
+        count(input.failed_detections) > 0
+    }
+    risk_factors contains {"score": 40, "reason": "Production environment requires manual approval"} if {
+        is_production
+    }
+
+    all_scores contains f.score if { some f in risk_factors }
+    max_risk_score := max(all_scores) if { count(all_scores) > 0 }
+    reason := f.reason if { some f in risk_factors; f.score == max_risk_score }
+    default reason := "Auto-approved"
+`
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	return cmd.Run()
+}
+
+// createAIAnalysisE2EServiceAccount creates the ServiceAccount for workflow seeding
+// with DataStorage access using DD-AUTH-014 (SubjectAccessReview authorization)
+func createAIAnalysisE2EServiceAccount(ctx context.Context, namespace, kubeconfigPath string, writer io.Writer) error {
+	// Create a fresh context (workaround for potential context issues)
+	freshCtx := ctx
+
+	// Create ServiceAccount
+	saName := "aianalysis-e2e-sa"
+	if err := CreateServiceAccount(freshCtx, namespace, kubeconfigPath, saName, writer); err != nil {
+		return fmt.Errorf("failed to create ServiceAccount: %w", err)
+	}
+
+	// Bind to data-storage-client ClusterRole (already deployed in Phase 6.5)
+	// This ClusterRole has SubjectAccessReview permissions for DataStorage access
+	roleBindingYAML := fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aianalysis-e2e-datastorage-access
+  namespace: %s
+subjects:
+- kind: ServiceAccount
+  name: %s
+  namespace: %s
+roleRef:
+  kind: ClusterRole
+  name: data-storage-client
+  apiGroup: rbac.authorization.k8s.io
+`, namespace, saName, namespace)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(roleBindingYAML)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create RoleBinding: %w", err)
+	}
+
+	return nil
+}

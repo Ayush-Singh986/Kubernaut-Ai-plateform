@@ -1,0 +1,22 @@
+database:
+  host: host.containers.internal
+  port: 15440  # Changed from 15439 to resolve conflict with KA (DD-TEST-001 v2.0)
+  user: slm_user
+  name: action_history
+  sslMode: disable
+  connMaxLifetime: 30m  # Fix for integration test BeforeSuite failures
+  connMaxIdleTime: 10m  # Connection idle timeout
+  secretsFile: /etc/datastorage/db-secrets.yaml
+  usernameKey: username
+  passwordKey: password
+
+redis:
+  addr: host.containers.internal:16385
+  secretsFile: /etc/datastorage/redis-secrets.yaml
+  passwordKey: password
+
+server:
+  port: 8080
+  metrics_port: 9090
+  tls:
+    certDir: /etc/certs

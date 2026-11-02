@@ -1,0 +1,764 @@
+# BR-ORCH-036: Manual Review & Escalation Notification
+
+**Service**: RemediationOrchestrator Controller
+**Category**: V1.0 Core Requirements
+**Priority**: P0 (CRITICAL)
+**Version**: 5.1
+**Date**: 2026-04-23
+**Status**: ✅ Implemented (v5.1)
+**Related BRs**: BR-ORCH-032 (WE Skip Handling), BR-ORCH-001 (Approval Notification), BR-KA-197 (needs_human_review), BR-KA-200 (resolved/inconclusive), BR-ORCH-037 (Workflow Not Needed), BR-ORCH-042.5 (Notification on Block)
+**Related DDs**: DD-WE-004 (Exponential Backoff Cooldown), DD-AIANALYSIS-003 (Completion Substates), DD-RO-002 (Centralized Routing)
+**GitHub Issues**: [#550](https://github.com/jordigilh/kubernaut/issues/550), [#803](https://github.com/jordigilh/kubernaut/issues/803), [#805](https://github.com/jordigilh/kubernaut/issues/805), [#806](https://github.com/jordigilh/kubernaut/issues/806), [#807](https://github.com/jordigilh/kubernaut/issues/807), [#808](https://github.com/jordigilh/kubernaut/issues/808), [#809](https://github.com/jordigilh/kubernaut/issues/809), [#810](https://github.com/jordigilh/kubernaut/issues/810)
+
+---
+
+## Overview
+
+RemediationOrchestrator MUST create NotificationRequest CRDs when:
+1. **WorkflowExecution** enters a state requiring operator intervention (exhausted retries, execution failures) → `type=manual-review`
+2. **AIAnalysis** fails to produce a valid workflow recommendation (`WorkflowResolutionFailed`) → `type=manual-review`
+3. **(v3.0) AIAnalysis** fails with unrecoverable infrastructure errors (APIError, Timeout, MaxRetriesExceeded) → `type=manual-review` (escalation)
+4. **(v5.1, Issue #803) RoutingEngine** blocks an RR due to `IneffectiveChain` → `type=manual-review`, `reviewSource=RoutingEngine`
+
+**Principle (v3.0)**: Any failure without automatic recovery in the remediation pipeline MUST be notified as an escalation. No failure should silently transition to Failed without operator notification.
+
+**Business Value**: Ensures operators are immediately notified of remediation failures that cannot be automatically resolved, reducing MTTR for critical infrastructure issues by 40-60%.
+
+---
+
+## Trigger Conditions (Complete)
+
+### Source: WorkflowExecution Failures
+
+| Skip/Failure Reason | Description | Priority | Source |
+|---------------------|-------------|----------|--------|
+| `ExhaustedRetries` | 5+ consecutive pre-execution failures | Critical | DD-WE-004 |
+| `PreviousExecutionFailed` | Prior workflow execution failed during run | Critical | DD-WE-004 |
+
+### Source: AIAnalysis WorkflowResolutionFailed
+
+| SubReason | Description | Priority | Source |
+|-----------|-------------|----------|--------|
+| `WorkflowNotFound` | LLM hallucinated workflow ID not in catalog | High | BR-KA-197 |
+| `ImageMismatch` | Container image doesn't match catalog | High | BR-KA-197 |
+| `ParameterValidationFailed` | Parameters don't conform to workflow schema | High | BR-KA-197 |
+| `NoMatchingWorkflows` | Catalog search returned no results | Medium | BR-KA-197 |
+| `LowConfidence` | Confidence below 70% threshold | Medium | BR-KA-197 |
+| `LLMParsingError` | Cannot parse LLM response (after 3 KA retries) | High | BR-KA-197 |
+| `InvestigationInconclusive` | LLM couldn't determine root cause or state | Medium | BR-KA-200 |
+
+### Source: AIAnalysis Unrecoverable Infrastructure Failures (v3.0)
+
+| Reason / SubReason | Description | Priority | Source |
+|--------------------|-------------|----------|--------|
+| `APIError` / `MaxRetriesExceeded` | KA request failed after 5 retry attempts (timeout, network error, 5xx) | High | BR-ORCH-036 v3.0 |
+| `APIError` / `TransientError` | Transient KA error that exceeded retry budget | High | BR-ORCH-036 v3.0 |
+| `APIError` / `PermanentError` | Non-retryable KA error (4xx, auth failure, bad request) | High | BR-ORCH-036 v3.0 |
+
+**Rationale (v3.0)**: Prior to this version, infrastructure failures in AIAnalysis (e.g., KA timeout after all retries) silently transitioned the RemediationRequest to `Failed` without creating a NotificationRequest. This left operators unaware that a remediation attempt had failed due to infrastructure issues. The principle is: **any failure without automatic recovery MUST generate an escalation notification**.
+
+### Source: AIAnalysis Completed with Missing AffectedResource (v4.0)
+
+| Reason / SubReason | Description | Priority | Source |
+|--------------------|-------------|----------|--------|
+| `RemediationTargetMissing` / `rca_resource_missing` | AA completed with SelectedWorkflow but RemediationTarget nil or empty Kind/Name | High | DD-KA-006 v2.0, BR-ORCH-036 v4.0 |
+
+**Rationale (v4.0)**: Completes the three-layer defense-in-depth chain (KA → AA → RO) for the "cannot identify RCA target" scenario. KA catches this during owner-chain resolution (BR-KA-212), AA catches it during extraction (response_processor.go), and the RO guard catches any remaining cases. All three layers produce the same operator experience: Failed + ManualReviewRequired + NotificationRequest.
+
+### Source: RoutingEngine / IneffectiveChain (v5.1)
+
+| Reason | Description | NR Type | Priority | Source |
+|--------|-------------|---------|----------|--------|
+| `IneffectiveChain` | Consecutive remediations for same target have been ineffective (resource keeps reverting or health doesn't improve) | ManualReview | High | DD-RO-002, Issue #803 |
+
+**Rationale (v5.1)**: When the RoutingEngine detects that the same target has been remediated repeatedly without improvement (IneffectiveChain), the RR is blocked and a ManualReview NR is created with `reviewSource=RoutingEngine`. This escalates to the operator so they can investigate why remediations are not effective.
+
+### Source: Terminal Failure Escalation (v5.1)
+
+| Trigger | Description | NR Type | Priority | Source |
+|---------|-------------|---------|----------|--------|
+| `transitionToFailed` (no prior NR) | Any failure path that reaches `transitionToFailed` without a ManualReview or Escalation NR already created | Escalation | High | Issue #808 |
+| `transitionToFailedTerminal` (cooldown expiry) | Blocked RR whose cooldown expires, transitioning to terminal Failed | Escalation | High | Issue #809 |
+
+**Rationale (v5.1)**: Prior to this version, multiple failure paths (config errors, SP failures, approval timeouts, WFE ref corruption, hash errors) reached `transitionToFailed` without creating any NR, leaving operators unaware. The centralized escalation NR in `transitionToFailed` covers all 7+ failure paths with a double-NR guard to avoid duplicates.
+
+### Source: Block Reason Notifications (v5.1)
+
+| BlockReason | Description | NR Type | Priority | Source |
+|-------------|-------------|---------|----------|--------|
+| `ConsecutiveFailures` | Max consecutive failures reached, in cooldown | Escalation | High | BR-ORCH-042, Issue #810 |
+| `UnmanagedResource` | Target resource lacks `kubernaut.ai/managed=true` label | Escalation | High | BR-SCOPE-001, Issue #810 |
+| `DuplicateInProgress` | Another RR with same fingerprint is active | StatusUpdate | Low | DD-RO-002-ADDENDUM, Issue #810 |
+| `ResourceBusy` | Another WFE running on same target | StatusUpdate | Low | DD-RO-002, Issue #810 |
+| `RecentlyRemediated` | Same workflow+target executed recently | StatusUpdate | Low | DD-WE-001, Issue #810 |
+| `ExponentialBackoff` | Pre-execution failures require backoff period | StatusUpdate | Low | DD-WE-004, Issue #810 |
+
+**Rationale (v5.1)**: Previously only `IneffectiveChain` blocks created an NR. Six other block reasons entered `PhaseBlocked` silently, leaving operators blind to why RRs are blocked. `DuplicateInProgress` and `ResourceBusy` emitted no K8s events at all. Persistent blocks (ConsecutiveFailures, UnmanagedResource) use Escalation NRs; transient blocks use StatusUpdate NRs to mitigate alert fatigue.
+
+---
+
+## Detection Logic
+
+### WorkflowExecution Detection
+
+```go
+// Detect WE failures requiring manual review
+if we.Status.Phase == "Skipped" || we.Status.Phase == "Failed" {
+    reason := we.Status.SkipDetails.Reason
+    if reason == "ExhaustedRetries" || reason == "PreviousExecutionFailed" {
+        return c.CreateManualReviewNotification(ctx, rr, we, nil)
+    }
+    if we.Status.FailureDetails != nil && we.Status.FailureDetails.WasExecutionFailure {
+        return c.CreateManualReviewNotification(ctx, rr, we, nil)
+    }
+}
+```
+
+### AIAnalysis Detection
+
+```go
+// Detect AIAnalysis failures requiring manual review
+if ai.Status.Phase == "Failed" && ai.Status.Reason == "WorkflowResolutionFailed" {
+    // SubReason: WorkflowNotFound, ImageMismatch, ParameterValidationFailed,
+    //            NoMatchingWorkflows, LowConfidence, LLMParsingError,
+    //            InvestigationInconclusive
+    return c.CreateManualReviewNotification(ctx, rr, nil, ai)
+}
+```
+
+### AIAnalysis Infrastructure Failure Detection (v3.0)
+
+```go
+// v3.0: Detect unrecoverable infrastructure failures
+// Triggered when AIAnalysis fails with APIError, Timeout, etc.
+// (after exhausting retry budget in the AA controller)
+if ai.Status.Phase == "Failed" && ai.Status.Reason != "WorkflowResolutionFailed" && !ai.Status.NeedsHumanReview {
+    // Reason: APIError, SubReason: MaxRetriesExceeded, TransientError, PermanentError
+    // Principle: No failure without recovery goes unnotified
+    return c.CreateManualReviewNotification(ctx, rr, reviewCtx)
+}
+```
+
+### RoutingEngine IneffectiveChain Detection (v5.1)
+
+```go
+// v5.1: RoutingEngine blocks with IneffectiveChain → ManualReview NR
+// Triggered in handleBlocked when RoutingEngine returns BlockReasonIneffectiveChain.
+if remediationv1.BlockReason(blocked.Reason) == remediationv1.BlockReasonIneffectiveChain {
+    nrName := fmt.Sprintf("nr-manual-review-%s", rr.Name)
+    if !hasNotificationRef(rr, nrName) {
+        reviewCtx := &creator.ManualReviewContext{
+            Source:  notificationv1.ReviewSourceRoutingEngine,
+            Reason:  "IneffectiveChain",
+            Message: blocked.Message,
+        }
+        notifName, _ := r.notificationCreator.CreateManualReviewNotification(ctx, rr, reviewCtx)
+        // Append ref, emit NotificationCreated event
+    }
+}
+```
+
+### Terminal Failure Escalation Detection (v5.1)
+
+```go
+// v5.1: Centralized escalation NR in transitionToFailed.
+// Double-NR guard: skip if ManualReview or Escalation NR already exists (from WFE handler, AI handler, etc.).
+manualReviewNR := fmt.Sprintf("nr-manual-review-%s", rr.Name)
+escalationNR := fmt.Sprintf("nr-escalation-%s", rr.Name)
+if !hasNotificationRef(rr, manualReviewNR) && !hasNotificationRef(rr, escalationNR) {
+    r.notificationCreator.CreateEscalationNotification(ctx, rr, &creator.EscalationContext{...})
+}
+```
+
+### Block Reason Notification Detection (v5.1)
+
+```go
+// v5.1: Block notifications for non-IneffectiveChain block reasons.
+// Deterministic naming: nr-block-<lowercased-reason>-<rr.Name>
+if remediationv1.BlockReason(blocked.Reason) != remediationv1.BlockReasonIneffectiveChain {
+    blockNRName := fmt.Sprintf("nr-block-%s-%s", strings.ToLower(blocked.Reason), rr.Name)
+    if !hasNotificationRef(rr, blockNRName) {
+        blockCtx := &creator.BlockNotificationContext{
+            BlockReason:  blocked.Reason,
+            BlockMessage: blocked.Message,
+        }
+        r.notificationCreator.CreateBlockNotification(ctx, rr, blockCtx)
+    }
+}
+```
+
+### Priority Mapping
+
+| Source | Reason/SubReason | Notification Priority |
+|--------|------------------|----------------------|
+| WE | `ExhaustedRetries` | `critical` |
+| WE | `PreviousExecutionFailed` | `critical` |
+| WE | Execution failure (`WasExecutionFailure=true`) | `critical` |
+| AI | `WorkflowNotFound` | `high` |
+| AI | `ImageMismatch` | `high` |
+| AI | `ParameterValidationFailed` | `high` |
+| AI | `LLMParsingError` | `high` |
+| AI | `NoMatchingWorkflows` | `medium` |
+| AI | `LowConfidence` | `medium` |
+| AI | `InvestigationInconclusive` | `medium` |
+| AI (v3.0) | `APIError` / `MaxRetriesExceeded` | `high` |
+| AI (v3.0) | `APIError` / `TransientError` | `high` |
+| AI (v3.0) | `APIError` / `PermanentError` | `high` |
+| RoutingEngine (v5.1) | `IneffectiveChain` | `high` |
+| Terminal Failure (v5.1) | `transitionToFailed` (no prior NR) | `high` |
+| Terminal Failure (v5.1) | `transitionToFailedTerminal` (cooldown expiry) | `high` |
+| Block (v5.1) | `ConsecutiveFailures` | `high` |
+| Block (v5.1) | `UnmanagedResource` | `high` |
+| Block (v5.1) | `DuplicateInProgress` | `low` |
+| Block (v5.1) | `ResourceBusy` | `low` |
+| Block (v5.1) | `RecentlyRemediated` | `low` |
+| Block (v5.1) | `ExponentialBackoff` | `low` |
+
+---
+
+## Implementation
+
+### Unified Handler
+
+```go
+// CreateManualReviewNotification handles both WE and AI failure scenarios
+func (c *NotificationCreator) CreateManualReviewNotification(
+    ctx context.Context,
+    rr *remediationv1.RemediationRequest,
+    we *workflowexecutionv1.WorkflowExecution, // nil if AI source
+    ai *aianalysisv1.AIAnalysis,               // nil if WE source
+) (string, error) {
+
+    var (
+        source      string
+        reason      string
+        subReason   string
+        message     string
+        priority    notificationv1.NotificationPriority
+    )
+
+    if we != nil {
+        source = "WorkflowExecution"
+        if we.Status.SkipDetails != nil {
+            reason = we.Status.SkipDetails.Reason
+            message = we.Status.SkipDetails.Message
+        } else if we.Status.FailureDetails != nil {
+            reason = "ExecutionFailure"
+            message = we.Status.FailureDetails.NaturalLanguageSummary
+        }
+        priority = c.MapWEReasonToPriority(reason)
+    } else if ai != nil {
+        source = "AIAnalysis"
+        reason = ai.Status.Reason      // WorkflowResolutionFailed
+        subReason = ai.Status.SubReason
+        message = ai.Status.Message
+        priority = c.MapAISubReasonToPriority(subReason)
+    }
+
+    // Create NotificationRequest (Issue #91: spec fields replace labels)
+    nr := &notificationv1.NotificationRequest{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      fmt.Sprintf("nr-manual-review-%s-%d", rr.Name, time.Now().Unix()),
+            Namespace: rr.Namespace,
+        },
+        Spec: notificationv1.NotificationRequestSpec{
+            RemediationRequestRef: &corev1.ObjectReference{Name: rr.Name, Namespace: rr.Namespace},
+            Type:     notificationv1.NotificationTypeManualReview,
+            Priority: priority,
+            Subject:  fmt.Sprintf("⚠️ Manual Review Required: %s", rr.Spec.SignalName),
+            Body:     c.buildManualReviewBody(rr, source, reason, subReason, message),
+            Channels: c.determineChannelsForPriority(priority),
+            Metadata: map[string]string{
+                "remediationRequest": rr.Name,
+                "failureSource":      source,
+                "failureReason":      reason,
+                "subReason":          subReason,
+            },
+        },
+    }
+
+    // Set OwnerReference for cascade deletion
+    controllerutil.SetControllerReference(rr, nr, c.scheme)
+
+    return nr.Name, c.client.Create(ctx, nr)
+}
+```
+
+---
+
+## Acceptance Criteria
+
+### WorkflowExecution Source
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-01 | NotificationRequest created with `type=manual-review` for `ExhaustedRetries` | Unit |
+| AC-036-02 | NotificationRequest created with `type=manual-review` for `PreviousExecutionFailed` | Unit |
+| AC-036-03 | NotificationRequest created with `type=manual-review` for `WasExecutionFailure=true` | Unit |
+| AC-036-04 | Priority is `critical` for WE failures | Unit |
+| AC-036-05 | `spec.reviewSource=WorkflowExecution` set | Unit |
+
+### AIAnalysis Source
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-10 | NotificationRequest created for `WorkflowNotFound` | Unit |
+| AC-036-11 | NotificationRequest created for `ImageMismatch` | Unit |
+| AC-036-12 | NotificationRequest created for `ParameterValidationFailed` | Unit |
+| AC-036-13 | NotificationRequest created for `NoMatchingWorkflows` | Unit |
+| AC-036-14 | NotificationRequest created for `LowConfidence` | Unit |
+| AC-036-15 | NotificationRequest created for `LLMParsingError` | Unit |
+| AC-036-16 | NotificationRequest created for `InvestigationInconclusive` | Unit |
+| AC-036-17 | Priority mapped correctly per SubReason | Unit |
+| AC-036-18 | `spec.reviewSource=AIAnalysis` set | Unit |
+| AC-036-19 | `spec.context.review.reason=WorkflowResolutionFailed` set | Unit |
+
+### AIAnalysis Infrastructure Failures (v3.0)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-30 | NotificationRequest created for `APIError` / `MaxRetriesExceeded` | Unit |
+| AC-036-31 | NotificationRequest created for `APIError` / `TransientError` | Unit |
+| AC-036-32 | NotificationRequest created for `APIError` / `PermanentError` | Unit |
+| AC-036-33 | Priority is `high` for infrastructure failures | Unit |
+| AC-036-34 | `spec.reviewSource=AIAnalysis` set | Unit |
+| AC-036-35 | No failure transitions to RR `Failed` without a notification | Integration |
+
+### AIAnalysis Missing AffectedResource (v4.0)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-40 | NotificationRequest created when AA completed with empty AffectedResource | Integration |
+| AC-036-41 | RR transitions to Failed with RequiresManualReview=true | Integration |
+| AC-036-42 | RR Outcome set to "ManualReviewRequired" | Integration |
+| AC-036-43 | K8s Warning event emitted with reason EscalatedToManualReview | Integration |
+
+### RoutingEngine / IneffectiveChain (v5.1)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-60 | ManualReview NR created with `type=ManualReview` for `IneffectiveChain` block | Unit (UT-RO-803-003) |
+| AC-036-61 | `spec.reviewSource=RoutingEngine` set on NR | Unit (UT-RO-803-003) |
+| AC-036-62 | Priority is `high` for RoutingEngine source | Unit (UT-RO-805-PRI-001) |
+| AC-036-63 | NR ref appended to `rr.Status.NotificationRequestRefs` | Unit (UT-RO-803-003) |
+| AC-036-64 | `NotificationCreated` K8s event emitted | Unit (UT-RO-803-004) |
+| AC-036-65 | Idempotent: no duplicate NR on re-reconcile | Unit (UT-RO-803-006) |
+
+### Terminal Failure Escalation (v5.1)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-70 | Escalation NR created in `transitionToFailed` when no ManualReview/Escalation NR exists | Unit (UT-RO-808-001) |
+| AC-036-71 | Double-NR guard: Escalation NR skipped if ManualReview NR already in refs | Unit (UT-RO-808-003) |
+| AC-036-72 | Escalation NR created in `transitionToFailedTerminal` for cooldown expiry | Unit (UT-RO-809-001) |
+| AC-036-73 | Escalation NR body includes block reason when from Blocked phase | Unit (UT-RO-808-ESC-003) |
+| AC-036-74 | `NotificationCreated` K8s event emitted for escalation NR | Unit (UT-RO-808-002) |
+| AC-036-75 | Idempotent: no duplicate Escalation NR on re-reconcile | Unit (UT-RO-808-004) |
+
+### WFE PhaseFailed ManualReview (v5.1)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-80 | ManualReview NR created when WorkflowExecution enters PhaseFailed | Unit (UT-RO-807-001) |
+| AC-036-81 | `spec.reviewSource=WorkflowExecution` set on WFE failure NR | Unit (UT-RO-807-001) |
+| AC-036-82 | Priority is `critical` for WFE failure source | Unit (UT-RO-807-001) |
+| AC-036-83 | `NotificationCreated` K8s event emitted | Unit (UT-RO-807-002) |
+| AC-036-84 | Idempotent: no duplicate NR on re-reconcile of failed WFE | Unit (UT-RO-807-003) |
+
+### Block Reason Notifications (v5.1)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-90 | Escalation NR created for `ConsecutiveFailures` block | Unit (UT-RO-810-001) |
+| AC-036-91 | Escalation NR created for `UnmanagedResource` block | Unit (UT-RO-810-002) |
+| AC-036-92 | StatusUpdate NR created for `DuplicateInProgress` block | Unit (UT-RO-810-003) |
+| AC-036-93 | StatusUpdate NR created for `ResourceBusy` block | Unit (UT-RO-810-004) |
+| AC-036-94 | StatusUpdate NR created for `RecentlyRemediated` block | Unit (UT-RO-810-005) |
+| AC-036-95 | StatusUpdate NR created for `ExponentialBackoff` block | Unit (UT-RO-810-006) |
+| AC-036-96 | Deterministic naming: `nr-block-<reason>-<rr.Name>` | Unit (UT-RO-810-BN-001) |
+| AC-036-97 | Idempotent: no duplicate block NR on re-reconcile | Unit (UT-RO-810-007) |
+
+### NeedsHumanReview Dispatch (v5.1)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-85 | ManualReview NR created when AA has `NeedsHumanReview=true` and `SelectedWorkflow=nil` | Unit (UT-RO-805-001) |
+| AC-036-86 | ManualReview NR NOT created when `NeedsHumanReview=true` but `SelectedWorkflow` is present | Unit (UT-RO-805-002) |
+
+### Common
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-20 | OwnerReference set for cascade deletion (BR-ORCH-031) | Unit |
+| AC-036-21 | Notification reference tracked in RR status (BR-ORCH-035) | Unit |
+| AC-036-22 | RR `requiresManualReview=true` set | Unit |
+| AC-036-23 | RR phase set appropriately (`Failed` or `Blocked`) | Unit |
+| AC-036-24 | No auto-retry for any manual review scenario | Unit |
+| AC-036-25 | End-to-end latency <5 seconds | Integration |
+
+---
+
+## Test Scenarios
+
+```gherkin
+# WorkflowExecution Failures
+Scenario: Manual review notification for WE ExhaustedRetries
+  Given WorkflowExecution "we-1" is Skipped with reason "ExhaustedRetries"
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | critical |
+    | spec.reviewSource | WorkflowExecution |
+  And RemediationRequest "rr-1" should have requiresManualReview = true
+
+# AIAnalysis Failures
+Scenario: Manual review notification for AIAnalysis WorkflowNotFound
+  Given AIAnalysis "ai-1" has:
+    | phase | Failed |
+    | reason | WorkflowResolutionFailed |
+    | subReason | WorkflowNotFound |
+    | message | Workflow 'restart-pod-v99' not found in catalog |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | high |
+    | spec.reviewSource | AIAnalysis |
+    | spec.context.review.reason | WorkflowResolutionFailed |
+  And notification body should contain "Workflow 'restart-pod-v99' not found"
+  And RemediationRequest "rr-1" should have requiresManualReview = true
+
+Scenario: Manual review notification for AIAnalysis LowConfidence
+  Given AIAnalysis "ai-1" has:
+    | phase | Failed |
+    | reason | WorkflowResolutionFailed |
+    | subReason | LowConfidence |
+    | message | Confidence (0.55) below threshold (0.70) |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | medium |
+  And notification body should contain "low confidence"
+
+Scenario: Manual review notification for AIAnalysis InvestigationInconclusive
+  Given AIAnalysis "ai-1" has:
+    | phase | Failed |
+    | reason | WorkflowResolutionFailed |
+    | subReason | InvestigationInconclusive |
+    | message | Unable to determine root cause. Pod status ambiguous. |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | medium |
+  And notification body should contain "investigation inconclusive"
+
+# v3.0: Infrastructure Failures
+Scenario: Escalation notification for AIAnalysis KA timeout (MaxRetriesExceeded)
+  Given AIAnalysis "ai-1" has:
+    | phase | Failed |
+    | reason | APIError |
+    | subReason | MaxRetriesExceeded |
+    | message | Transient error exceeded max retries (5 attempts): KA request timeout |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | high |
+    | spec.reviewSource | AIAnalysis |
+  And notification body should contain "APIError"
+  And notification body should contain "MaxRetriesExceeded"
+  And RemediationRequest "rr-1" should have requiresManualReview = true
+
+Scenario: Escalation notification for AIAnalysis permanent KA error
+  Given AIAnalysis "ai-1" has:
+    | phase | Failed |
+    | reason | APIError |
+    | subReason | PermanentError |
+    | message | Kubernaut Agent (KA) returned 401 Unauthorized |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | high |
+  And notification body should contain "PermanentError"
+
+# v5.1: RoutingEngine / IneffectiveChain
+Scenario: ManualReview notification for IneffectiveChain block
+  Given RoutingEngine detects IneffectiveChain for "rr-1"
+  And handleBlocked is called with reason "IneffectiveChain"
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-manual-review-rr-1 |
+    | type | ManualReview |
+    | priority | high |
+    | spec.reviewSource | RoutingEngine |
+  And NotificationRequest ref should be in rr.Status.NotificationRequestRefs
+  And K8s event "NotificationCreated" should be emitted
+
+Scenario: No duplicate ManualReview NR on re-reconcile of IneffectiveChain block
+  Given NotificationRequest "nr-manual-review-rr-1" already exists
+  When RemediationOrchestrator reconciles "rr-1" again
+  Then no new NotificationRequest should be created
+  And no duplicate NotificationCreated event should be emitted
+
+# v5.1: Terminal Failure Escalation
+Scenario: Escalation notification for terminal failure without prior NR
+  Given RemediationRequest "rr-1" has no ManualReview or Escalation NR
+  When transitionToFailed is called for "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-escalation-rr-1 |
+    | type | Escalation |
+    | priority | high |
+  And K8s event "NotificationCreated" should be emitted
+
+Scenario: No escalation NR when ManualReview NR already exists
+  Given RemediationRequest "rr-1" has ManualReview NR ref "nr-manual-review-rr-1"
+  When transitionToFailed is called for "rr-1"
+  Then no Escalation NotificationRequest should be created
+
+Scenario: Escalation notification for cooldown-expired blocked RR
+  Given RemediationRequest "rr-1" is in Blocked phase with expired cooldown
+  When transitionToFailedTerminal is called for "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-escalation-rr-1 |
+    | type | Escalation |
+    | priority | high |
+  And notification body should contain the block reason
+
+# v5.1: Block Reason Notifications
+Scenario: Escalation notification for ConsecutiveFailures block
+  Given RoutingEngine blocks "rr-1" with reason "ConsecutiveFailures"
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-block-consecutivefailures-rr-1 |
+    | type | Escalation |
+    | priority | high |
+
+Scenario: StatusUpdate notification for DuplicateInProgress block
+  Given RoutingEngine blocks "rr-1" with reason "DuplicateInProgress"
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-block-duplicateinprogress-rr-1 |
+    | type | StatusUpdate |
+    | priority | low |
+
+Scenario: WFE PhaseFailed creates ManualReview NR
+  Given WorkflowExecution "we-1" has phase "Failed" with reason "Pipeline failed"
+  When WorkflowExecutionHandler handles status for "rr-1"
+  Then NotificationRequest should be created with:
+    | name | nr-manual-review-rr-1 |
+    | type | ManualReview |
+    | priority | critical |
+    | spec.reviewSource | WorkflowExecution |
+
+# v4.0: Defense-in-Depth - Missing AffectedResource
+Scenario: Manual review notification for AA completed but AffectedResource missing
+  Given AIAnalysis "ai-1" has:
+    | phase | Completed |
+    | selectedWorkflow | wf-restart-pods |
+    | affectedResource.kind | (empty) |
+    | affectedResource.name | (empty) |
+  When RemediationOrchestrator reconciles "rr-1"
+  Then NotificationRequest should be created with:
+    | type | manual-review |
+    | priority | high |
+    | spec.reviewSource | AIAnalysis |
+    | spec.context.review.reason | AffectedResourceMissing |
+  And RemediationRequest "rr-1" should have requiresManualReview = true
+  And RemediationRequest "rr-1" should have phase = Failed
+```
+
+---
+
+## Notification Content Templates
+
+### WorkflowExecution Failure Template
+
+```yaml
+spec:
+  type: manual-review
+  priority: critical
+  subject: "⚠️ Manual Review Required: {signalName} - Workflow Execution Failed"
+  body: |
+    Remediation requires manual intervention due to workflow execution failure.
+
+    **Signal**: {signalName}
+    **Target**: {namespace}/{kind}/{name}
+    **Environment**: {environment}
+
+    **Failure Source**: WorkflowExecution
+    **Reason**: {ExhaustedRetries|PreviousExecutionFailed|ExecutionFailure}
+    **Details**: {message}
+
+    **Action Required**:
+    - ExhaustedRetries: Clear backoff state or investigate root cause
+    - PreviousExecutionFailed: Verify cluster state before retry
+    - ExecutionFailure: Review workflow logs and cluster state
+```
+
+### AIAnalysis Failure Template
+
+```yaml
+spec:
+  type: manual-review
+  priority: {high|medium}
+  subject: "⚠️ Manual Review Required: {signalName} - AI Could Not Recommend Workflow"
+  body: |
+    AI analysis completed but could not produce a valid workflow recommendation.
+
+    **Signal**: {signalName}
+    **Target**: {namespace}/{kind}/{name}
+    **Environment**: {environment}
+
+    **Failure Source**: AIAnalysis
+    **Reason**: WorkflowResolutionFailed
+    **SubReason**: {subReason}
+    **Details**: {message}
+
+    **Root Cause Analysis**:
+    {rootCauseAnalysis.summary}
+
+    **Attempted Workflow** (if any):
+    {selectedWorkflow.workflowId} (confidence: {selectedWorkflow.confidence})
+
+    **Action Required**:
+    - WorkflowNotFound/ImageMismatch: Update workflow catalog
+    - ParameterValidationFailed: Fix workflow schema
+    - NoMatchingWorkflows: Add workflows for this incident type
+    - LowConfidence: Manual investigation and decision
+    - LLMParsingError: Contact AI team if persistent
+    - InvestigationInconclusive: Manual investigation required
+```
+
+### AIAnalysis Infrastructure Failure Template (v3.0)
+
+```yaml
+spec:
+  type: manual-review
+  priority: high
+  subject: "⚠️ Manual Review Required: {signalName} - AI Analysis Infrastructure Failure"
+  body: |
+    AI analysis failed due to infrastructure issues. The remediation pipeline could not
+    complete because the Kubernaut Agent (KA) backend was unreachable or returned errors.
+
+    **Signal**: {signalName}
+    **Severity**: {severity}
+
+    **Affected Resource**:
+    {targetResource}
+
+    **Failure Source**: AIAnalysis
+    **Reason**: {reason} (e.g., APIError)
+    **SubReason**: {subReason} (e.g., MaxRetriesExceeded, TransientError, PermanentError)
+    **Details**: {message}
+
+    **Action Required**:
+    - MaxRetriesExceeded: Check KA pod health, LLM backend availability, network connectivity
+    - TransientError: Verify LLM provider (Vertex AI / Anthropic) is operational
+    - PermanentError: Check KA configuration, authentication credentials, API keys
+    - Review KA logs: kubectl logs -n kubernaut-system -l app=kubernaut-agent --tail=100
+```
+
+---
+
+## API Change
+
+### NotificationType Enum
+
+```go
+// +kubebuilder:validation:Enum=escalation;simple;status-update;approval;manual-review
+type NotificationType string
+
+const (
+    NotificationTypeEscalation   NotificationType = "escalation"
+    NotificationTypeSimple       NotificationType = "simple"
+    NotificationTypeStatusUpdate NotificationType = "status-update"
+    NotificationTypeApproval     NotificationType = "approval"      // BR-ORCH-001
+    NotificationTypeManualReview NotificationType = "manual-review" // BR-ORCH-036
+)
+```
+
+---
+
+## Related Documents
+
+- [BR-ORCH-032: Handle WE Skipped Phase](./BR-ORCH-032-034-resource-lock-deduplication.md)
+- [BR-ORCH-001: Approval Notification Creation](./BR-ORCH-001-approval-notification-creation.md)
+- [BR-ORCH-035: Notification Reference Tracking](./BR-ORCH-035-notification-reference-tracking.md)
+- [BR-ORCH-037: Handle AIAnalysis WorkflowNotNeeded](./BR-ORCH-037-workflow-not-needed.md)
+- [BR-KA-197: needs_human_review Field](./BR-KA-197-needs-human-review-field.md)
+- [BR-KA-200: Resolved/Inconclusive Signals](./BR-KA-200-resolved-stale-signals.md)
+- [DD-WE-004: Exponential Backoff Cooldown](../architecture/decisions/DD-WE-004-exponential-backoff-cooldown.md)
+- [DD-AIANALYSIS-003: Completion Substates](../architecture/decisions/DD-AIANALYSIS-003-completion-substates.md)
+- [NOTICE: AIAnalysis WorkflowResolutionFailed](../handoff/NOTICE_AIANALYSIS_WORKFLOW_RESOLUTION_FAILURE.md)
+---
+
+## Issue #550: No-Workflow ManualReviewRequired → Completed (v5.0)
+
+### Problem
+
+When the LLM intentionally omits a workflow selection (`has_workflow: False, needs_human_review: True`) — e.g., because no matching workflows exist in the catalog — the RR was transitioning to `Failed` with `Outcome=ManualReviewRequired`. This is incorrect: the AI made a valid assessment, not a failure. The `Failed` phase inflates failure metrics, triggers false escalation via `ConsecutiveFailureCount`, and misrepresents the outcome to operators.
+
+### Decision
+
+**When `ai.Status.NeedsHumanReview=true` AND `ai.Status.SelectedWorkflow=nil`, the RR transitions to `Completed` with `Outcome=ManualReviewRequired` instead of `Failed`.**
+
+The routing split is at `handleHumanReviewRequired` in `pkg/remediationorchestrator/handler/aianalysis.go`:
+- `SelectedWorkflow == nil` → new `handleManualReviewCompleted` → `PhaseCompleted`
+- `SelectedWorkflow != nil` (low confidence rejection) → existing `createManualReviewAndUpdateStatus` → `PhaseFailed`
+
+### Key design choices
+
+| Decision | Rationale |
+|----------|-----------|
+| Change at RO handler level, not AA level | AA faithfully represents what happened (Failed + NeedsHumanReview). RO decides the RR outcome. Minimal blast radius. |
+| Reuse `NoActionRequiredDelayHours` (24h default) for cooldown | Avoids new config field. Same suppression semantics as BR-ORCH-037. |
+| Split by `ai.Status.SelectedWorkflow == nil` | Low-confidence WITH a selected workflow remains `Failed` (operator reviews rejected workflow). No-workflow is a valid "nothing to do" outcome. |
+| Reuse `CreateManualReviewNotification` | Notification content (RCA, warnings, humanReviewReason) is identical; only the RR terminal state differs. |
+| Emit `NoActionNeededTotal` with `reason="manual_review"` | Reuses existing metric. Dashboards can distinguish `problem_resolved` from `manual_review`. |
+
+### New fields set on RR by `handleManualReviewCompleted`
+
+- `OverallPhase = Completed`
+- `Outcome = "ManualReviewRequired"`
+- `RequiresManualReview = true`
+- `CompletedAt = now`
+- `NextAllowedExecution = now + NoActionRequiredDelayHours` (if delay > 0)
+- `Message` = propagated from `ai.Status.Message`
+- `Ready` condition = `True`
+- `NotificationRequestRefs` = ref to created `nr-manual-review-{rr-name}`
+
+### Acceptance Criteria (v5.0)
+
+| ID | Criterion | Test Coverage |
+|----|-----------|---------------|
+| AC-036-50 | RR phase is `Completed` (not `Failed`) when NeedsHumanReview + no SelectedWorkflow | Unit (UT-RO-550-001), Integration (IT-RO-550-001) |
+| AC-036-51 | NotificationRequest created on Completed path (operator still informed) | Unit (UT-RO-550-002) |
+| AC-036-52 | NextAllowedExecution set for 24h cooldown (suppresses duplicate RRs) | Unit (UT-RO-550-003) |
+| AC-036-53 | `transitionToFailed` NOT called (no ConsecutiveFailureCount increment) | Unit (UT-RO-550-006) |
+| AC-036-54 | Infrastructure failures (APIError) still transition to Failed | Unit (UT-RO-550-007) |
+| AC-036-55 | Low confidence WITH selected workflow still transitions to Failed | Unit (UT-RO-550-008) |
+| AC-036-56 | NoActionNeededTotal metric recorded with reason="manual_review" | Unit (UT-RO-550-012) |
+
+### Implementation
+
+- **Branch**: `fix/v1.1.0-rc13`
+- **Files changed**: `pkg/remediationorchestrator/handler/aianalysis.go` (new `handleManualReviewCompleted`, modified `handleHumanReviewRequired` routing)
+- **Test plan**: [docs/tests/550/TEST_PLAN.md](../tests/550/TEST_PLAN.md)
+- **GitHub Issue**: [#550](https://github.com/jordigilh/kubernaut/issues/550)
+
+---
+
+## Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 5.1 | 2026-04-23 | **BR-ORCH-036 Gap Remediation (Issues #803–#811)**: Comprehensive notification coverage audit identified 7 gaps. (1) **RoutingEngine/IneffectiveChain** (#803): handleBlocked creates ManualReview NR with `reviewSource=RoutingEngine` for IneffectiveChain blocks. (2) **NeedsHumanReview dispatch** (#805): reconciler wires AA `NeedsHumanReview + no SelectedWorkflow` to AI handler for ManualReview NR. (3) **Dead skip handler removal** (#806): deleted `handler/skip/` dead code (signature mismatch). (4) **WFE PhaseFailed** (#807): WFE handler creates ManualReview NR before `transitionToFailed` for execution failures. (5) **Terminal failure escalation** (#808): centralized Escalation NR in `transitionToFailed` with double-NR guard. (6) **Cooldown expiry escalation** (#809): Escalation NR in `transitionToFailedTerminal` for blocked-then-failed. (7) **Block reason notifications** (#810): All 6 non-IneffectiveChain block reasons create NRs (Escalation for ConsecutiveFailures/UnmanagedResource, StatusUpdate for transient blocks). Cross-cutting: AlreadyExists handling for all NR creation sites, RoutingEngine priority mapping fix (High, not Medium). Added AC-036-60..97, detection logic, Gherkin scenarios, priority mapping entries. |
+| 5.0 | 2026-03-04 | **#550: No-workflow ManualReviewRequired → Completed**: When AI intentionally omits workflow (`NeedsHumanReview=true`, `SelectedWorkflow=nil`), RR transitions to `Completed + ManualReviewRequired` instead of `Failed`. Routing split by `SelectedWorkflow == nil` in `handleHumanReviewRequired`. Reuses 24h cooldown, ManualReview notification, and `NoActionNeededTotal` metric with `reason="manual_review"`. 13 new unit tests + 2 new integration tests. See test plan docs/tests/550/TEST_PLAN.md. |
+| 4.0 | 2026-02-24 | **Defense-in-depth guard**: Added RO guard for AA completed with missing RemediationTarget (nil or empty Kind/Name). Completes three-layer chain (KA → AA → RO) for "cannot identify RCA target" scenario. All layers produce same response: Failed + ManualReviewRequired + NotificationRequest. See DD-KA-006 v2.0. |
+| 3.0 | 2026-02-09 | **Escalation principle**: Any failure without automatic recovery MUST be notified. Added AIAnalysis infrastructure failures (APIError/MaxRetriesExceeded, TransientError, PermanentError) as notification triggers. Previously, these failures silently transitioned RR to Failed without operator notification. Also increased AA controller default KA timeout from 60s to 10m to accommodate real LLM response times (temporary; will be replaced by session-based pulling design). |
+| 2.0 | 2025-12-07 | Extended to include all AIAnalysis WorkflowResolutionFailed scenarios (7 SubReasons), added BR-KA-200 InvestigationInconclusive |
+| 1.0 | 2025-12-06 | Initial BR creation for WE failures only |
+
+---
+
+**Document Version**: 5.1
+**Last Updated**: April 23, 2026
+**Maintained By**: Kubernaut Architecture Team

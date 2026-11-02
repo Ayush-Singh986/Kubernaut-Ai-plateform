@@ -1,0 +1,558 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package infrastructure
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	interServiceHTTP  = "http"
+	interServiceHTTPS = "https"
+)
+
+// InterServiceCAPath returns the deterministic file path where the inter-service
+// CA PEM is written. Derived from kubeconfigPath so all E2E suites can find it
+// without serialization changes in SynchronizedBeforeSuite.
+//
+// Issue #753: Eliminates E2E serialization risk (C-2 mitigation).
+func InterServiceCAPath(kubeconfigPath string) string {
+	return filepath.Join(filepath.Dir(kubeconfigPath), "inter-service-ca.pem")
+}
+
+// GenerateInterServiceTLS generates a self-signed CA and per-service ECDSA P-256
+// leaf certificates, creates the corresponding Kubernetes Secrets and ConfigMap,
+// and writes the CA PEM to the deterministic path from InterServiceCAPath.
+//
+// Services: data-storage-service, gateway-service, kubernaut-agent, apifrontend, dex, keycloak
+//
+// Issue #753 (S-4): Uses ECDSA P-256 instead of RSA 2048.
+// Issue #753 (C-2): Returns caPEMPath for host-side TLS-aware test clients.
+func GenerateInterServiceTLS(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) (string, error) {
+	return GenerateInterServiceTLSAtPath(ctx, kubeconfigPath, namespace, InterServiceCAPath(kubeconfigPath), writer)
+}
+
+// GenerateInterServiceTLSAtPath is the namespace-safe variant used when more
+// than one isolated service topology shares a Kubernetes cluster. Each
+// topology gets its own CA file without overwriting another topology's client
+// trust bundle.
+func GenerateInterServiceTLSAtPath(ctx context.Context, kubeconfigPath, namespace, caPEMPath string, writer io.Writer) (string, error) {
+	_, _ = fmt.Fprintln(writer, "🔐 Issue #753: Generating inter-service TLS certificates (ECDSA P-256)...")
+
+	// Idempotency guard: if the CA ConfigMap already exists in this namespace and the
+	// host-side CA PEM file is present, skip regeneration. This prevents a race condition
+	// in fullpipeline E2E where multiple component deployers call this function in parallel
+	// goroutines, each generating a different CA and overwriting the Secrets/ConfigMap.
+	checkCmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"get", "configmap", "inter-service-ca", "-n", namespace, "--ignore-not-found", "-o", "name")
+	checkOut, checkErr := checkCmd.Output()
+	if checkErr == nil && strings.TrimSpace(string(checkOut)) != "" {
+		if _, statErr := os.Stat(caPEMPath); statErr == nil {
+			_, _ = fmt.Fprintf(writer, "  ✅ inter-service TLS already exists (ConfigMap + %s) — skipping\n", caPEMPath)
+			return caPEMPath, nil
+		}
+	}
+
+	// Generate CA key pair
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate CA key: %w", err)
+	}
+
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "kubernaut-inter-service-ca"},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+
+	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to create CA certificate: %w", err)
+	}
+
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+	caCert, err := x509.ParseCertificate(caCertDER)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	// Write CA PEM to deterministic path (caPEMPath declared in idempotency guard above)
+	if err := os.WriteFile(caPEMPath, caCertPEM, 0600); err != nil {
+		return "", fmt.Errorf("failed to write CA PEM to %s: %w", caPEMPath, err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ CA PEM written to %s\n", caPEMPath)
+
+	// Create ConfigMap with CA bundle
+	caConfigMap := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inter-service-ca
+data:
+  ca.crt: |
+%s`, indentPEM(string(caCertPEM)))
+
+	if err := kubectlApply(ctx, kubeconfigPath, namespace, caConfigMap, writer); err != nil {
+		return "", fmt.Errorf("failed to create CA ConfigMap: %w", err)
+	}
+	_, _ = fmt.Fprintln(writer, "  ✅ inter-service-ca ConfigMap created")
+
+	// Generate leaf certs for each service.
+	// Include "localhost" + 127.0.0.1 so host-side E2E clients connecting
+	// through NodePort can verify the certificate.
+	services := []struct {
+		name       string
+		secretName string
+		dnsNames   []string
+		ipAddrs    []net.IP
+	}{
+		{
+			name:       "data-storage-service",
+			secretName: "datastorage-tls",
+			dnsNames: []string{
+				"localhost",
+				"data-storage-service",
+				fmt.Sprintf("data-storage-service.%s", namespace),
+				fmt.Sprintf("data-storage-service.%s.svc", namespace),
+				fmt.Sprintf("data-storage-service.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			name:       "gateway-service",
+			secretName: "gateway-tls",
+			dnsNames: []string{
+				"localhost",
+				"gateway-service",
+				fmt.Sprintf("gateway-service.%s", namespace),
+				fmt.Sprintf("gateway-service.%s.svc", namespace),
+				fmt.Sprintf("gateway-service.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			// The Fleet MCP Gateway terminates TLS at the Gateway API edge,
+			// not at Kubernaut's application gateway Service. Include both
+			// fixed Kuadrant names and namespace wildcards for Envoy Gateway's
+			// generated Service name, plus the sslip.io hostnames used by
+			// Kuadrant MCPServerRegistrations, so the same qualification CA
+			// works for in-cluster clients and host-side NodePort probes.
+			name:       "mcp-gateway",
+			secretName: "mcp-gateway-tls",
+			dnsNames:   append([]string(nil), mcpGatewayTLSDNSNames...),
+			ipAddrs:    []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			name:       "kubernaut-agent",
+			secretName: "kubernautagent-tls",
+			dnsNames: []string{
+				"localhost",
+				"kubernaut-agent",
+				fmt.Sprintf("kubernaut-agent.%s", namespace),
+				fmt.Sprintf("kubernaut-agent.%s.svc", namespace),
+				fmt.Sprintf("kubernaut-agent.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			// Issue #1683: FMC's API port presents mandatory TLS now
+			// (ConfigureRequiredTLS), matching DataStorage/Gateway.
+			// "localhost" + 127.0.0.1 let the E2E harness's host-side client
+			// (hitting FMC's NodePort) verify the cert.
+			name:       "fleetmetadatacache-service",
+			secretName: "fleetmetadatacache-tls",
+			dnsNames: []string{
+				"localhost",
+				"fleetmetadatacache-service",
+				fmt.Sprintf("fleetmetadatacache-service.%s", namespace),
+				fmt.Sprintf("fleetmetadatacache-service.%s.svc", namespace),
+				fmt.Sprintf("fleetmetadatacache-service.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			name:       "apifrontend",
+			secretName: "apifrontend-tls",
+			dnsNames: []string{
+				"localhost",
+				"apifrontend",
+				fmt.Sprintf("apifrontend.%s", namespace),
+				fmt.Sprintf("apifrontend.%s.svc", namespace),
+				fmt.Sprintf("apifrontend.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			name:       "dex",
+			secretName: "dex-tls",
+			dnsNames: []string{
+				"localhost",
+				"dex",
+				fmt.Sprintf("dex.%s", namespace),
+				fmt.Sprintf("dex.%s.svc", namespace),
+				fmt.Sprintf("dex.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+		{
+			// Keycloak replaces Dex for the FMC E2E lane (Spike S17/S18) and the
+			// "fleet" full-pipeline suite's default path (DD-TEST-014); other
+			// lanes (kubernautagent E2E/IT, signalprocessing's lightweight
+			// fleet infra test) still use Dex directly, since Keycloak's fleet
+			// realm only supports client_credentials + token exchange today,
+			// not the ROPC/password grant + persona groups those lanes need.
+			// Generating both leaf certs unconditionally here is harmless
+			// (unused certs cost nothing) and keeps GenerateInterServiceTLS's
+			// signature stable.
+			name:       "keycloak",
+			secretName: "keycloak-tls",
+			dnsNames: []string{
+				"localhost",
+				"keycloak",
+				fmt.Sprintf("keycloak.%s", namespace),
+				fmt.Sprintf("keycloak.%s.svc", namespace),
+				fmt.Sprintf("keycloak.%s.svc.cluster.local", namespace),
+			},
+			ipAddrs: []net.IP{net.IPv4(127, 0, 0, 1)},
+		},
+	}
+
+	for _, svc := range services {
+		leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate key for %s: %w", svc.name, err)
+		}
+
+		leafTemplate := &x509.Certificate{
+			SerialNumber: big.NewInt(time.Now().UnixNano()),
+			Subject:      pkix.Name{CommonName: svc.name},
+			NotBefore:    time.Now().Add(-1 * time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			DNSNames:     svc.dnsNames,
+			IPAddresses:  svc.ipAddrs,
+		}
+
+		leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to create certificate for %s: %w", svc.name, err)
+		}
+
+		leafCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+
+		leafKeyDER, err := x509.MarshalECPrivateKey(leafKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal key for %s: %w", svc.name, err)
+		}
+		leafKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: leafKeyDER})
+
+		secret := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+type: kubernetes.io/tls
+stringData:
+  tls.crt: |
+%s
+  tls.key: |
+%s`, svc.secretName, indentPEM(string(leafCertPEM)), indentPEM(string(leafKeyPEM)))
+
+		if err := kubectlApply(ctx, kubeconfigPath, namespace, secret, writer); err != nil {
+			return "", fmt.Errorf("failed to create TLS Secret for %s: %w", svc.name, err)
+		}
+		_, _ = fmt.Fprintf(writer, "  ✅ %s Secret created (ECDSA P-256, SANs: %v)\n", svc.secretName, svc.dnsNames)
+	}
+
+	_, _ = fmt.Fprintln(writer, "🔐 Inter-service TLS generation complete")
+	return caPEMPath, nil
+}
+
+// ReplicateInterServiceCAConfigMap creates the "inter-service-ca" ConfigMap in
+// a cluster from a CA PEM that was already generated elsewhere (e.g. by
+// GenerateInterServiceTLS in the primary cluster) and copied to this
+// cluster's kubeconfig-adjacent path via InterServiceCAPath. Used by remote
+// clusters that must trust inter-service TLS certs signed by the primary
+// cluster's CA without re-running key generation (DD-TEST-013).
+func ReplicateInterServiceCAConfigMap(ctx context.Context, kubeconfigPath, namespace string, writer io.Writer) error {
+	return ReplicateInterServiceCAConfigMapAtPath(ctx, kubeconfigPath, namespace,
+		InterServiceCAPath(kubeconfigPath), "inter-service-ca", writer)
+}
+
+// ReplicateInterServiceCAConfigMapAtPath creates a named CA ConfigMap from a
+// specific PEM file. This is used when multiple isolated stacks in one cluster
+// intentionally have different trust roots.
+func ReplicateInterServiceCAConfigMapAtPath(ctx context.Context, kubeconfigPath, namespace, caPEMPath, configMapName string, writer io.Writer) error {
+	caPEM, err := os.ReadFile(caPEMPath)
+	if err != nil {
+		return fmt.Errorf("read CA PEM from %s: %w", caPEMPath, err)
+	}
+
+	caConfigMap := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+data:
+  ca.crt: |
+%s`, configMapName, indentPEM(string(caPEM)))
+
+	if err := kubectlApply(ctx, kubeconfigPath, namespace, caConfigMap, writer); err != nil {
+		return fmt.Errorf("create %s ConfigMap: %w", configMapName, err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ %s ConfigMap replicated\n", configMapName)
+	return nil
+}
+
+// ReplicateTLSSecret copies a TLS Secret between namespaces without exposing
+// the private key to the host. This is used by isolated-stack tests when a
+// service in the test namespace must present a certificate generated in the
+// isolated stack's namespace.
+func ReplicateTLSSecret(ctx context.Context, kubeconfigPath, sourceNamespace, targetNamespace, secretName string, writer io.Writer) error {
+	getSecretData := func(key string) (string, error) {
+		jsonPath := fmt.Sprintf("{.data.%s}", strings.ReplaceAll(key, ".", `\.`))
+		cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+			"get", "secret", secretName, "-n", sourceNamespace, "-o", "jsonpath="+jsonPath)
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("read %s from %s/%s: %w", key, sourceNamespace, secretName, err)
+		}
+		value := strings.TrimSpace(string(out))
+		if value == "" {
+			return "", fmt.Errorf("secret %s/%s has no %s data", sourceNamespace, secretName, key)
+		}
+		return value, nil
+	}
+
+	cert, err := getSecretData("tls.crt")
+	if err != nil {
+		return err
+	}
+	key, err := getSecretData("tls.key")
+	if err != nil {
+		return err
+	}
+
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: kubernetes.io/tls
+data:
+  tls.crt: %s
+  tls.key: %s
+`, secretName, targetNamespace, cert, key)
+	if err := kubectlApply(ctx, kubeconfigPath, targetNamespace, manifest, writer); err != nil {
+		return fmt.Errorf("replicate TLS Secret %s to namespace %s: %w", secretName, targetNamespace, err)
+	}
+	_, _ = fmt.Fprintf(writer, "  ✅ %s TLS Secret replicated to %s\n", secretName, targetNamespace)
+	return nil
+}
+
+// NewTLSAwareClient creates an HTTP client that trusts the inter-service CA.
+// Used by host-side E2E test code to call HTTPS NodePort endpoints.
+//
+// Issue #753 (C-2): Host-side test clients must verify service certs signed
+// by the inter-service CA.
+func NewTLSAwareClient(kubeconfigPath string, timeout time.Duration) (*http.Client, error) {
+	caPEMPath := InterServiceCAPath(kubeconfigPath)
+	caPEM, err := os.ReadFile(caPEMPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CA PEM from %s: %w", caPEMPath, err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no valid PEM certificates found in %s", caPEMPath)
+	}
+	if err := appendMonitoringCA(pool, kubeconfigPath); err != nil {
+		return nil, err
+	}
+
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS12,
+			},
+		},
+	}, nil
+}
+
+// monitoringTLSRoundTripper upgrades legacy host-side HTTP URLs for the
+// monitoring NodePorts to HTTPS. The application Helm lane historically
+// exposed Prometheus/AlertManager as HTTP, while the operator qualification
+// contract requires HTTPS endpoints. Keeping this compatibility at the shared
+// transport boundary avoids changing the existing E2E journeys.
+type monitoringTLSRoundTripper struct {
+	base *http.Transport
+}
+
+func (t *monitoringTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL != nil && req.URL.Scheme == interServiceHTTP {
+		port := req.URL.Port()
+		if port == strconv.Itoa(PrometheusHostPort) || port == strconv.Itoa(AlertManagerHostPort) || port == "9190" || port == "9193" {
+			clone := req.Clone(req.Context())
+			clone.URL.Scheme = interServiceHTTPS
+			req = clone
+		}
+	}
+	return t.base.RoundTrip(req)
+}
+
+// NewTLSAwareTransport creates an HTTP round tripper that trusts the
+// inter-service CA. Useful for wrapping with additional transports (e.g.,
+// ServiceAccountTransport). It leaves response-header timing to the caller's
+// http.Client timeout so long-running A2A/MCP turns are not cut off by a
+// hidden 30-second transport deadline. Callers that need a transport-level
+// budget can use NewTLSAwareTransportWithResponseHeaderTimeout explicitly.
+func NewTLSAwareTransport(kubeconfigPath string) (http.RoundTripper, error) {
+	return NewTLSAwareTransportWithResponseHeaderTimeout(kubeconfigPath, 0)
+}
+
+// NewTLSAwareTransportWithResponseHeaderTimeout creates a CA-aware transport
+// with an explicit response-header budget. A zero timeout disables the
+// transport-level header deadline so callers can apply a longer per-request
+// http.Client timeout to long-lived A2A turns.
+func NewTLSAwareTransportWithResponseHeaderTimeout(kubeconfigPath string, responseHeaderTimeout time.Duration) (http.RoundTripper, error) {
+	caPEMPath := InterServiceCAPath(kubeconfigPath)
+	caPEM, err := os.ReadFile(caPEMPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CA PEM from %s: %w", caPEMPath, err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no valid PEM certificates found in %s", caPEMPath)
+	}
+	if err := appendMonitoringCA(pool, kubeconfigPath); err != nil {
+		return nil, err
+	}
+
+	return &monitoringTLSRoundTripper{base: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			RootCAs:    pool,
+			MinVersion: tls.VersionTLS12,
+		},
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}}, nil
+}
+
+// appendMonitoringCA extends the shared host-side trust pool when the
+// operator qualification has provisioned the separate monitoring CA. The
+// legacy application Helm lane has no monitoring CA file, so absence remains
+// a no-op for all other E2E suites.
+func appendMonitoringCA(pool *x509.CertPool, kubeconfigPath string) error {
+	monitoringPath := MonitoringCAPath(kubeconfigPath)
+	monitoringPEM, err := os.ReadFile(monitoringPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read monitoring CA PEM from %s: %w", monitoringPath, err)
+	}
+	if !pool.AppendCertsFromPEM(monitoringPEM) {
+		return fmt.Errorf("no valid PEM certificates found in %s", monitoringPath)
+	}
+	return nil
+}
+
+// TLSCertVolumeYAML returns the YAML snippet for mounting a TLS cert Secret as a volume.
+// Indent is the number of spaces to prepend to each line.
+func TLSCertVolumeYAML(secretName string, indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	return fmt.Sprintf(`
+%s- name: tls-certs
+%s  secret:
+%s    secretName: %s`, prefix, prefix, prefix, secretName)
+}
+
+// TLSCertVolumeMountYAML returns the YAML snippet for a TLS cert volume mount.
+func TLSCertVolumeMountYAML(indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	return fmt.Sprintf(`
+%s- name: tls-certs
+%s  mountPath: /etc/tls
+%s  readOnly: true`, prefix, prefix, prefix)
+}
+
+// TLSCAVolumeYAML returns the YAML snippet for mounting the CA ConfigMap as a volume.
+func TLSCAVolumeYAML(indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	return fmt.Sprintf(`
+%s- name: tls-ca
+%s  configMap:
+%s    name: inter-service-ca`, prefix, prefix, prefix)
+}
+
+// TLSCAVolumeMountYAML returns the YAML snippet for a CA volume mount.
+func TLSCAVolumeMountYAML(indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	return fmt.Sprintf(`
+%s- name: tls-ca
+%s  mountPath: /etc/tls-ca
+%s  readOnly: true`, prefix, prefix, prefix)
+}
+
+// TLSCAEnvYAML returns the YAML snippet for the TLS_CA_FILE environment variable.
+func TLSCAEnvYAML(indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	return fmt.Sprintf(`
+%s- name: TLS_CA_FILE
+%s  value: /etc/tls-ca/ca.crt`, prefix, prefix)
+}
+
+// kubectlApply applies a YAML manifest via kubectl.
+func kubectlApply(ctx context.Context, kubeconfigPath, namespace, manifest string, writer io.Writer) error {
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath, "apply", "-n", namespace, "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	return cmd.Run()
+}
+
+// indentPEM indents each line of a PEM string by 4 spaces (YAML manifest nesting depth).
+func indentPEM(pemStr string) string {
+	prefix := strings.Repeat(" ", 4)
+	lines := strings.Split(strings.TrimRight(pemStr, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
+}

@@ -1,0 +1,226 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/runtime"
+	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
+	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+)
+
+// unreachableTestEndpoint is a well-known unroutable address (RFC 5737-style
+// loopback with a closed port) shared by the fleet- and DataStorage-readiness
+// wiring tests in this package to simulate an unreachable dependency without
+// depending on real network conditions or timeouts.
+const unreachableTestEndpoint = "http://127.0.0.1:1/unreachable"
+
+// ---------------------------------------------------------------------------
+// IT-RO-054-001: cmd/remediationorchestrator must wire a fleet.ReaderFactory
+// into Reconciler.SetReaderFactory from Config.Fleet — this is the actual
+// production entry point (buildReconciler). Without it,
+// readerForHash(ctx, clusterID) silently falls back to the local hub
+// cluster reader (internal/controller/remediationorchestrator/
+// config_accessors.go:71-76), so CapturePreRemediationHash computes the
+// pre-remediation resource fingerprint against the WRONG cluster for any
+// fleet-routed RemediationRequest — corrupting the EA hash-comparison used
+// for effectiveness assessment. buildReconciler already wires
+// fleet.NewScopeChecker (Backend/Endpoint) via buildRoutingEngine, which is
+// why this second, independent gap (MCPGatewayEndpoint reader factory)
+// stayed invisible.
+// ---------------------------------------------------------------------------
+
+func TestBuildFleetReaderFactory_Disabled_NoOp(t *testing.T) {
+	t.Parallel()
+
+	localClient := crfake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	cfg := config.DefaultConfig() // Fleet.Enabled defaults to false
+
+	rf, fc, err := buildFleetReaderFactory(context.Background(), localClient, cfg, logr.Discard())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rf != nil {
+		t.Error("IT-RO-054-001: fleet.ReaderFactory must remain nil when fleet is disabled")
+	}
+	if fc != nil {
+		t.Error("IT-RO-054-001: *mcpclient.ResilientClient must remain nil when fleet is disabled")
+	}
+}
+
+// TestBuildFleetReaderFactory_Enabled_WiresReaderFactory is IT-RO-054-001:
+// proves cmd/remediationorchestrator actually constructs a
+// fleet.ReaderFactory from Config.Fleet when federation is enabled and the
+// MCP Gateway is reachable — the real production dispatch path that
+// buildReconciler passes to Reconciler.SetReaderFactory.
+func TestBuildFleetReaderFactory_Enabled_WiresReaderFactory(t *testing.T) {
+	t.Parallel()
+
+	gw := mockgw.NewMockGateway()
+	t.Cleanup(gw.Close)
+
+	localClient := crfake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	cfg := config.DefaultConfig()
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = gw.URL()
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rf, fc, err := buildFleetReaderFactory(ctx, localClient, cfg, logr.Discard())
+	if err != nil {
+		t.Fatalf("IT-RO-054-001: unexpected error wiring fleet reader factory: %v", err)
+	}
+	if fc != nil {
+		t.Cleanup(func() { _ = fc.Close() })
+	}
+	if rf == nil {
+		t.Fatal("IT-RO-054-001: fleet.ReaderFactory must be wired from Config.Fleet when fleet is enabled — " +
+			"without it, CapturePreRemediationHash silently reads the local hub cluster for fleet-routed " +
+			"RemediationRequests (BR-FLEET-054)")
+	}
+	if fc == nil {
+		t.Error("IT-RO-054-001: *mcpclient.ResilientClient must be returned so main() can close it on " +
+			"graceful shutdown (mirrors GW's registerAdapters contract, cmd/gateway/main.go:164-169)")
+	}
+
+	// The wired factory must actually be usable end-to-end: empty clusterID
+	// resolves to the local manager client (matches fleet.ReaderFactory's
+	// documented contract, pkg/fleet/reader_factory.go:25-27).
+	reader, err := rf.ReaderFor(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ReaderFor(\"\") returned unexpected error: %v", err)
+	}
+	if reader != localClient {
+		t.Error("IT-RO-054-001: ReaderFor(\"\") must return the local manager client for empty clusterID")
+	}
+}
+
+// TestBuildFleetReaderFactory_EnabledUnreachableEndpoint_SelfHeals proves
+// issue #2315's fix: an unreachable Fleet MCP Gateway at startup must never
+// error out of buildFleetReaderFactory, and — unlike the pre-#2315
+// contract this test used to pin (rf == nil forever) — the ReaderFactory
+// must still be built from the resilient client's SessionProvider, so that
+// once the background reconnect succeeds, remote reads self-heal without a
+// pod restart. Calling ReaderFor for a remote clusterID while still
+// disconnected must return a clear transient error, not silently fall back
+// to the local cluster (which would corrupt the pre-remediation hash).
+//
+// #1553 [readiness gate Wave 3]: the resilient client is kept (not
+// discarded) on an initial connection failure — wireFleetReadinessGate
+// attaches an MCPClientProber to it so the periodic readiness probe keeps
+// retrying and RO's "fleet" readyz check correctly reports NotReady (and
+// later recovers) instead of the client being silently lost with no path
+// back to healthy short of a pod restart. Mirrors the identical change made
+// to GW's wireFleetOwnerResolution (cmd/gateway/main.go).
+func TestBuildFleetReaderFactory_EnabledUnreachableEndpoint_SelfHeals(t *testing.T) {
+	t.Parallel()
+
+	localClient := crfake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	cfg := config.DefaultConfig()
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = unreachableTestEndpoint
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rf, fc, err := buildFleetReaderFactory(ctx, localClient, cfg, logr.Discard())
+	if fc != nil {
+		t.Cleanup(func() { _ = fc.Close() })
+	}
+	if err != nil {
+		t.Fatalf("unexpected error for an unreachable Fleet MCP Gateway endpoint: %v", err)
+	}
+	if rf == nil {
+		t.Fatal("IT-RO-2315-001: fleet.ReaderFactory must still be built (from the resilient client's " +
+			"SessionProvider) even when the Fleet MCP Gateway is initially unreachable, so it self-heals " +
+			"once the background reconnect succeeds instead of staying nil until a pod restart")
+	}
+	if fc == nil {
+		t.Fatal("IT-RO-1553-001: *mcpclient.ResilientClient must be kept (not discarded) when the Fleet " +
+			"MCP Gateway is unreachable so the readiness gate's periodic probe can keep retrying it (#1553)")
+	}
+	if fc.Ready() {
+		t.Error("IT-RO-1553-001: the kept client must not report Ready() when its initial connection failed")
+	}
+
+	if _, readerErr := rf.ReaderFor(context.Background(), "remote-cluster"); readerErr == nil {
+		t.Error("IT-RO-2315-001: ReaderFor for a remote clusterID must return a clear transient error while " +
+			"disconnected, not silently succeed against the local cluster")
+	}
+}
+
+// TestBuildFleetReaderFactory_ResilienceOverrideReachesNewResilient proves
+// the issue #2262 Phase 2 wiring: a chart-shaped Config.Fleet.Resilience
+// override (fleet.FleetResilienceConfig) actually reaches the real
+// mcpclient.NewResilient call inside buildFleetReaderFactory
+// (cmd/remediationorchestrator/main.go), not just
+// mcpclient.ResilienceConfigFromFleet in isolation (already unit-tested by
+// UT-FLEET-RES-013/014). Asserts via ResilientClient.ResilienceConfig()
+// rather than timing, so the test is deterministic.
+func TestBuildFleetReaderFactory_ResilienceOverrideReachesNewResilient(t *testing.T) {
+	t.Parallel()
+
+	localClient := crfake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	cfg := config.DefaultConfig()
+	cfg.Fleet.Enabled = true
+	cfg.Fleet.MCPGatewayEndpoint = unreachableTestEndpoint
+	cfg.Fleet.MCPGatewayType = registry.GatewayEAIGW
+	cfg.Fleet.Resilience = fleet.FleetResilienceConfig{
+		ConnectTimeout:       7 * time.Second,
+		DiscoverProbeTimeout: 3 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, fc, err := buildFleetReaderFactory(ctx, localClient, cfg, logr.Discard())
+	if fc != nil {
+		t.Cleanup(func() { _ = fc.Close() })
+	}
+	if err != nil {
+		t.Fatalf("unexpected error for an unreachable Fleet MCP Gateway endpoint: %v", err)
+	}
+	if fc == nil {
+		t.Fatal("expected a kept (non-nil) *mcpclient.ResilientClient even for an unreachable endpoint (#1553)")
+	}
+
+	got := fc.ResilienceConfig()
+	want := mcpclient.ResilienceConfigFromFleet(cfg.Fleet.Resilience)
+	if got != want {
+		t.Fatalf("issue #2262 Phase 2: Config.Fleet.Resilience did not reach the real NewResilient call inside "+
+			"buildFleetReaderFactory -- got %+v, want %+v", got, want)
+	}
+	if got.ConnectTimeout != 7*time.Second || got.DiscoverProbeTimeout != 3*time.Second {
+		t.Fatalf("overridden fields did not survive the chart-shaped override -> NewResilient round trip: %+v", got)
+	}
+	defaults := mcpclient.DefaultResilienceConfig()
+	if got.InitialInterval != defaults.InitialInterval || got.MaxInterval != defaults.MaxInterval || got.MaxElapsedTime != defaults.MaxElapsedTime {
+		t.Fatalf("fields left unset in the override must keep mcpclient.DefaultResilienceConfig()'s values, got %+v", got)
+	}
+}

@@ -1,0 +1,452 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package types
+
+import (
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+)
+
+// Phase represents a stage in the investigation flow.
+// Per DD-KA-019-002: RCA uses K8s+Prom tools, Discovery uses workflow tools,
+// Validation uses no tools (I4 per-phase tool scoping).
+type Phase string
+
+const (
+	PhaseRCA               Phase = "rca"
+	PhaseWorkflowDiscovery Phase = "workflow_discovery"
+	PhaseValidation        Phase = "validation"
+)
+
+// HumanReviewReasonAlignmentCheckFailed is the sentinel value for
+// InvestigationResult.HumanReviewReason when the shadow agent alignment
+// check has flagged suspicious content. Used across session lifecycle
+// (store, manager) and event emission to identify security escalations
+// that must bypass interactive hold.
+const HumanReviewReasonAlignmentCheckFailed = "alignment_check_failed"
+
+// DefaultMaxEvidenceHandoffBytes is the independent whole-packet budget for
+// Phase 2 evidence, including its digest and freeze timestamp (DD-KA-2496).
+const DefaultMaxEvidenceHandoffBytes = 262_144
+
+// PhaseToolMap defines which tool names are available in each phase (I4).
+type PhaseToolMap map[Phase][]string
+
+// ReasoningSummary is the audit-safe subset of an LLM's reasoning/thinking
+// output for the RCA that produced an InvestigationResult (BR-AI-086 AC6).
+// Only the visible Text and a Redacted flag are carried here — the opaque,
+// provider-specific replay Signature (llm.ReasoningBlock.Signature) never
+// reaches this type by design: it has no forensic/reconstruction value
+// (SOC2 CC8.1 cares about decision provenance, not protocol replay tokens)
+// and would be a pure retention-cost liability (AU-11) with no compliance
+// upside. See DD-LLM-005/BR-AI-086 AC6 for the full rationale.
+type ReasoningSummary struct {
+	// Text is the visible reasoning content that led to this result. Empty
+	// when Redacted is true or when the provider returned no visible text.
+	Text string `json:"text,omitempty"`
+	// Redacted marks that the provider withheld the reasoning content
+	// (e.g. Anthropic redacted_thinking) — reasoning occurred, but its
+	// content could not be captured for audit.
+	Redacted bool `json:"redacted,omitempty"`
+}
+
+// InvestigationResult holds the final output of an investigation.
+// Fields align with the OpenAPI IncidentResponse schema in api/openapi.json.
+//
+// Wide DTO by design: reviewed in GO-ANTIPATTERN-AUDIT-2026-07-01 §4a (God Structs).
+// It mirrors an external API schema field-for-field; splitting it would fragment
+// the JSON serialization boundary for no behavioral gain, so it is intentionally
+// not decomposed.
+type InvestigationResult struct {
+	// EvidenceStatus is the bounded server-owned status of optional evidence
+	// sources. It is additive and omitted when no source reported a degraded
+	// outcome (DD-FLEET-009, BR-AUDIT-005).
+	EvidenceStatus *EvidenceStatus `json:"evidence_status,omitempty"`
+
+	// Core RCA output
+	RCASummary        string                 `json:"rca_summary"`
+	Severity          string                 `json:"severity,omitempty"`
+	WorkflowID        string                 `json:"workflow_id,omitempty"`
+	RemediationTarget RemediationTarget      `json:"remediation_target,omitempty"`
+	Parameters        map[string]interface{} `json:"parameters,omitempty"`
+	Confidence        float64                `json:"confidence"`
+	// ConfidenceSet distinguishes an explicit zero from an omitted confidence
+	// during server-assisted RCA continuation merging. It is internal
+	// bookkeeping and never crosses the API boundary.
+	ConfidenceSet bool `json:"-"`
+
+	// Workflow selection (GAP-009: OpenAPI selected_workflow includes execution_bundle)
+	ExecutionBundle       string                `json:"execution_bundle,omitempty"`
+	ExecutionBundleDigest string                `json:"execution_bundle_digest,omitempty"`
+	ExecutionEngine       string                `json:"execution_engine,omitempty"`
+	ServiceAccountName    string                `json:"service_account_name,omitempty"`
+	EngineConfig          *apiextensionsv1.JSON `json:"engine_config,omitempty"`
+	WorkflowVersion       string                `json:"workflow_version,omitempty"`
+	WorkflowRationale     string                `json:"workflow_rationale,omitempty"`
+
+	// DD-KA-2496: selected confidence has its own provenance; nil is unknown,
+	// while a pointer to zero is an explicit score. Confidence remains the
+	// selection score for the existing approval/review consumers.
+	WorkflowSelectionConfidence *float64                         `json:"workflow_selection_confidence,omitempty"`
+	RCAConfidence               *float64                         `json:"rca_confidence,omitempty"`
+	RepeatJustification         *sharedtypes.RepeatJustification `json:"repeat_justification,omitempty"`
+	// The fields below are server-computed from this request's scoped history,
+	// never accepted from model output. Nil booleans mean not yet evaluated.
+	RepeatJustificationRequired *bool    `json:"repeat_justification_required,omitempty"`
+	PriorWorkflowMatch          *bool    `json:"prior_workflow_match,omitempty"`
+	RepeatValidationOutcome     string   `json:"repeat_validation_outcome,omitempty"`
+	PriorRemediationUIDs        []string `json:"prior_remediation_uids,omitempty"`
+	HandoffDigest               string   `json:"handoff_digest,omitempty"`
+	// A rejected proposal is retained separately, not as an executable selection.
+	ProposedWorkflowID string `json:"proposed_workflow_id,omitempty"`
+	// Intake remembers malformed explanation shape without retaining raw data.
+	RepeatJustificationInvalid bool `json:"-"`
+
+	// ActionType/WorkflowName are catalog-authoritative identifiers (Issue
+	// #1661 Change 12) resolved from the DS catalog at selection time and
+	// copied by enrichFromCatalog, never LLM-suppliable. ActionType is the
+	// DD-WORKFLOW-016 taxonomy action type; WorkflowName is always equal to
+	// RemediationWorkflow.metadata.name. Both flow to
+	// AIAnalysis.Status.SelectedWorkflow (via sharedtypes.WorkflowSnapshot)
+	// and ultimately WorkflowExecution.Spec.WorkflowRef.
+	ActionType   string `json:"action_type,omitempty"`
+	WorkflowName string `json:"workflow_name,omitempty"`
+
+	// ExecutionClusterID is the workflow-declared fleet cluster this
+	// workflow's execution resource runs on, decoupled from the signal's
+	// origin cluster (DD-FLEET-008, BR-FLEET-004, Issue #2326).
+	// Catalog-authoritative like ActionType/WorkflowName above: copied by
+	// enrichFromCatalog, never LLM-suppliable. Empty means unset (execution
+	// runs on the signal's cluster, unchanged default behavior). Flows to
+	// AIAnalysis.Status.SelectedWorkflow (via sharedtypes.WorkflowSnapshot)
+	// and ultimately WorkflowExecution.Spec.ClusterID.
+	ExecutionClusterID string `json:"execution_cluster_id,omitempty"`
+
+	// Dependencies/Resources/DeclaredParameterNames are catalog-authoritative
+	// schema data (Issue #1661 Change 11a, DD-WORKFLOW-018), copied from
+	// parser.WorkflowMeta by enrichFromCatalog after workflow selection. AA
+	// persists them onto AIAnalysis.Status.SelectedWorkflow (Change 11b) so
+	// RemediationOrchestrator/WorkflowExecution consume the CRD-embedded
+	// snapshot instead of WorkflowExecution querying DataStorage directly.
+	Dependencies           *models.WorkflowDependencies `json:"dependencies,omitempty"`
+	Resources              *corev1.ResourceRequirements `json:"resources,omitempty"`
+	DeclaredParameterNames map[string]bool              `json:"declared_parameter_names,omitempty"`
+
+	// Human review fields (GAP-013: HumanReviewReason for OpenAPI enum mapping)
+	HumanReviewNeeded bool   `json:"human_review_needed"`
+	HumanReviewReason string `json:"human_review_reason,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+
+	// Outcome routing (is_actionable already existed, GAP-002 population in P3)
+	IsActionable *bool `json:"is_actionable,omitempty"`
+
+	// DD-KA-2520-2521: typed, server-owned investigation state. These fields
+	// are authoritative for terminal routing; SelectedWorkflow must never be
+	// used to infer no_matching_workflows.
+	TerminalOutcome         sharedtypes.TerminalOutcome         `json:"terminal_outcome,omitempty"`
+	WorkflowDiscoveryStatus sharedtypes.WorkflowDiscoveryStatus `json:"workflow_discovery_status,omitempty"`
+	HistoryStatus           sharedtypes.HistoryStatus           `json:"history_status,omitempty"`
+
+	// InvestigationOutcome preserves the raw investigation_outcome string from
+	// the LLM (e.g., "actionable", "inconclusive", "problem_resolved"). Used
+	// for Phase 1→3 propagation so the investigator can merge Phase 1 outcomes
+	// as fallbacks when Phase 3 does not produce one (HAPI parity: #715).
+	InvestigationOutcome string `json:"investigation_outcome,omitempty"`
+
+	// Investigation analysis narrative from Phase 1 for Phase 3 context (#724).
+	InvestigationAnalysis string `json:"investigation_analysis,omitempty"`
+
+	// RCA detail
+	SignalName          string   `json:"signal_name,omitempty"`
+	ContributingFactors []string `json:"contributing_factors,omitempty"`
+
+	// Adversarial Due Diligence (Issue #847 / DD-KA-847)
+	CausalChain []string `json:"causal_chain,omitempty"`
+	// DD-KA-2511: server-preserved classification from history-aware RCA review.
+	CausalMechanismStatus string              `json:"causal_mechanism_status,omitempty"`
+	DueDiligence          *DueDiligenceReview `json:"due_diligence,omitempty"`
+
+	// Observability
+	Warnings       []string               `json:"warnings,omitempty"`
+	DetectedLabels map[string]interface{} `json:"detected_labels,omitempty"`
+
+	// Alternative workflows for operator context (GAP-009: OpenAPI AlternativeWorkflow schema)
+	AlternativeWorkflows []AlternativeWorkflow `json:"alternative_workflows,omitempty"`
+
+	// History of validation attempts during self-correction (DD-KA-001 v1.2).
+	// Populated by Validator.SelfCorrect when validation fails and retries occur.
+	ValidationAttemptsHistory []ValidationAttemptRecord `json:"validation_attempts_history,omitempty"`
+
+	// TotalLLMTurns tracks the total number of LLM inference calls made across
+	// all investigation phases (RCA + workflow selection). Surfaced in the
+	// structured decision payload for observability (#1396).
+	TotalLLMTurns int `json:"total_llm_turns,omitempty"`
+
+	// TotalToolCalls tracks the total number of tool executions dispatched
+	// across all investigation phases. Surfaced in the structured decision
+	// payload for observability (#1396).
+	TotalToolCalls int `json:"total_tool_calls,omitempty"`
+
+	// Cancelled indicates the investigation was aborted by operator action
+	// (BR-SESSION-001). When true, the result contains partial accumulated
+	// state up to the point of cancellation.
+	Cancelled bool `json:"cancelled,omitempty"`
+
+	// CancelledPhase records which investigation phase was active when
+	// cancellation occurred ("rca" or "workflow_discovery").
+	CancelledPhase string `json:"cancelled_phase,omitempty"`
+
+	// CancelledAtTurn records which LLM conversation turn was active when
+	// cancellation was detected. Together with CancelledPhase, this enables
+	// full audit reconstruction of investigation progress (SOC2 CC8.1).
+	CancelledAtTurn int `json:"cancelled_at_turn,omitempty"`
+
+	// AccumulatedMessages holds the LLM conversation accumulated before
+	// cancellation. Serialized into audit events for forensic post-mortem
+	// RAG (BR-AUDIT-070). Only populated when Cancelled is true.
+	AccumulatedMessages []map[string]interface{} `json:"accumulated_messages,omitempty"`
+
+	// TokenUsage holds cumulative token counts at the point of result
+	// construction. For cancelled investigations this captures spend up to
+	// cancellation; for completed investigations it captures total spend.
+	// Used for cost attribution and forensic audit (BR-AUDIT-070, CC6.1).
+	TokenUsage *TokenUsageSummary `json:"token_usage,omitempty"`
+
+	// AlignmentVerdict holds the shadow agent's alignment check result.
+	// Populated by InvestigatorWrapper for ALL investigations (aligned or suspicious).
+	// BR-AI-601, #1076: When CircuitBreakerActivated=true, the primary LLM results
+	// may be incomplete or compromised; shadow findings are the primary content.
+	AlignmentVerdict *AlignmentVerdictResult `json:"alignment_verdict,omitempty"`
+
+	// BR-INTERACTIVE-010: When true, the session transitions to StatusUserDriving
+	// instead of StatusCompleted. Set by the investigator when signal.Interactive=true
+	// and RCA completes (Phase 2+3 skipped).
+	InteractiveHold bool `json:"interactive_hold,omitempty"`
+
+	// Reasoning carries an audit-safe summary of the LLM's reasoning/
+	// thinking content that led to this RCA, when the model's reasoning
+	// capability was enabled (BR-AI-086 AC6). Nil when reasoning was not
+	// requested/returned — this is the default, unaffected behavior.
+	Reasoning *ReasoningSummary `json:"reasoning,omitempty"`
+}
+
+// HumanReviewReasonRCAIncomplete is the HumanReviewReason value set when RCA
+// gates (e.g., API-version ambiguity retry) are exhausted without resolution.
+// Mirrors agentclient.HumanReviewReasonRcaIncomplete's string value without
+// coupling this package to the generated OpenAPI client type.
+const HumanReviewReasonRCAIncomplete = "rca_incomplete"
+
+// HumanReviewReasonDecisionExpired is the HumanReviewReason value set when
+// kubernaut_discover_workflows found and presented a workflow via
+// kubernaut_present_decision, but no decision arrived before the interactive
+// session's inactivity timeout finalized it (#2019/#2020). Distinct from
+// "no_matching_workflows" (nothing was found at all): here a concrete
+// recommendation exists and is preserved via Store.SetPendingDecisionResult,
+// not discarded as a false-negative has_workflow:false.
+const HumanReviewReasonDecisionExpired = "decision_expired"
+
+// InvestigationOutcomeProblemResolved is the InvestigationOutcome value
+// indicating the LLM determined the underlying problem self-resolved before
+// remediation was needed. See the InvestigationOutcome field doc above for
+// the full enum (mirrors parser/schema.go's JSON schema enum).
+const InvestigationOutcomeProblemResolved = "problem_resolved"
+
+// TokenUsageSummary holds cumulative token counts. Mirrors
+// investigator.TokenUsageSummary for cross-package use.
+type TokenUsageSummary struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// InvestigationTotals carries cumulative per-investigation accounting across
+// all legs (autonomous + interactive + discovery) for a single remediation
+// request. Read out at session assembly points that sit outside the
+// investigator package via Investigator.InvestigationTotals (#2387 Gap 2).
+// Token counts are raw provider counts, never financial costs.
+type InvestigationTotals struct {
+	LLMTurns         int `json:"total_llm_turns"`
+	ToolCalls        int `json:"total_tool_calls"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// ValidationAttemptRecord captures a single validation attempt during
+// the LLM self-correction loop. Maps to OpenAPI ValidationAttempt schema.
+type ValidationAttemptRecord struct {
+	Attempt    int      `json:"attempt"`
+	WorkflowID string   `json:"workflow_id,omitempty"`
+	IsValid    bool     `json:"is_valid"`
+	Errors     []string `json:"errors,omitempty"`
+	Timestamp  string   `json:"timestamp"`
+}
+
+// AlternativeWorkflow represents a workflow considered but not selected.
+// Matches the OpenAPI AlternativeWorkflow schema (ADR-045 v1.2).
+// Alternatives are for CONTEXT and AUDIT only, not for automatic fallback execution.
+type AlternativeWorkflow struct {
+	WorkflowID      string                 `json:"workflow_id"`
+	ExecutionBundle string                 `json:"execution_bundle,omitempty"`
+	Confidence      float64                `json:"confidence"`
+	Rationale       string                 `json:"rationale"`
+	Parameters      map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// AlignmentVerdictResult holds the shadow agent's overall verdict on an investigation.
+// Produced by InvestigatorWrapper and consumed by KA handler (mapped to ogen IncidentResponse)
+// and AA response processor (mapped to AIAnalysisStatus.AlignmentVerdict).
+type AlignmentVerdictResult struct {
+	Result                  string                    `json:"result"`
+	CircuitBreakerActivated bool                      `json:"circuit_breaker_activated"`
+	Summary                 string                    `json:"summary"`
+	Flagged                 int                       `json:"flagged"`
+	Total                   int                       `json:"total"`
+	Findings                []AlignmentFinding        `json:"findings,omitempty"`
+	GroundingReview         *AlignmentGroundingResult `json:"grounding_review,omitempty"`
+}
+
+// AlignmentGroundingResult holds the structured outcome of the full-context
+// grounding review (#1096). Populated when grounding review is enabled.
+type AlignmentGroundingResult struct {
+	Grounded    bool   `json:"grounded"`
+	Explanation string `json:"explanation"`
+}
+
+// AlignmentFinding captures a single suspicious step detected by the shadow agent.
+type AlignmentFinding struct {
+	StepIndex   int    `json:"step_index"`
+	StepKind    string `json:"step_kind"`
+	Tool        string `json:"tool,omitempty"`
+	Explanation string `json:"explanation"`
+}
+
+// DueDiligenceReview captures the LLM's adversarial self-review across 8 dimensions.
+// Enforced by JSON schema in rcaResultSchemaJSON (Issue #847).
+type DueDiligenceReview struct {
+	CausalCompleteness    string `json:"causal_completeness"`
+	TargetAccuracy        string `json:"target_accuracy"`
+	EvidenceSufficiency   string `json:"evidence_sufficiency"`
+	AlternativeHypotheses string `json:"alternative_hypotheses"`
+	ScopeCompleteness     string `json:"scope_completeness"`
+	Proportionality       string `json:"proportionality"`
+	RegressionAwareness   string `json:"regression_awareness"`
+	ConfidenceCalibration string `json:"confidence_calibration"`
+}
+
+// RemediationTarget identifies the K8s resource to remediate.
+type RemediationTarget struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	// APIVersion disambiguates the resource's API group when the Kind exists
+	// in multiple groups (e.g. Route in route.openshift.io vs serving.knative.dev).
+	// Format: "group/version" (e.g. "route.openshift.io/v1") or "version" for core (e.g. "v1").
+	// Issue #1040.
+	APIVersion string `json:"api_version,omitempty"`
+}
+
+// DefaultClusterNameSentinel is the display-only placeholder
+// pkg/aianalysis/handlers/request_builder.go's clusterNameFor emits for
+// SignalContext.ClusterName when a hub-local investigation (no real target
+// cluster) has no cluster_name custom label either. It is never a real
+// fleet cluster identifier. internal/kubernautagent/agentsession/mapping.go's
+// MapSpecToSignal must not promote this literal into SignalContext.ClusterID
+// -- prescopeFleetOverlay (fleet_overlay.go) treats any non-empty ClusterID
+// as a fleet-target investigation and fails closed without a
+// FleetOverlayResolver configured (Issue #2314): promoting the cosmetic
+// "default" placeholder there would make every hub-local investigation look
+// like a fleet target.
+const DefaultClusterNameSentinel = "default"
+
+// SignalContext holds the input signal data for an investigation.
+// Fields align with the OpenAPI IncidentRequest schema in api/openapi.json.
+//
+// Wide DTO by design: reviewed in GO-ANTIPATTERN-AUDIT-2026-07-01 §4a (God Structs).
+// It mirrors an external API schema field-for-field; splitting it would fragment
+// the JSON serialization boundary for no behavioral gain, so it is intentionally
+// not decomposed.
+type SignalContext struct {
+	// Required fields
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Severity  string `json:"severity"`
+	Message   string `json:"message"`
+
+	// Identifiers (GAP-008: RemediationID for audit correlation per DD-WORKFLOW-002)
+	IncidentID    string `json:"incident_id,omitempty"`
+	RemediationID string `json:"remediation_id,omitempty"`
+
+	// Resource targeting
+	ResourceKind       string `json:"resource_kind,omitempty"`
+	ResourceName       string `json:"resource_name,omitempty"`
+	ResourceAPIVersion string `json:"resource_api_version,omitempty"`
+
+	// Environment context
+	ClusterID        string `json:"cluster_id,omitempty"`
+	ClusterName      string `json:"cluster_name,omitempty"`
+	Environment      string `json:"environment,omitempty"`
+	Priority         string `json:"priority,omitempty"`
+	RiskTolerance    string `json:"risk_tolerance,omitempty"`
+	SignalSource     string `json:"signal_source,omitempty"`
+	BusinessCategory string `json:"business_category,omitempty"`
+	Description      string `json:"description,omitempty"`
+	SignalMode       string `json:"signal_mode,omitempty"`
+
+	// Timestamps and dedup (GAP-014: from IncidentRequest OpenAPI schema)
+	FiringTime      string `json:"firing_time,omitempty"`
+	ReceivedTime    string `json:"received_time,omitempty"`
+	IsDuplicate     *bool  `json:"is_duplicate,omitempty"`
+	OccurrenceCount *int   `json:"occurrence_count,omitempty"`
+
+	// #462: Alert-author annotations and signal labels from IncidentRequest
+	SignalAnnotations map[string]string `json:"signal_annotations,omitempty"`
+	SignalLabels      map[string]string `json:"signal_labels,omitempty"`
+
+	// DetectedLabelsJSON is a pre-marshaled JSON string of sharedtypes.DetectedLabels,
+	// forwarded to DS catalog queries to activate GitOps-aware scoring. Issue #1052 / BR-AI-056.
+	DetectedLabelsJSON string `json:"detected_labels_json,omitempty"`
+
+	DeduplicationWindowMinutes *int   `json:"deduplication_window_minutes,omitempty"`
+	FirstSeen                  string `json:"first_seen,omitempty"`
+	LastSeen                   string `json:"last_seen,omitempty"`
+
+	// BR-INTERACTIVE-010: When true, KA creates the session in pending state
+	// without launching Investigate(). The session awaits MCP action=start.
+	Interactive bool `json:"interactive,omitempty"`
+
+	// ClusterClassification is the optional cluster business classification
+	// (e.g. "production", "staging-eu") propagated from
+	// AIAnalysis.Spec.AnalysisRequest.SignalContext.Cluster (BR-FLEET-003,
+	// #1511). Empty for non-fleet deployments or unregistered clusters.
+	// Passed as the `cluster` param on the workflow-discovery tool call.
+	ClusterClassification string `json:"cluster_classification,omitempty"`
+}
+
+// ComponentGVK returns the fully-qualified apiVersion/Kind string for workflow
+// component matching (Issue #1051). Returns empty string when either
+// ResourceAPIVersion or ResourceKind is not set, preventing silent mismatch
+// against workflow labels that use GVK format.
+func (s SignalContext) ComponentGVK() string {
+	if s.ResourceAPIVersion == "" || s.ResourceKind == "" {
+		return ""
+	}
+	return s.ResourceAPIVersion + "/" + s.ResourceKind
+}

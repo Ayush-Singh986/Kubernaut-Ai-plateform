@@ -1,0 +1,194 @@
+# Architectural Design Decisions
+
+**Purpose**: This document provides a quick reference index to all architectural design decisions made for the Kubernaut project.
+
+**Format**: Each decision is documented in a separate file following the DD-* naming convention in `docs/architecture/decisions/`.
+
+---
+
+## 📋 Quick Reference
+
+| ID | Decision | Status | Date | File |
+|---|---|---|---|---|
+| DD-001 | Recovery Context Enrichment (Alternative 2) | ✅ Approved | 2024-10-08 | [DD-001-recovery-context-enrichment.md](decisions/DD-001-recovery-context-enrichment.md) |
+| DD-002 | Per-Step Validation Framework (Alternative 2) | ✅ Approved | 2025-10-14 | [DD-002-per-step-validation-framework.md](decisions/DD-002-per-step-validation-framework.md) |
+| DD-003 | Forced Recommendation Manual Override (V2) | ✅ Approved for V2 | 2025-10-20 | [DD-003-forced-recommendation-manual-override.md](decisions/DD-003-forced-recommendation-manual-override.md) |
+| DD-004 | RFC 7807 Error Response Standard | ✅ Approved | 2025-10-30 | [DD-004-RFC7807-ERROR-RESPONSES.md](decisions/DD-004-RFC7807-ERROR-RESPONSES.md) |
+| DD-005 | Observability Standards (Metrics and Logging) | ✅ Approved | 2025-10-31 | [DD-005-OBSERVABILITY-STANDARDS.md](decisions/DD-005-OBSERVABILITY-STANDARDS.md) |
+| DD-006 | Controller Scaffolding Strategy (Custom Templates) | ✅ Approved | 2025-10-31 | [DD-006-controller-scaffolding-strategy.md](decisions/DD-006-controller-scaffolding-strategy.md) |
+| DD-007 | Kubernetes-Aware Graceful Shutdown Pattern | ✅ Approved | 2025-10-31 | [DD-007-kubernetes-aware-graceful-shutdown.md](decisions/DD-007-kubernetes-aware-graceful-shutdown.md) |
+| DD-008 | Integration Test Infrastructure (Podman + Kind) | ✅ Approved | 2025-11-01 | [DD-008-integration-test-infrastructure.md](decisions/DD-008-integration-test-infrastructure.md) |
+| DD-009 | Audit Write Error Recovery - Dead Letter Queue Pattern | ✅ Approved | TBD | [DD-009-audit-write-error-recovery.md](decisions/DD-009-audit-write-error-recovery.md) |
+| DD-010 | PostgreSQL Driver Migration (lib/pq to pgx) | ✅ Approved | 2025-11-03 | [DD-010-postgresql-driver-migration.md](decisions/DD-010-postgresql-driver-migration.md) |
+| DD-011 | PostgreSQL 16+ and pgvector 0.5.1+ Version Requirements | ✅ Approved | 2025-10-13 | [DD-011-postgresql-version-requirements.md](decisions/DD-011-postgresql-version-requirements.md) |
+| DD-012 | Goose Database Migration Management | ✅ Approved | 2025-11-05 | [DD-012-goose-database-migration-management.md](decisions/DD-012-goose-database-migration-management.md) |
+| DD-013 | Kubernetes Client Initialization Standard | ✅ Approved | 2025-11-08 | [DD-013-kubernetes-client-initialization-standard.md](decisions/DD-013-kubernetes-client-initialization-standard.md) |
+| DD-014 | Binary Version Logging Standard | ✅ Approved | 2025-11-17 | [DD-014-binary-version-logging-standard.md](decisions/DD-014-binary-version-logging-standard.md) |
+| DD-015 | Timestamp-Based CRD Naming for Unique Occurrences | ✅ Approved | 2025-11-17 | [DD-015-timestamp-based-crd-naming.md](decisions/DD-015-timestamp-based-crd-naming.md) |
+| DD-016 | Dynamic Toolset Service V2.0 Deferral | ⏸️ Deferred to V2.0 | 2025-11-21 | [DD-016-dynamic-toolset-v2-deferral.md](decisions/DD-016-dynamic-toolset-v2-deferral.md) |
+| DD-HTTP-001 | HTTP Router Strategy (chi for REST APIs, stdlib for simple services) | ✅ Approved | 2025-11-22 | [DD-HTTP-001-http-router-strategy.md](decisions/DD-HTTP-001-http-router-strategy.md) |
+| DD-018 | Helm Chart Single-Install-Per-Cluster Guard (`lookup`-based fail-fast check) | ✅ Approved | 2026-07-06 | [DD-018-helm-chart-single-install-per-cluster-guard.md](decisions/DD-018-helm-chart-single-install-per-cluster-guard.md) |
+| DD-RELEASE-001 | Run-Scoped Image Promotion | ✅ Approved | 2026-10-26 | [DD-RELEASE-001-run-scoped-image-promotion.md](decisions/DD-RELEASE-001-run-scoped-image-promotion.md) |
+| ADR-001 | CRD-Based Microservices Architecture | ✅ Approved | TBD | [ADR-001-crd-microservices-architecture.md](decisions/ADR-001-crd-microservices-architecture.md) |
+| ADR-002 | Native Kubernetes Jobs for Remediation Execution | ✅ Approved | TBD | [ADR-002-native-kubernetes-jobs.md](decisions/ADR-002-native-kubernetes-jobs.md) |
+| ADR-003 | Kind Cluster as Primary Integration Environment | ✅ Approved | TBD | [ADR-003-KIND-INTEGRATION-ENVIRONMENT.md](decisions/ADR-003-KIND-INTEGRATION-ENVIRONMENT.md) |
+| ADR-004 | Fake Kubernetes Client for Unit Testing | ✅ Approved | TBD | [ADR-004-fake-kubernetes-client.md](decisions/ADR-004-fake-kubernetes-client.md) |
+| ADR-005 | >50% Integration Test Coverage for Microservices | ✅ Approved | TBD | [ADR-005-integration-test-coverage.md](decisions/ADR-005-integration-test-coverage.md) |
+| ADR-014 | Notification Service Uses External Service Authentication | ✅ Approved | TBD | [ADR-014-notification-service-external-auth.md](decisions/ADR-014-notification-service-external-auth.md) |
+| ADR-015 | Migrate from "Alert" to "Signal" Naming Convention | ✅ Approved | TBD | [ADR-015-alert-to-signal-naming-migration.md](decisions/ADR-015-alert-to-signal-naming-migration.md) |
+| ADR-016 | Validation Responsibility Chain and Data Authority Model | ✅ Approved | TBD | [ADR-016-validation-responsibility-chain.md](decisions/ADR-016-validation-responsibility-chain.md) |
+| ADR-017 | NotificationRequest CRD Creator Responsibility | ✅ Approved | TBD | [ADR-017-notification-crd-creator.md](decisions/ADR-017-notification-crd-creator.md) |
+| ADR-018 | Approval Notification Integration in V1.0 | ✅ Approved | TBD | [ADR-018-approval-notification-v1-integration.md](decisions/ADR-018-approval-notification-v1-integration.md) |
+| ADR-019 | AIAnalysis Error Classification & Retry Strategy (KA Calls) | ✅ Approved | TBD | [ADR-019-aianalysis-error-classification-retry-strategy.md](decisions/ADR-019-aianalysis-error-classification-retry-strategy.md) |
+| ADR-020 | Workflow Parallel Execution Limits & Complexity Approval | ✅ Approved | TBD | [ADR-020-workflow-parallel-execution-limits.md](decisions/ADR-020-workflow-parallel-execution-limits.md) |
+| ADR-021 | Workflow Dependency Cycle Detection & Validation | ✅ Approved | TBD | [ADR-021-workflow-dependency-cycle-detection.md](decisions/ADR-021-workflow-dependency-cycle-detection.md) |
+| ADR-022 | V1 Native Jobs with V2 Tekton Migration Path | ✅ Approved | TBD | [ADR-022-v1-native-jobs-v2-tekton-migration.md](decisions/ADR-022-v1-native-jobs-v2-tekton-migration.md) |
+| ADR-023 | Tekton Pipelines from V1 (Eliminate Custom Orchestration) | ✅ Approved | TBD | [ADR-023-tekton-from-v1.md](decisions/ADR-023-tekton-from-v1.md) |
+| ADR-024 | Eliminate ActionExecution CRD Layer | ✅ Approved | TBD | [ADR-024-eliminate-actionexecution-layer.md](decisions/ADR-024-eliminate-actionexecution-layer.md) |
+| ADR-025 | KubernetesExecutor Service Elimination | ✅ Approved | TBD | [ADR-025-kubernetesexecutor-service-elimination.md](decisions/ADR-025-kubernetesexecutor-service-elimination.md) |
+| ADR-026 | Forced Recommendation and Manual Override (V2 Feature) | ✅ Approved | TBD | [ADR-026-forced-recommendation-manual-override.md](decisions/ADR-026-forced-recommendation-manual-override.md) |
+| ADR-027 | Multi-Architecture Container Build Strategy with Red Hat UBI Base Images | ✅ Approved | TBD | [ADR-027-multi-architecture-build-strategy.md](decisions/ADR-027-multi-architecture-build-strategy.md) |
+| ADR-028 | Container Image Registry and Base Image Policy | ✅ Approved | TBD | [ADR-028-container-registry-policy.md](decisions/ADR-028-container-registry-policy.md) |
+| ADR-030 | Service Configuration Management via YAML Files | ✅ Approved | TBD | [ADR-030-service-configuration-management.md](decisions/ADR-030-service-configuration-management.md) |
+| ADR-031 | OpenAPI Specification Standard for REST APIs | ✅ Approved | TBD | [ADR-031-openapi-specification-standard.md](decisions/ADR-031-openapi-specification-standard.md) |
+| ADR-032 | Data Access Layer Isolation | ✅ Approved | TBD | [ADR-032-data-access-layer-isolation.md](decisions/ADR-032-data-access-layer-isolation.md) |
+| ADR-033 | Remediation Playbook Catalog & Multi-Dimensional Success Tracking | ✅ Approved | 2025-11-04 | [ADR-033-remediation-playbook-catalog.md](decisions/ADR-033-remediation-playbook-catalog.md) |
+| ADR-033-A | Cross-Service Business Requirements (6 Services, 20 BRs) | ✅ Approved | 2025-11-05 | [ADR-033-CROSS-SERVICE-BRS.md](decisions/ADR-033-CROSS-SERVICE-BRS.md) |
+| ADR-033-B | BR Category Migration Plan (BR-WORKFLOW → BR-REMEDIATION) | 📋 Planned | 2025-11-05 | [ADR-033-BR-CATEGORY-MIGRATION-PLAN.md](decisions/ADR-033-BR-CATEGORY-MIGRATION-PLAN.md) |
+| ADR-034 | Unified Audit Table Design with Event Sourcing Pattern | ✅ Approved | 2025-11-08 | [ADR-034-unified-audit-table-design.md](decisions/ADR-034-unified-audit-table-design.md) |
+| ADR-035 | Remediation Execution Engine (Tekton Pipelines) | ✅ Approved | 2025-11-05 | [ADR-035-remediation-execution-engine.md](decisions/ADR-035-remediation-execution-engine.md) |
+| ADR-036 | Authentication Authorization Strategy | ✅ Approved | 2025-11-09 | [ADR-036-authentication-authorization-strategy.md](decisions/ADR-036-authentication-authorization-strategy.md) |
+| ADR-037 | Business Requirement (BR) Template Standard | ✅ Approved | 2025-11-05 | [ADR-037-business-requirement-template-standard.md](decisions/ADR-037-business-requirement-template-standard.md) |
+| ADR-038 | Asynchronous Buffered Audit Ingestion | ✅ Approved | 2025-11-08 | [ADR-038-async-buffered-audit-ingestion.md](decisions/ADR-038-async-buffered-audit-ingestion.md) |
+| ADR-039 | Complex Decision Documentation Pattern | ✅ Approved | 2025-11-06 | [ADR-039-complex-decision-documentation-pattern.md](decisions/ADR-039-complex-decision-documentation-pattern.md) |
+| ADR-040 | RemediationApprovalRequest CRD Architecture | ✅ Approved | 2025-11-13 | [ADR-040-remediation-approval-request-architecture.md](decisions/ADR-040-remediation-approval-request-architecture.md) |
+| DD-ARCH-001 | Data Access Pattern - Final Decision (Alternative 2 + REST) | ✅ Approved | 2025-11-02 | [DD-ARCH-001-FINAL-DECISION.md](decisions/DD-ARCH-001-FINAL-DECISION.md) |
+| DD-ARCH-001-A | Data Access Pattern Assessment (3 Alternatives) | 📊 Analysis | 2025-11-01 | [DD-ARCH-001-DATA-ACCESS-PATTERN-ASSESSMENT.md](analysis/DD-ARCH-001-DATA-ACCESS-PATTERN-ASSESSMENT.md) |
+| DD-ARCH-001-B | Interface Options Analysis (REST vs gRPC vs GraphQL) | 📊 Analysis | 2025-11-02 | [DD-ARCH-001-INTERFACE-OPTIONS-ANALYSIS.md](analysis/DD-ARCH-001-INTERFACE-OPTIONS-ANALYSIS.md) |
+| DD-ARCH-002 | GraphQL Query Layer Assessment (V2 Candidate) | 📊 Evaluated for V2 | 2025-11-02 | [DD-ARCH-002-GRAPHQL-QUERY-LAYER-ASSESSMENT.md](decisions/DD-ARCH-002-GRAPHQL-QUERY-LAYER-ASSESSMENT.md) |
+| DD-SCHEMA-001 | Data Storage Schema Authority | ✅ Approved | 2025-10-31 | [DD-SCHEMA-001-data-storage-schema-authority.md](decisions/DD-SCHEMA-001-data-storage-schema-authority.md) |
+| DD-CONTEXT-001 | Cache Stampede Prevention (Alternative A) | ✅ Approved | 2025-10-20 | [DD-CONTEXT-001-cache-stampede-prevention.md](decisions/DD-CONTEXT-001-cache-stampede-prevention.md) |
+| DD-CONTEXT-002 | Cache Size Limit Configuration (Alternative C) | ✅ Approved | 2025-10-20 | [DD-CONTEXT-002-cache-size-limit-configuration.md](decisions/DD-CONTEXT-002-cache-size-limit-configuration.md) |
+| DD-CONTEXT-003 | Context Enrichment Placement (LLM-Driven Tool Call) | ✅ Approved | 2025-10-22 | [DD-CONTEXT-003-Context-Enrichment-Placement.md](decisions/DD-CONTEXT-003-Context-Enrichment-Placement.md) |
+| DD-CONTEXT-004 | BR-AI-002 Ownership | ✅ Approved | 2025-10-22 | [DD-CONTEXT-004-BR-AI-002-Ownership.md](decisions/DD-CONTEXT-004-BR-AI-002-Ownership.md) |
+| DD-CONTEXT-005 | Minimal LLM Response Schema (Filter Before LLM Pattern) | ✅ Approved | 2025-11-11 | [DD-CONTEXT-005-minimal-llm-response-schema.md](decisions/DD-CONTEXT-005-minimal-llm-response-schema.md) |
+| DD-CONTEXT-006 | Signal Processor Recovery Data Source (Embed, Don't Query) | ✅ Approved | 2025-11-11 | [DD-CONTEXT-006-signal-processor-recovery-data-source.md](decisions/DD-CONTEXT-006-signal-processor-recovery-data-source.md) |
+| DD-CATEGORIZATION-001 | Gateway vs Signal Processing Categorization Split Assessment | ✅ Approved | 2025-11-11 | [DD-CATEGORIZATION-001-gateway-signal-processing-split-assessment.md](decisions/DD-CATEGORIZATION-001-gateway-signal-processing-split-assessment.md) |
+| DD-EFFECTIVENESS-002 | Restart Recovery Idempotency | ✅ Approved | [Date] | [DD-EFFECTIVENESS-002-Restart-Recovery-Idempotency.md](decisions/DD-EFFECTIVENESS-002-Restart-Recovery-Idempotency.md) |
+| DD-GATEWAY-004 | Redis Memory Optimization | ✅ Approved | 2025-10-24 | [DD-GATEWAY-004-redis-memory-optimization.md](decisions/DD-GATEWAY-004-redis-memory-optimization.md) |
+| DD-GATEWAY-005 | Redis Cleanup on CRD Deletion | ✅ Approved | 2025-10-27 | [DD-GATEWAY-005-redis-cleanup-on-crd-deletion.md](decisions/DD-GATEWAY-005-redis-cleanup-on-crd-deletion.md) |
+| DD-GATEWAY-006 | Authentication Strategy | ✅ Approved | 2025-10-27 | [DD-GATEWAY-006-authentication-strategy.md](decisions/DD-GATEWAY-006-authentication-strategy.md) |
+| DD-GATEWAY-007 | Fallback Namespace Strategy | ✅ Approved | 2025-10-31 | [DD-GATEWAY-007-fallback-namespace-strategy.md](decisions/DD-GATEWAY-007-fallback-namespace-strategy.md) |
+| DD-GATEWAY-008 | Storm Aggregation Windows | ❌ Superseded (DD-GATEWAY-015) | 2025-12-13 | [DD-GATEWAY-008-storm-aggregation-windows.md](decisions/DD-GATEWAY-008-storm-aggregation-windows.md) |
+| DD-GATEWAY-009 | State-Based Deduplication Strategy (Alternative 3: Hybrid Redis Cache + CRD State) | ⏸️ Parked | 2025-11-17 | [DD-GATEWAY-009-state-based-deduplication.md](decisions/DD-GATEWAY-009-state-based-deduplication.md) |
+| DD-GATEWAY-010 | Adapter Naming Convention (SignalSource vs SignalType) | ✅ Approved | 2025-11-21 | [DD-GATEWAY-010-adapter-naming-convention.md](decisions/DD-GATEWAY-010-adapter-naming-convention.md) |
+| DD-GATEWAY-012 | Redis-free Storm Detection | ❌ Superseded | 2025-12-13 | Referenced in code but never formally documented; superseded by DD-GATEWAY-015 |
+| DD-GATEWAY-014 | Service-Level Circuit Breaker Deferral | ⏸️ Deferred | 2025-12-13 | [DD-GATEWAY-014-circuit-breaker-deferral.md](decisions/DD-GATEWAY-014-circuit-breaker-deferral.md) |
+| DD-GATEWAY-015 | Storm Detection Logic Removal | ✅ IMPLEMENTED | 2025-12-13 | [DD-GATEWAY-015-storm-detection-removal.md](decisions/DD-GATEWAY-015-storm-detection-removal.md) |
+| DD-GATEWAY-016 | Kubernetes API Circuit Breaker Implementation | ✅ IMPLEMENTED | 2026-01-03 | [DD-GATEWAY-016-k8s-api-circuit-breaker.md](decisions/DD-GATEWAY-016-k8s-api-circuit-breaker.md) |
+| DD-GATEWAY-019 | Signal Fingerprint/Deduplication Consolidation — Triage & Recommendation (rejects AuthWebhook single-entry-point; recommends shared in-process package for GW+AF) | 🔄 Proposed | 2026-08-22 | [DD-GATEWAY-019-signal-dedup-consolidation-triage.md](decisions/DD-GATEWAY-019-signal-dedup-consolidation-triage.md) |
+| DD-GATEWAY-CLUSTER-SCOPE-SIGNALS | Cluster-Scoped Signal Support (`ClusterScope` pseudo-Kind + opt-in mechanism) | 📋 Proposed | 2026-07-01 | [DD-GATEWAY-CLUSTER-SCOPE-SIGNALS.md](decisions/DD-GATEWAY-CLUSTER-SCOPE-SIGNALS.md) |
+| DD-KA-002 | Custom Labels Workflow-Matching Architecture | ✅ Approved | 2025-11-30 | [DD-KA-002-custom-labels-auto-append.md](decisions/DD-KA-002-custom-labels-auto-append.md) |
+| DD-KA-003 | Mandatory OpenAPI Client Usage | ✅ Approved | 2025-12-29 | [DD-KA-003-mandatory-openapi-client-usage.md](decisions/DD-KA-003-mandatory-openapi-client-usage.md) |
+| DD-KA-001 | Workflow Response Validation Architecture (supersedes DD-HAPI-002, now retired; collapses to one validation layer) | ✅ Approved | 2026-07-14 | [DD-KA-001-workflow-response-validation-architecture.md](decisions/DD-KA-001-workflow-response-validation-architecture.md) |
+| DD-KA-2485 | Context-Aware Kubernetes Secret Sanitization | ✅ Approved & Implemented | 2026-10-03 | [DD-KA-2485-context-aware-secret-sanitization.md](decisions/DD-KA-2485-context-aware-secret-sanitization.md) |
+| DD-KA-2496 | History-Aware RCA, Frozen Target Handoff and Repeat Selection | ✅ Approved; Phase 1/RCA continuation partially superseded by DD-KA-2511 | 2026-10-09 | [DD-KA-2496-history-aware-rca-and-repeat-selection.md](decisions/DD-KA-2496-history-aware-rca-and-repeat-selection.md) |
+| DD-KA-2511 | Generic Recurrent RCA Continuation | ✅ Authoritative for recurrent RCA / Phase 1 history review | 2026-10-14 | [DD-KA-2511-generic-recurrent-rca-continuation.md](decisions/DD-KA-2511-generic-recurrent-rca-continuation.md) |
+| DD-KA-2520-2521 | Typed Investigation Outcomes and Decision Ledger (Alternative A) | ✅ Approved for implementation | 2026-10-16 | [DD-KA-2520-2521-typed-investigation-outcomes-and-decision-ledger.md](decisions/DD-KA-2520-2521-typed-investigation-outcomes-and-decision-ledger.md) |
+| DD-EMBEDDING-001 | Embedding Service as MCP Playbook Catalog Server (Python Microservice) | ✅ Approved | 2025-11-14 | [DD-EMBEDDING-001-embedding-service-implementation.md](decisions/DD-EMBEDDING-001-embedding-service-implementation.md) |
+| DD-PLAYBOOK-001 | Mandatory Playbook Label Schema (7 Labels) | ✅ Approved | 2025-11-14 | [DD-PLAYBOOK-001-mandatory-label-schema.md](decisions/DD-PLAYBOOK-001-mandatory-label-schema.md) |
+| DD-INFRA-001 | ConfigMap Hot-Reload Pattern (Shared Infrastructure) | ✅ Approved | 2025-12-06 | [DD-INFRA-001-configmap-hotreload-pattern.md](decisions/DD-INFRA-001-configmap-hotreload-pattern.md) |
+| DD-EM-005 | Cluster-Scoped Metrics and Alert Assessment (Node, PersistentVolume) | ✅ Approved | 2026-07-07 | [DD-EM-005-cluster-scoped-metrics-alert-assessment.md](decisions/DD-EM-005-cluster-scoped-metrics-alert-assessment.md) |
+| DD-WE-001 | Resource Locking Safety (Prevent Parallel Workflows) | ✅ Approved | 2025-12-01 | [DD-WE-001-resource-locking-safety.md](decisions/DD-WE-001-resource-locking-safety.md) |
+| DD-WE-002 | Dedicated Execution Namespace | ✅ Approved | 2025-12-01 | [DD-WE-002-dedicated-execution-namespace.md](decisions/DD-WE-002-dedicated-execution-namespace.md) |
+| DD-WE-003 | Resource Lock Persistence (Deterministic PipelineRun Name) | ✅ Approved | 2025-12-01 | [DD-WE-003-resource-lock-persistence.md](decisions/DD-WE-003-resource-lock-persistence.md) |
+| DD-WE-004 | Exponential Backoff Cooldown | ✅ Approved | 2025-12-06 | [DD-WE-004-exponential-backoff-cooldown.md](decisions/DD-WE-004-exponential-backoff-cooldown.md) |
+| DD-WE-010 | Job Identity per RemediationRequest and WorkflowExecution Attempt | ✅ Approved | 2026-10-14 | [DD-WE-010-job-identity-per-remediation-request.md](decisions/DD-WE-010-job-identity-per-remediation-request.md) |
+| DD-PROD-001 | Production Readiness Checklist Standard | ✅ Approved | 2025-12-07 | [DD-PROD-001-production-readiness-checklist-standard.md](decisions/DD-PROD-001-production-readiness-checklist-standard.md) |
+| DD-LLM-003 | Mock-First Development Strategy for LLM Integration | ✅ Approved | 2025-12-11 | [DD-LLM-003-mock-first-development-strategy.md](decisions/DD-LLM-003-mock-first-development-strategy.md) |
+| DD-AIANALYSIS-004 | Storm Context NOT Exposed to LLM | ✅ Approved | 2025-12-13 | [DD-AIANALYSIS-004-storm-context-not-exposed.md](decisions/DD-AIANALYSIS-004-storm-context-not-exposed.md) |
+| DD-TESTING-001 | Audit Event Validation Standards (Authoritative) | ✅ Approved | 2026-01-02 | [DD-TESTING-001-audit-event-validation-standards.md](decisions/DD-TESTING-001-audit-event-validation-standards.md) |
+| DD-TESTING-002 | Integration Test Diagnostics (Must-Gather Pattern) | ✅ Approved | 2026-01-14 | [DD-TESTING-002-integration-test-diagnostics-must-gather.md](decisions/DD-TESTING-002-integration-test-diagnostics-must-gather.md) |
+| DD-AUTH-004 | OpenShift OAuth-Proxy for SOC2 Legal Hold Authentication | ✅ Approved | 2026-01-07 | [DD-AUTH-004-openshift-oauth-proxy-legal-hold.md](decisions/DD-AUTH-004-openshift-oauth-proxy-legal-hold.md) |
+| DD-AUTH-005 | DataStorage Client Authentication Pattern (Authoritative) | ✅ Approved | 2026-01-07 | [DD-AUTH-005-datastorage-client-authentication-pattern.md](decisions/DD-AUTH-005-datastorage-client-authentication-pattern.md) |
+| DD-FLEET-002 | Cluster-Scoped Workflow Targeting via Rego Policy Classification | ✅ Approved | 2026-06-28 | [DD-FLEET-002-cluster-scoped-workflow-targeting.md](decisions/DD-FLEET-002-cluster-scoped-workflow-targeting.md) |
+| DD-FLEET-003 | Full Federation Validation (`ValidateFullFederation`, GW/RO dual-capability requirement) | ✅ Approved & Implemented | 2026-07-04 | [DD-FLEET-003-full-federation-validation.md](decisions/DD-FLEET-003-full-federation-validation.md) |
+| DD-FLEET-005 | Cluster-Transparent Tool Exposure for KA's RCA Investigation (server-side pre-scope, name-transparent aliasing, no LLM-facing cluster discovery) | ✅ Approved (design) | 2026-07-25 | [DD-FLEET-005-cluster-transparent-tool-exposure.md](decisions/DD-FLEET-005-cluster-transparent-tool-exposure.md) |
+| DD-FLEET-009 | Gateway-Neutral MCP Read Recovery and Binding Leases | ✅ Approved design; implementation gated | 2026-10-16 | [DD-FLEET-009-gateway-neutral-mcp-read-recovery.md](decisions/DD-FLEET-009-gateway-neutral-mcp-read-recovery.md) |
+| DD-FLEET-010 | Scoped TLS Trust for MCP Gateway Client Connections | ✅ Approved for implementation | 2026-10-20 | [DD-FLEET-010-mcp-gateway-scoped-tls-trust.md](decisions/DD-FLEET-010-mcp-gateway-scoped-tls-trust.md) |
+| DD-AUDIT-008 | Audit Event Builder Registry Pattern (buildEventData decomposition) | ✅ Approved & Implemented | 2026-07-01 | [DD-AUDIT-008-audit-event-builder-registry-pattern.md](decisions/DD-AUDIT-008-audit-event-builder-registry-pattern.md) |
+| DD-AUDIT-009 | Event-Specific Typed Workflow Discovery Payloads | ✅ Approved & Implemented | 2026-09-26 | [DD-AUDIT-009-workflow-discovery-event-specific-payloads.md](decisions/DD-AUDIT-009-workflow-discovery-event-specific-payloads.md) |
+| DD-AUDIT-010 | Idempotent WorkflowExecution Audit Contract | ✅ Approved for implementation | 2026-10-15 | [DD-AUDIT-010-idempotent-workflow-execution-audit-contract.md](decisions/DD-AUDIT-010-idempotent-workflow-execution-audit-contract.md) |
+| DD-TEST-014 | Fleet E2E Remote-Cluster-Only Topology (`AllRegistrationsRemote`, Keycloak adoption, `remote-cluster` rename) | ✅ Approved & Implemented | 2026-07-04 | [DD-TEST-014-fleet-e2e-remote-cluster-only-topology.md](decisions/DD-TEST-014-fleet-e2e-remote-cluster-only-topology.md) |
+| DD-LLM-004 | Remove langchaingo, Generalize Anthropic-Family Client, Extract Shared OpenAI-Compatible Core | 📋 Proposed | 2026-07-06 | [DD-LLM-004-langchaingo-removal-generalized-clients.md](decisions/DD-LLM-004-langchaingo-removal-generalized-clients.md) |
+| DD-LLM-005 | Model-Aware Reasoning/Thinking Token Support | 📋 Proposed | 2026-07-06 | [DD-LLM-005-model-aware-reasoning-support.md](decisions/DD-LLM-005-model-aware-reasoning-support.md) |
+| DD-LLM-006 | AWS Bedrock Provider Support via Dual-Client Routing | 📋 Proposed | 2026-07-06 | [DD-LLM-006-bedrock-dual-client-routing.md](decisions/DD-LLM-006-bedrock-dual-client-routing.md) |
+| DD-LLM-007 | AF and KA Intentionally Do Not Share an Anthropic Client | ✅ Approved | 2026-07-06 | [DD-LLM-007-af-ka-anthropic-client-divergence.md](decisions/DD-LLM-007-af-ka-anthropic-client-divergence.md) |
+| DD-LLM-008 | LLM Identity (Provider+Model) Requires a Restart to Change | ✅ Approved & Implemented | 2026-07-06 | [DD-LLM-008-restart-required-llm-identity-lock.md](decisions/DD-LLM-008-restart-required-llm-identity-lock.md) |
+| DD-LLM-012 | Independent Complete LLM Profile Resolution for Sibling Agents | ✅ Implemented | 2026-10-15 | [DD-LLM-012-independent-sibling-llm-profile-resolution.md](decisions/DD-LLM-012-independent-sibling-llm-profile-resolution.md) |
+| DD-2439 | Gemini Tool-Call Delta Stream Propagation | ✅ Accepted | 2026-09-18 | [DD-2439-tool-call-delta-stream-propagation.md](decisions/DD-2439-tool-call-delta-stream-propagation.md) |
+| DD-FLEET-004 | FMC's Readiness Ping Targets `ClustersPath`, Not a Duplicated `/healthz` | ✅ Approved & Implemented | 2026-07-24 | [DD-FLEET-004-fmc-ping-clusters-endpoint.md](decisions/DD-FLEET-004-fmc-ping-clusters-endpoint.md) |
+| DD-PLATFORM-008 | `startupProbe` for Fleet-Aware Services with Slow Cold Starts (AF/EM/WE, `kubernaut.startupProbe` helper) | ✅ Approved & Implemented | 2026-07-28 | [DD-PLATFORM-008-fleet-aware-service-startup-probe.md](decisions/DD-PLATFORM-008-fleet-aware-service-startup-probe.md) |
+| DD-PLATFORM-009 | Bootstrap Health Server for Slow Dependency Wiring (FMC + Gateway, `sharedhealth.NewBootstrapServer`) | ✅ Approved & Implemented | 2026-07-28 | [DD-PLATFORM-009-bootstrap-health-server-for-slow-dependency-wiring.md](decisions/DD-PLATFORM-009-bootstrap-health-server-for-slow-dependency-wiring.md) |
+| DD-TEST-015 | Fleet E2E "Deploy Correctly the First Time" (chart-native `global.fleet.*` on the first `helm install`, FMC chart migration, `FleetProvisioner` callback) | ✅ Approved & Implemented | 2026-07-28 | [DD-TEST-015-fleet-e2e-deploy-correctly-first-time.md](decisions/DD-TEST-015-fleet-e2e-deploy-correctly-first-time.md) |
+| DD-PLATFORM-011 | Helm Policy ConfigMap Ownership Boundary (reserved chart identities, distinct external names) | ✅ Approved | 2026-09-28 | [DD-PLATFORM-011-helm-policy-configmap-ownership-boundary.md](decisions/DD-PLATFORM-011-helm-policy-configmap-ownership-boundary.md) |
+| DD-TLS-001 | No-Write Ambient CA Trust Injection (`SSL_CERT_DIR`, read-only CA directory) | ✅ Approved for implementation | 2026-10-23 | [DD-TLS-001-no-write-ambient-ca-trust-injection.md](decisions/DD-TLS-001-no-write-ambient-ca-trust-injection.md) |
+| DD-FLEET-006 | AF's LLM-Facing `list_clusters`/`cluster_id` Is Not an Asymmetry with DD-FLEET-005 (documentation-only, no code change) | ✅ Accepted | 2026-07-29 | [DD-FLEET-006-af-list-clusters-vs-ka-prescoping.md](decisions/DD-FLEET-006-af-list-clusters-vs-ka-prescoping.md) |
+| DD-FLEET-007 | Ansible/AAP Engine Not Supported for Fleet (Remote) WorkflowExecution (fails closed instead) | ✅ Approved | 2026-07-30 | [DD-FLEET-007-ansible-engine-not-supported-for-remote-execution.md](decisions/DD-FLEET-007-ansible-engine-not-supported-for-remote-execution.md) |
+| DD-TIMEOUT-002 | Child-CRD Timeout Self-Enforcement via Propagated Absolute Deadline (`Spec.TimesOutAt`, SP/AA/WE; extends DD-TIMEOUT-001) | ✅ Approved & Implemented | 2026-08 | [DD-TIMEOUT-002-child-crd-timeout-self-enforcement.md](decisions/DD-TIMEOUT-002-child-crd-timeout-self-enforcement.md) |
+| DD-AA-KA-001 | `AgentSession` CRD — Replacing AA↔KA HTTP Polling with K8s-Native Watch+Lease | ✅ Approved | 2026-08-17 | [DD-AA-KA-001-agentsession-crd-http-removal.md](decisions/DD-AA-KA-001-agentsession-crd-http-removal.md) |
+| DD-AA-KA-002 | AgentSession Dispatch Lease Epoch Recovery | ✅ Approved and implementing | 2026-10-18 | [DD-AA-KA-002-agentsession-epoch-recovery.md](decisions/DD-AA-KA-002-agentsession-epoch-recovery.md) |
+| DD-TEST-016 | Explicit Transcript Scenarios for A2A E2E Tests | ✅ Approved and implementing | 2026-09-12 | [DD-TEST-016-a2a-transcript-scenario-harness.md](decisions/DD-TEST-016-a2a-transcript-scenario-harness.md) |
+| DD-TEST-017 | Structured Mock-LLM Scenario Selectors | ✅ Approved and implementing | 2026-09-12 | [DD-TEST-017-structured-mock-llm-scenario-selectors.md](decisions/DD-TEST-017-structured-mock-llm-scenario-selectors.md) |
+| DD-TEST-018 | Provider-Neutral Mock LLM Conversation Planner | ✅ Approved & Implemented | 2026-09-21 | [DD-TEST-018-provider-neutral-mock-llm-conversation-planner.md](decisions/DD-TEST-018-provider-neutral-mock-llm-conversation-planner.md) |
+| DD-TEST-019 | Minimal Fleet-Enabled APIFrontend E2E Topology (separate local and Fleet CI lanes) | ✅ Approved | 2026-09-23; amended 2026-09-26 | [DD-TEST-019-af-fleet-e2e-minimal-topology.md](decisions/DD-TEST-019-af-fleet-e2e-minimal-topology.md) |
+| DD-TEST-020 | Fleet Demo MCP Dedicated Namespace (production-parity hub/remote MCP placement) | ✅ Approved & Implemented | 2026-09-30 | [DD-TEST-020-fleet-mcp-dedicated-namespace.md](decisions/DD-TEST-020-fleet-mcp-dedicated-namespace.md) |
+| DD-AF-015 | Session-Scoped In-Process Event Router | ✅ Approved | 2026-09-13 | [DD-AF-015-session-scoped-event-router.md](decisions/DD-AF-015-session-scoped-event-router.md) |
+| ADR-075 | Multi-Pillar Data Contract Extensibility | 📋 Proposed | 2026-09-14 | [ADR-075-multi-pillar-data-contract-extensibility.md](decisions/ADR-075-multi-pillar-data-contract-extensibility.md) |
+| DD-CONTRACT-003 | Pillar Extension Envelope | 📋 Proposed | 2026-09-14 | [DD-CONTRACT-003-pillar-extension-envelope.md](decisions/DD-CONTRACT-003-pillar-extension-envelope.md) |
+| DD-CONTRACT-004 | ProviderData Compatibility Boundary | 📋 Proposed | 2026-09-14 | [DD-CONTRACT-004-provider-data-compatibility.md](decisions/DD-CONTRACT-004-provider-data-compatibility.md) |
+| DD-CONTRACT-005 | Multi-Pillar Propagation Boundaries | 📋 Proposed | 2026-09-14 | [DD-CONTRACT-005-multi-pillar-propagation-boundaries.md](decisions/DD-CONTRACT-005-multi-pillar-propagation-boundaries.md) |
+| DD-CONTRACT-006 | Pillar Safety and Audit Governance | 📋 Proposed | 2026-09-14 | [DD-CONTRACT-006-pillar-safety-audit-governance.md](decisions/DD-CONTRACT-006-pillar-safety-audit-governance.md) |
+
+**Note**: For complete decision details, alternatives considered, implementation guidance, and consequences, see the individual DD-* files in `docs/architecture/decisions/`.
+
+---
+
+## 📄 Active Proposals
+
+| ID | Proposal | Status | Date | File |
+|---|---|---|---|---|
+| PROPOSAL-EXT-001 | External Integration Strategy (MCP, A2A, API Frontend) | 📋 Under Review | 2026-04-15 | [PROPOSAL-EXT-001-external-integration-strategy.md](proposals/PROPOSAL-EXT-001-external-integration-strategy.md) |
+| PROPOSAL-EXT-002 | Investigation Prompt Bundles (OCI-packaged prompts and skills) | ❌ Superseded by [#883](https://github.com/jordigilh/kubernaut/issues/883) (closed) / [#1536](https://github.com/jordigilh/kubernaut/issues/1536) | 2026-04-15 | [PROPOSAL-EXT-002-investigation-prompt-bundles.md](proposals/PROPOSAL-EXT-002-investigation-prompt-bundles.md) |
+| PROPOSAL-EXT-003 | Goose Runtime Evaluation and Phased Adoption (ACP Go SDK, 6-phase pipeline, KA-as-compiler) | ❌ Superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536) — security model extracted to [ADR-KA-002](decisions/ADR-KA-002-agent-security-defense-in-depth.md) | 2026-04-15 | [PROPOSAL-EXT-003-goose-runtime-evaluation.md](proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md) |
+| PROPOSAL-EXT-004 | Goose Recipes as AgenticWorkflow Runtime (pluggable multi-runtime model) | ❌ Superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536) | 2026-05-19 | [PROPOSAL-EXT-004-goose-recipes.md](proposals/PROPOSAL-EXT-004-goose-recipes.md) |
+| PROPOSAL-EXT-005 | Oracle Agent Spec (PyAgentSpec + LangGraph) as AgenticWorkflow Runtime | ❌ Superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536) | 2026-05-19 | [PROPOSAL-EXT-005-oracle-agent-spec.md](proposals/PROPOSAL-EXT-005-oracle-agent-spec.md) |
+| PROPOSAL-EXT-006 | LangChain Deep Agents as AgenticWorkflow Runtime (specialist investigations) | ❌ Superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536) | 2026-05-19 | [PROPOSAL-EXT-006-deep-agents.md](proposals/PROPOSAL-EXT-006-deep-agents.md) |
+| PROPOSAL-EXT-007 | Pre-Investigation AgenticWorkflow Pipeline in SP (adaptive triage, multi-domain correlation) | ❌ Rejected — routing already owned by Gateway/AF (`TargetType`/`SignalSource`) + Rego; cross-domain RCA is investigation work, not a new SP-owned agent tier | 2026-05-23 | [PROPOSAL-EXT-007-pre-investigation-pipeline.md](proposals/PROPOSAL-EXT-007-pre-investigation-pipeline.md) |
+
+---
+
+## 📝 When to Create a New DD
+
+Create a new DD document for decisions that:
+- ✅ Affect multiple services or the overall architecture
+- ✅ Have long-term implications (>6 months)
+- ✅ Involve trade-offs between alternatives
+- ✅ Set precedents for future decisions
+- ✅ Change existing architectural patterns
+
+---
+
+## 🔗 Related Documentation
+
+- **ADRs**: [docs/architecture/decisions/](decisions/) - Architectural Decision Records (ADR-001 through ADR-028)
+- **Spikes**: [docs/architecture/spikes/](spikes/) - Technical spike summaries and validation results
+- **Analysis**: [docs/architecture/analysis/](analysis/) - Supporting analysis for architectural decisions
+- **Service-Specific DDs**: Check individual service documentation in `docs/services/`
+- **Business Requirements**: [docs/requirements/](../requirements/)
+- **APDC Methodology**: [.cursor/rules/00-core-development-methodology.mdc](../../.cursor/rules/00-core-development-methodology.mdc)
+
+---
+
+**Last Updated**: September 26, 2026
+**Maintained By**: Kubernaut Architecture Team

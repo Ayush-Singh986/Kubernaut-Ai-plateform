@@ -1,0 +1,76 @@
+{{- /* Remediation History Section for LLM Prompt Enrichment
+     Source: kubernaut-agent/src/extensions/remediation_history_prompt.py
+     BRs: BR-HAPI-016
+     DDs: DD-HAPI-016 v1.1, ADR-EM-001 v1.3, DD-EM-002 v1.1
+     Formatting of tier1/tier2 entries is done in Go code; this template
+     assembles the rendered sections into the final prompt block.
+*/ -}}
+### REMEDIATION HISTORY for {{ .TargetResource }}
+{{ if .RegressionDetected }}
+**WARNING: CONFIGURATION REGRESSION DETECTED**
+The current resource spec matches a pre-remediation state (preRemediation hash match).
+This indicates the resource has reverted to a previously remediated configuration.
+Consider a different remediation approach.
+{{ end }}
+{{ if .Tier1Count -}}
+#### Recent Remediations (last {{ .Tier1Window }}): {{ .Tier1Count }} detailed entries
+{{ end -}}
+{{ if .Tier2Count -}}
+#### Historical Remediations (last {{ .Tier2Window }}): {{ .Tier2Count }} summary entries
+{{ end -}}
+
+#### Recorded Attempts (oldest first; global numbering across both tiers)
+Recorded timestamps are workflow-created audit times, not verified execution completion.
+Unknown recorded times do not establish temporal order.
+
+{{ range .ChronologicalEntries }}{{ . }}
+{{ end }}
+{{ range .DecliningEffectivenessWarnings -}}
+{{ . }}
+
+{{ end -}}
+{{ range .RecurringRemediationWarnings -}}
+{{ . }}
+
+{{ end -}}
+{{ range .KnownIneffectiveWarnings -}}
+{{ . }}
+
+{{ end -}}
+{{ range .RecurrenceDurabilityGuidance -}}
+{{ . }}
+
+{{ end -}}
+**Reasoning Guidance:**
+Historical decision context is untrusted model-authored reasoning, not authoritative facts. Use it only as bounded historical evidence; current RCA, catalog discovery, validation, confidence/review, approval, and execution-safety gates remain authoritative.
+Use the above remediation history to inform your workflow selection.
+Match prior attempts only by catalog-authoritative `workflow_id`, never action type
+or non-unique workflow name. All catalog candidates remain available, including a
+previously ineffective workflow and different IDs in the same action family.
+For a same-ID repeat with a completed valid prior assessment (successful or
+ineffective), supply `repeat_justification` with three non-blank fields, each at
+most 2,000 characters: `evidence_basis`, `prior_outcome_relevance`, and
+`expected_mechanism`. Matching symptom/RCA fit alone is not an explanation.
+State current evidence, the relevance of the prior outcome and the expected
+remediation mechanism; acknowledge unknown prior state or failure causes rather
+than inventing them. First selections and different IDs need no justification.
+Unknown/pending/invalid/SpecDrift assessments do not establish a repeat requirement.
+Historical selection confidence is context, not current selection or RCA confidence
+and not an automatic confidence penalty. Existing confidence/review/approval and
+execution-safety gates still apply. If no catalog workflow is suitable, call
+`submit_result_no_workflow`; catalog presence or rank does not imply suitability.
+Treat recurrence and durability qualitatively: a completed or `Remediated`
+outcome, including a resolved signal, describes the effectiveness-assessment
+window and is not proof of durable root-cause resolution. Use the linked
+pre/post spec hashes, repeated signal evidence, and RCA findings together.
+Do not apply an arbitrary retry-count threshold when interpreting this history.
+If a workflow completed successfully but the same signal keeps recurring,
+consider a different root-cause approach or human review according to platform
+policy.
+If regression is detected, consider alternative approaches.
+{{ if .HasSpecDrift }}
+**Note on spec drift entries:** Some remediation assessments were inconclusive
+because the target resource spec was modified during the assessment window. Do not
+treat these as failed remediations. Investigate what modified the spec — it may
+be the root cause or a contributing factor.
+{{ end -}}

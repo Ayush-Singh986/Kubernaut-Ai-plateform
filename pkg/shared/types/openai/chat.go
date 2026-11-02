@@ -1,0 +1,81 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package openai
+
+// ChatCompletionRequest represents an OpenAI-compatible chat completion request.
+type ChatCompletionRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Tools    []Tool    `json:"tools,omitempty"`
+	// Stream requests the Server-Sent Events streaming variant of the Chat
+	// Completions protocol (#1637): the mock must honor this and respond
+	// with SSE chunks rather than a single JSON body, since real
+	// OpenAI-compatible streaming clients (pkg/shared/llm/openaicompat)
+	// parse the response as SSE regardless of what was actually sent.
+	Stream bool `json:"stream,omitempty"`
+	// StreamOptions controls optional metadata emitted in streaming responses.
+	// OpenAI-compatible providers use include_usage to opt into a trailing
+	// usage-only chunk.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions contains optional controls for streamed Chat Completions.
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
+}
+
+// ChatCompletionResponse represents an OpenAI-compatible chat completion response.
+type ChatCompletionResponse struct {
+	ID      string   `json:"id"`
+	Object  string   `json:"object"`
+	Created int64    `json:"created"`
+	Model   string   `json:"model"`
+	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
+}
+
+// Choice represents a single completion choice.
+type Choice struct {
+	Index        int     `json:"index"`
+	Message      Message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
+}
+
+// Message represents a chat message with optional tool calls.
+type Message struct {
+	Role      string     `json:"role"`
+	Content   *string    `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID identifies the assistant tool call for a role=tool result.
+	// It is optional for legacy callers that relied on message ordering.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	// ReasoningContent simulates the DeepSeek/vLLM-style extended-thinking
+	// field returned by OpenAI-compatible reasoning models, for KA's
+	// openaicompat reasoning-capture E2E tests (BR-AI-086 AC6, #1578).
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
+
+// ErrorResponse represents an OpenAI-compatible error response.
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
+}
+
+// ErrorDetail contains the error information.
+type ErrorDetail struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+}

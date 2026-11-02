@@ -1,0 +1,354 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-logr/logr"
+)
+
+// ContextKey is the type for context keys used in the auth middleware.
+type ContextKey string
+
+const (
+	// UserContextKey is the context key for the authenticated user identity (string).
+	UserContextKey ContextKey = "user"
+
+	// UserInfoContextKey is the context key for the full authenticated user info
+	// including group memberships. Required for interactive MCP sessions (#703)
+	// where impersonation needs both username and groups.
+	UserInfoContextKey ContextKey = "userInfo"
+)
+
+// failureReasonKey is an unexported context key for the mutable holder
+// WithFailureReasonCapture installs. Unexported so only this package can
+// write to it (via logSecurityEvent); consumers only ever see it through
+// the accessor function WithFailureReasonCapture returns.
+type failureReasonKey struct{}
+
+// WithFailureReasonCapture returns a derived context carrying a mutable
+// recorder, plus an accessor that returns whatever security-event reason
+// (e.g. "invalid_token_audience", "missing_auth_header",
+// "authorization_denied") Handler classified for the request, once it
+// returns. Empty if the request succeeded or Handler was never invoked with
+// the returned context.
+//
+// BR-SECURITY-1900 (AU-3, extending BR-AUDIT-005): an outer HTTP wrapper
+// that persists audit-table events by observing only the response status
+// code (e.g. KubernautAgent's AuditAuthMiddleware) cannot otherwise tell an
+// audience-bound TokenReview mismatch apart from a routine
+// missing/malformed/expired token -- both produce an identical 401. Callers
+// must derive the request's context from the value returned here (e.g. via
+// r.WithContext) before invoking Handler, then call the accessor after
+// Handler returns.
+func WithFailureReasonCapture(ctx context.Context) (context.Context, func() string) {
+	holder := new(string)
+	return context.WithValue(ctx, failureReasonKey{}, holder), func() string { return *holder }
+}
+
+// Middleware provides authentication and authorization for HTTP requests.
+//
+// Authority: DD-AUTH-014 (Middleware-Based SAR Authentication)
+//
+// This middleware implements a secure, testable auth framework using dependency injection:
+// 1. Extracts Bearer token from Authorization header
+// 2. Validates token using Authenticator interface (TokenReview)
+// 3. Checks authorization using Authorizer interface (SAR)
+// 4. Injects user identity into request context (for audit logging)
+// 5. Injects X-Auth-Request-User header (for SOC2 user attribution)
+//
+// Security: No runtime disable flags — auth is always enforced via interface implementations.
+//
+// Used by: DataStorage service (BR-DS-*), Gateway service (BR-GATEWAY-036/037)
+type Middleware struct {
+	authenticator Authenticator
+	authorizer    Authorizer
+	config        MiddlewareConfig
+	logger        logr.Logger
+}
+
+// MiddlewareConfig contains the SAR configuration for authorization checks.
+type MiddlewareConfig struct {
+	// Namespace is the Kubernetes namespace for the SAR check
+	Namespace string
+
+	// Resource is the Kubernetes resource type (e.g., "services", "pods")
+	Resource string
+
+	// ResourceName is the specific resource name (e.g., "data-storage-service", "gateway-service")
+	ResourceName string
+
+	// Verb is the RBAC verb to check (e.g., "create", "get", "list", "update", "delete")
+	// Authority: DD-AUTH-011 (Granular RBAC with SAR verb mapping)
+	Verb string
+}
+
+// NewMiddleware creates a new authentication middleware with dependency injection.
+//
+// Example (Production):
+//
+//	k8sClient, _ := kubernetes.NewForConfig(config)
+//	authenticator := auth.NewK8sAuthenticator(k8sClient)
+//	authorizer := auth.NewK8sAuthorizer(k8sClient)
+//	mw := auth.NewMiddleware(
+//	    authenticator,
+//	    authorizer,
+//	    auth.MiddlewareConfig{
+//	        Namespace:    "kubernaut-system",
+//	        Resource:     "services",
+//	        ResourceName: "gateway-service",
+//	        Verb:         "create",
+//	    },
+//	    logger,
+//	)
+func NewMiddleware(
+	authenticator Authenticator,
+	authorizer Authorizer,
+	config MiddlewareConfig,
+	logger logr.Logger,
+) *Middleware {
+	return &Middleware{
+		authenticator: authenticator,
+		authorizer:    authorizer,
+		config:        config,
+		logger:        logger.WithName("auth-middleware"),
+	}
+}
+
+// Handler returns a chi-compatible middleware handler.
+//
+// HTTP Status Codes (Authority: DD-AUTH-013):
+// - 401 Unauthorized: Missing/invalid/expired token
+// - 403 Forbidden: Valid token but insufficient RBAC permissions
+// - 500 Internal Server Error: TokenReview/SAR API call failures
+func (m *Middleware) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Issue #673 H-2: Strip client-supplied identity header before authentication.
+		// This header is a SOC2 trust anchor used by downstream services (DataStorage).
+		r.Header.Del("X-Auth-Request-User")
+
+		// Issue #703: Strip Kubernetes impersonation headers to prevent privilege escalation.
+		stripImpersonationHeaders(r)
+
+		userInfo, ok := m.authenticateRequest(w, r)
+		if !ok {
+			return
+		}
+		user := userInfo.Username
+
+		if !m.authorizeRequest(w, r, user) {
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), UserContextKey, user)
+		ctx = context.WithValue(ctx, UserInfoContextKey, userInfo)
+		r.Header.Set("X-Auth-Request-User", user)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// authenticateRequest extracts the Bearer token from r and validates it via
+// m.authenticator. On failure it writes the appropriate error response (401
+// for missing/malformed/invalid tokens, 500 for authenticator failures) and
+// returns ok=false; the caller must return immediately without proceeding.
+func (m *Middleware) authenticateRequest(w http.ResponseWriter, r *http.Request) (userInfo UserInfo, ok bool) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		m.logSecurityEvent(r, "missing_auth_header", "", http.StatusUnauthorized)
+		m.writeError(w, http.StatusUnauthorized, "Unauthorized", "Missing Authorization header")
+		return UserInfo{}, false
+	}
+
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		m.logSecurityEvent(r, "invalid_auth_format", "", http.StatusUnauthorized)
+		m.writeError(w, http.StatusUnauthorized, "Unauthorized", "Invalid Authorization header format")
+		return UserInfo{}, false
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" {
+		m.logSecurityEvent(r, "empty_bearer_token", "", http.StatusUnauthorized)
+		m.writeError(w, http.StatusUnauthorized, "Unauthorized", "Empty Bearer token")
+		return UserInfo{}, false
+	}
+
+	userInfo, err := m.authenticator.ValidateTokenFull(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrTokenInvalid) {
+			m.logSecurityEvent(r, invalidTokenReason(err), "", http.StatusUnauthorized)
+			m.writeError(w, http.StatusUnauthorized, "Unauthorized", "Invalid or expired token")
+			return UserInfo{}, false
+		}
+		m.logger.Error(err, "Token validation failed",
+			"path", r.URL.Path,
+			"method", r.Method,
+		)
+		// Issue #673 C-2: Generic error message; details logged server-side only
+		m.writeError(w, http.StatusInternalServerError, "Internal Server Error", "Authentication service unavailable")
+		return UserInfo{}, false
+	}
+
+	m.logger.V(2).Info("Token validated",
+		"user", userInfo.Username,
+		"providerType", userInfo.ProviderType,
+		"path", r.URL.Path,
+	)
+	return userInfo, true
+}
+
+// authorizeRequest performs the SAR authorization check for user via
+// m.authorizer. On failure or denial it writes the appropriate error response
+// (500 for authorizer failures, 403 for denial) and returns false; the caller
+// must return immediately without proceeding.
+func (m *Middleware) authorizeRequest(w http.ResponseWriter, r *http.Request, user string) bool {
+	allowed, err := m.authorizer.CheckAccess(
+		r.Context(),
+		user,
+		m.config.Namespace,
+		m.config.Resource,
+		m.config.ResourceName,
+		m.config.Verb,
+	)
+	if err != nil {
+		m.logger.Error(err, "Authorization check failed",
+			"user", user,
+			"path", r.URL.Path,
+		)
+		// Issue #673 C-2: Generic error message; details logged server-side only
+		m.writeError(w, http.StatusInternalServerError, "Internal Server Error", "Authorization service unavailable")
+		return false
+	}
+
+	if !allowed {
+		m.logSecurityEvent(r, "authorization_denied", user, http.StatusForbidden)
+		m.writeError(w, http.StatusForbidden, "Forbidden", "Insufficient permissions")
+		return false
+	}
+
+	m.logger.V(2).Info("Authorization granted",
+		"user", user,
+		"path", r.URL.Path,
+	)
+	return true
+}
+
+// GetUserFromContext extracts the authenticated user identity from the request context.
+// Returns empty string if the context is nil or the user is not in context.
+func GetUserFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if user, ok := ctx.Value(UserContextKey).(string); ok {
+		return user
+	}
+	return ""
+}
+
+// GetUserInfoFromContext extracts the full authenticated user info (username + groups)
+// from the request context. Returns zero-value UserInfo if not present.
+// SEC-CRIT-02 (#703): Required for impersonation to propagate group memberships.
+func GetUserInfoFromContext(ctx context.Context) UserInfo {
+	if ctx == nil {
+		return UserInfo{}
+	}
+	if info, ok := ctx.Value(UserInfoContextKey).(UserInfo); ok {
+		return info
+	}
+	return UserInfo{}
+}
+
+// stripImpersonationHeaders removes all Kubernetes impersonation headers from the
+// request. This prevents clients from injecting Impersonate-User/Group/Uid/Extra-*
+// headers that could escalate privileges when KA constructs impersonating K8s
+// clients (#703, #895). Covers KEP-1513 Impersonate-Uid (K8s 1.22+).
+func stripImpersonationHeaders(r *http.Request) {
+	r.Header.Del("Impersonate-User")
+	r.Header.Del("Impersonate-Group")
+	r.Header.Del("Impersonate-Uid")
+	for key := range r.Header {
+		if strings.HasPrefix(strings.ToLower(key), "impersonate-extra-") {
+			r.Header.Del(key)
+		}
+	}
+}
+
+// invalidTokenReason classifies an ErrTokenInvalid failure for the
+// security_event audit log (BR-SECURITY-1900, AU-3/CC7.2) using an
+// "audience mismatch" substring convention, so an authenticator that wraps a
+// cross-service token-replay detection in ErrTokenInvalid this way is
+// distinguishable in audit review from a routine expired/malformed/
+// unauthenticated token, without introducing a second sentinel error that
+// callers would need to match on. No authenticator anywhere in the codebase
+// currently produces this substring: audience-bound TokenReview validation
+// was implemented for both KA and AF under #1900, then fully reverted for
+// both (see BR-SECURITY-1900 -- KA's real AF traffic flows exclusively
+// through the dual-purpose MCP endpoint that DD-AUTH-MCP-001 requires to
+// also serve audience-unaware direct in-cluster clients, and AF's variant
+// was descoped as defense-in-depth of unclear incremental value given SAR
+// already denies unauthorized tool access regardless of the authentication
+// layer). This classifier ships anyway as generic, forward-compatible
+// plumbing for any future authenticator that adopts the convention; the
+// tests exercising "invalid_token_audience" (pkg/shared/auth) construct a
+// synthetic error string by hand for exactly this reason -- there is no
+// live authenticator to exercise it against today.
+func invalidTokenReason(err error) string {
+	if strings.Contains(err.Error(), "audience mismatch") {
+		return "invalid_token_audience"
+	}
+	return "invalid_token"
+}
+
+// writeError writes an RFC 7807 Problem Details JSON error response.
+// logSecurityEvent emits a structured security audit log entry for FedRAMP AU-2 compliance.
+// FED-M1: Every 401/403 must produce a traceable security event.
+func (m *Middleware) logSecurityEvent(r *http.Request, reason, user string, statusCode int) {
+	if holder, ok := r.Context().Value(failureReasonKey{}).(*string); ok {
+		*holder = reason
+	}
+	m.logger.Info("security_event",
+		"event_type", "authentication",
+		"reason", reason,
+		"user", user,
+		"status_code", statusCode,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+		"resource", m.config.Resource,
+		"resource_name", m.config.ResourceName,
+		"verb", m.config.Verb,
+	)
+}
+
+func (m *Middleware) writeError(w http.ResponseWriter, status int, title, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+
+	problem := map[string]any{
+		"type":   "about:blank",
+		"title":  title,
+		"status": status,
+		"detail": detail,
+	}
+
+	_ = json.NewEncoder(w).Encode(problem)
+}

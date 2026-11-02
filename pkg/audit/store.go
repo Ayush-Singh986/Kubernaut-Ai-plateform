@@ -1,0 +1,747 @@
+package audit
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+)
+
+// AuditStore provides non-blocking audit event storage with asynchronous buffered writes.
+//
+// Authority: DD-AUDIT-002 (Audit Shared Library Design)
+// Related: ADR-038 (Asynchronous Buffered Audit Ingestion)
+//
+// All services MUST use this interface for audit event storage to ensure:
+// - Consistent behavior across all services
+// - Non-blocking business logic (audit failures don't block operations)
+// - Efficient batching and retry logic
+// - Graceful degradation (drop events if buffer full, don't crash)
+//
+// Implementation: BufferedAuditStore (see NewBufferedStore)
+type AuditStore interface {
+	// StoreAudit adds an event to the buffer (non-blocking).
+	//
+	// This method returns immediately and does NOT wait for the write to complete.
+	// The event is added to an in-memory buffer and written asynchronously by a background worker.
+	//
+	// Returns an error only if:
+	// - The event fails validation (missing required fields)
+	// - The buffer is full (graceful degradation - event is dropped)
+	//
+	// IMPORTANT: This method NEVER blocks business logic. If the buffer is full,
+	// the event is dropped and an error is returned, but the service continues operating.
+	//
+	// DD-AUDIT-002 V2.0: Updated to use OpenAPI types directly
+	StoreAudit(ctx context.Context, event *ogenclient.AuditEventRequest) error
+
+	// Flush forces an immediate write of all buffered events to DataStorage.
+	//
+	// This method blocks until:
+	// - All currently buffered events are written to DataStorage, OR
+	// - The provided context is cancelled
+	//
+	// Use cases:
+	// - Integration tests: Ensure events are persisted before querying
+	// - Graceful shutdown: Flush before Close() (though Close() also flushes)
+	// - Critical events: Force immediate persistence for compliance
+	//
+	// NOTE: This method is primarily for testing. Production code should rely
+	// on automatic flushing (FlushInterval) for better performance.
+	//
+	// Example (integration test):
+	//   auditStore.Flush(ctx)  // Force immediate write
+	//   events := queryDataStorage(correlationID)  // Now reliable
+	Flush(ctx context.Context) error
+
+	// Close flushes remaining events and stops the background worker.
+	//
+	// This method blocks until all buffered events are written or the max timeout is reached.
+	// Call this during graceful shutdown to ensure no events are lost.
+	//
+	// Returns an error if the flush fails or times out.
+	Close() error
+}
+
+// DataStorageClient is the interface for writing audit events to the Data Storage Service.
+//
+// This interface abstracts the HTTP client for the Data Storage Service,
+// allowing for easy mocking in tests.
+//
+// DD-AUDIT-002 V2.0: Updated to use OpenAPI types directly
+//
+// Implementation: pkg/datastorage/client.DataStorageClient
+type DataStorageClient interface {
+	// StoreBatch writes a batch of audit events to the Data Storage Service.
+	//
+	// Returns an error if the write fails. The caller is responsible for retry logic.
+	//
+	// DD-AUDIT-002 V2.0: Uses OpenAPI-generated types
+	StoreBatch(ctx context.Context, events []*ogenclient.AuditEventRequest) error
+}
+
+// BufferedAuditStore implements AuditStore with asynchronous buffered writes.
+//
+// This implementation:
+// - Buffers events in memory (non-blocking)
+// - Batches events for efficient writes
+// - Retries failed writes with exponential backoff
+// - Flushes partial batches periodically
+// - Drops events if buffer is full (graceful degradation)
+// - Retains failed batches in memory and reports persistence errors to Flush/Close
+//
+// Authority: DD-AUDIT-002 (Audit Shared Library Design)
+// Related: ADR-032 ("No Audit Loss" - server-side DLQ in DataStorage handles persistence failures)
+//
+// DD-AUDIT-002 V2.0: Updated to use OpenAPI types directly
+// DD-AUDIT-002 V3.0: Removed client-side DLQ (over-engineered, server-side DLQ sufficient)
+type BufferedAuditStore struct {
+	buffer    chan *ogenclient.AuditEventRequest
+	flushChan chan chan error // Channel to signal flush request and receive completion
+	client    DataStorageClient
+	logger    logr.Logger
+	config    Config
+	metrics   MetricsLabels
+	done      chan struct{}
+	wg        sync.WaitGroup
+	closed    int32        // Atomic flag to prevent double-close
+	bufferMu  sync.RWMutex // Serializes sends with Close's channel close
+	//nolint:containedctx // store-scoped lifecycle context for the background retry/flush
+	// loop, not a request-scoped context — reviewed and accepted in
+	// GO-ANTIPATTERN-AUDIT-2026-07-01 §6 (context.Context Stored in Struct Fields).
+	ctx       context.Context
+	ctxCancel context.CancelFunc // Cancel function for store-scoped context
+
+	// Metrics (atomic counters for thread-safe access)
+	bufferedCount    int64
+	droppedCount     int64
+	writtenCount     int64
+	failedBatchCount int64
+}
+
+// NewBufferedStore creates a new buffered audit store.
+//
+// Parameters:
+// - client: Data Storage Service client for writing events
+// - config: Configuration for buffer size, batch size, flush interval, etc.
+// - serviceName: Name of the service using this store (for metrics labels)
+// - logger: Structured logger for audit store operations (logr.Logger per DD-005 v2.0)
+//
+// The store starts a background worker goroutine that:
+// - Batches events for efficient writes
+// - Flushes partial batches periodically
+// - Retries failed writes with exponential backoff
+//
+// Call Close() during graceful shutdown to flush remaining events.
+//
+// DD-005 v2.0: Accepts logr.Logger for unified logging interface across all services.
+func NewBufferedStore(client DataStorageClient, config Config, serviceName string, logger logr.Logger) (AuditStore, error) {
+	if client == nil {
+		return nil, fmt.Errorf("client cannot be nil")
+	}
+
+	if err := config.Validate(); err != nil {
+		logger.Error(err, "Invalid audit config, using defaults")
+		config = DefaultConfig()
+	}
+
+	storeCtx, storeCancel := context.WithCancel(context.Background())
+
+	store := &BufferedAuditStore{
+		buffer:    make(chan *ogenclient.AuditEventRequest, config.BufferSize),
+		flushChan: make(chan chan error, 1), // Buffered to prevent deadlock
+		client:    client,
+		logger:    logger.WithName("audit-store"),
+		config:    config,
+		metrics:   MetricsLabels{Service: serviceName},
+		done:      make(chan struct{}),
+		ctx:       storeCtx,
+		ctxCancel: storeCancel,
+	}
+
+	// Start background worker
+	store.wg.Add(1)
+	go store.backgroundWriter()
+
+	logger.Info("Audit store initialized",
+		"service", serviceName,
+		"buffer_size", config.BufferSize,
+		"batch_size", config.BatchSize,
+		"flush_interval", config.FlushInterval,
+		"max_retries", config.MaxRetries,
+	)
+
+	return store, nil
+}
+
+// StoreAudit adds an event to the buffer (non-blocking).
+//
+// This method validates the event and adds it to the buffer.
+// If the buffer is full, the event is dropped (graceful degradation).
+//
+// Returns an error if:
+// - The event fails validation (missing required fields)
+// - The buffer is full (event is dropped, but service continues)
+func (s *BufferedAuditStore) StoreAudit(ctx context.Context, event *ogenclient.AuditEventRequest) error {
+	if event == nil {
+		return fmt.Errorf("audit event is nil")
+	}
+
+	s.logger.V(2).Info("StoreAudit called",
+		"event_type", event.EventType,
+		"event_action", event.EventAction,
+		"correlation_id", event.CorrelationID,
+		"buffer_capacity", cap(s.buffer),
+		"buffer_current_size", len(s.buffer))
+
+	// Validate event using OpenAPI spec validation (DD-AUDIT-002 V2.0)
+	if err := ValidateAuditEventRequest(event); err != nil {
+		s.logger.Error(err, "Invalid audit event (OpenAPI validation)")
+		return fmt.Errorf("invalid audit event: %w", err)
+	}
+
+	// F-3 SOC2 Fix: Validate event_type matches EventData discriminator (prevents spec drift).
+	// Allow empty EventData.Type for event types that don't yet have a matching OpenAPI
+	// discriminator variant (e.g., interactive.started/completed, session.suspended/resumed).
+	// These events carry their semantics in the outer fields (event_type, session_id, etc.).
+	if event.EventData.Type != "" && event.EventType != string(event.EventData.Type) {
+		return fmt.Errorf("event_type mismatch: outer=%q, EventData.Type=%q — "+
+			"add event type to OpenAPI spec discriminator and use matching constructor",
+			event.EventType, event.EventData.Type)
+	}
+
+	// Serialize the closed check/send with Close's channel close. The atomic
+	// flag alone cannot prevent a send-on-closed-channel race between the check
+	// and the subsequent send.
+	s.bufferMu.RLock()
+	defer s.bufferMu.RUnlock()
+
+	// Check if store is closed before sending (prevents panic during test cleanup)
+	if atomic.LoadInt32(&s.closed) == 1 {
+		s.logger.Error(nil, "Audit store closed; event was not accepted",
+			"event_type", event.EventType,
+			"correlation_id", event.CorrelationID)
+		atomic.AddInt64(&s.droppedCount, 1)
+		s.metrics.RecordDropped()
+		return fmt.Errorf("audit store is closed: event was not accepted")
+	}
+
+	s.logger.V(2).Info("Validation passed, attempting to buffer event",
+		"event_type", event.EventType,
+		"buffer_size_before", len(s.buffer))
+
+	select {
+	case s.buffer <- event:
+		// ✅ Event buffered successfully
+		newCount := atomic.AddInt64(&s.bufferedCount, 1)
+
+		s.logger.V(2).Info("Event buffered successfully",
+			"event_type", event.EventType,
+			"correlation_id", event.CorrelationID,
+			"buffer_size_after", len(s.buffer),
+			"total_buffered", newCount)
+		return nil
+
+	default:
+		// ⚠️ Buffer full (rare, indicates system overload)
+		atomic.AddInt64(&s.droppedCount, 1)
+		s.metrics.RecordDropped()
+
+		s.logger.Info("Audit buffer full, event dropped",
+			"event_type", event.EventType,
+			"correlation_id", event.CorrelationID,
+			"buffered_count", atomic.LoadInt64(&s.bufferedCount),
+			"dropped_count", atomic.LoadInt64(&s.droppedCount),
+		)
+
+		// DD-AUDIT-002 V3.0: Return error to inform caller of data loss
+		// Buffer full indicates system overload - fix by increasing buffer size or reducing load
+		return fmt.Errorf("audit buffer full: event dropped (correlation_id=%s)", event.CorrelationID)
+	}
+}
+
+// Close flushes remaining events and stops the background worker.
+//
+// This method blocks until all buffered events are written or the max timeout is reached.
+// Call this during graceful shutdown to ensure no events are lost.
+// Safe to call multiple times (idempotent).
+// Flush forces an immediate write of all buffered events to DataStorage.
+//
+// This method is useful for:
+// - Integration tests: Ensure events are persisted before querying
+// - Graceful shutdown preparation: Flush before Close()
+// - Critical events: Force immediate persistence
+//
+// Implementation:
+// - Sends flush signal to background writer
+// - Waits for flush completion or context cancellation
+// - Does not stop the background writer (unlike Close())
+//
+// Note: Store continues accepting new events after Flush() completes.
+func (s *BufferedAuditStore) Flush(ctx context.Context) error {
+	// Check if store is closed
+	if atomic.LoadInt32(&s.closed) == 1 {
+		return fmt.Errorf("audit store is closed")
+	}
+
+	s.logger.V(2).Info("🔄 Explicit flush requested")
+
+	// Create response channel
+	done := make(chan error, 1)
+
+	// Send flush request to background writer
+	select {
+	case s.flushChan <- done:
+		// Flush request sent successfully
+	case <-ctx.Done():
+		return fmt.Errorf("flush cancelled: %w", ctx.Err())
+	}
+
+	// Wait for flush to complete
+	select {
+	case err := <-done:
+		if err != nil {
+			s.logger.Error(err, "❌ Flush failed")
+			return fmt.Errorf("flush failed: %w", err)
+		}
+		s.logger.V(2).Info("✅ Explicit flush completed")
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("flush timeout: %w", ctx.Err())
+	}
+}
+
+func (s *BufferedAuditStore) Close() error {
+	// Check if already closed (atomic operation)
+	if !atomic.CompareAndSwapInt32(&s.closed, 0, 1) {
+		s.logger.V(1).Info("Audit store already closed, skipping")
+		return nil
+	}
+
+	s.logger.Info("Closing audit store, flushing remaining events")
+
+	// Close buffer FIRST (signals background writer to drain remaining events and stop).
+	// IMPORTANT: Do NOT cancel the store context yet -- the background writer's shutdown
+	// flush needs a valid context to write the final batch to DataStorage.
+	// Previously, ctxCancel() was called before close(s.buffer), which caused the
+	// shutdown flush to fail with "context canceled" and increment failedBatchCount.
+	s.bufferMu.Lock()
+	close(s.buffer)
+	s.bufferMu.Unlock()
+
+	// Wait for background worker to finish (with timeout)
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Background worker finished -- NOW cancel the store context for cleanup
+		s.ctxCancel()
+
+		dropped := atomic.LoadInt64(&s.droppedCount)
+		failedBatches := atomic.LoadInt64(&s.failedBatchCount)
+
+		s.logger.Info("Audit store closed",
+			"buffered_count", atomic.LoadInt64(&s.bufferedCount),
+			"written_count", atomic.LoadInt64(&s.writtenCount),
+			"dropped_count", dropped,
+			"failed_batch_count", failedBatches,
+		)
+
+		// GAP-12: ADR-032 requires callers to know if events were lost
+		if dropped > 0 {
+			return fmt.Errorf("audit store closed with %d dropped events", dropped)
+		}
+		if failedBatches > 0 {
+			return fmt.Errorf("audit store closed with %d failed batches", failedBatches)
+		}
+		return nil
+
+	case <-time.After(30 * time.Second):
+		// Timeout waiting for background worker -- cancel context to abort any stuck retries
+		s.ctxCancel()
+		s.logger.Error(nil, "Timeout waiting for audit store to close")
+		return fmt.Errorf("timeout waiting for audit store to close")
+	}
+}
+
+// backgroundWriter runs in a separate goroutine and handles batching and writing.
+//
+// This worker:
+//   - Batches events for efficient writes (up to BatchSize)
+//   - Flushes partial batches periodically (every FlushInterval)
+//   - Retries failed writes with exponential backoff (up to MaxRetries)
+//   - Retains batches after max retries so persistence failure is observable and
+//     retryable rather than silently discarded
+//
+// auditWriterLoopState tracks the mutable state threaded through
+// backgroundWriter's select loop iterations (batch contents and flush timing).
+type auditWriterLoopState struct {
+	batch         []*ogenclient.AuditEventRequest
+	lastFlushTime time.Time
+	tickCount     int
+	startTime     time.Time
+}
+
+// maxDataStorageAuditBatchSize is the DataStorage API default limit for
+// POST /api/v1/audit/events/batch (BR-STORAGE-043, Issue #667).
+const maxDataStorageAuditBatchSize = 500
+
+func (s *BufferedAuditStore) backgroundWriter() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(s.config.FlushInterval)
+	defer ticker.Stop()
+
+	state := &auditWriterLoopState{startTime: time.Now()}
+	state.lastFlushTime = state.startTime
+
+	// DEBUG: Log when background writer starts (RO Team request - Dec 27, 2025)
+	s.logger.Info("🚀 Audit background writer started",
+		"flush_interval", s.config.FlushInterval,
+		"batch_size", s.config.BatchSize,
+		"buffer_size", s.config.BufferSize,
+		"start_time", state.startTime.Format(time.RFC3339Nano))
+
+	state.batch = make([]*ogenclient.AuditEventRequest, 0, s.config.BatchSize)
+
+	for {
+		select {
+		case event, ok := <-s.buffer:
+			if !ok {
+				s.handleShutdown(state)
+				return
+			}
+			s.handleBufferedEvent(state, event)
+		case tickTime := <-ticker.C:
+			s.handleFlushTick(state, tickTime)
+		case done := <-s.flushChan:
+			s.handleExplicitFlush(state, done)
+		}
+	}
+}
+
+// handleShutdown flushes any remaining batched events when the buffer
+// channel is closed, then logs final background-writer statistics.
+func (s *BufferedAuditStore) handleShutdown(state *auditWriterLoopState) {
+	if len(state.batch) > 0 {
+		batchSizeBeforeFlush := len(state.batch)
+		s.logger.V(1).Info("🛑 Flushing remaining events on shutdown",
+			"batch_size", batchSizeBeforeFlush)
+		written, err := s.writeBatchWithRetry(state.batch)
+		if written > 0 {
+			state.batch = state.batch[written:]
+		}
+		if err != nil {
+			s.logger.Error(err, "Shutdown audit flush failed; events remain unacknowledged")
+		}
+		s.logger.Info("✅ Shutdown flush completed",
+			"flushed_count", written)
+	}
+	s.logger.Info("🛑 Audit background writer stopped",
+		"total_runtime", time.Since(state.startTime),
+		"total_ticks", state.tickCount)
+}
+
+// handleBufferedEvent appends a newly received event to the batch and
+// flushes immediately once the batch reaches its configured size.
+func (s *BufferedAuditStore) handleBufferedEvent(state *auditWriterLoopState, event *ogenclient.AuditEventRequest) {
+	// FIX: Moved inside case block - was incorrectly un-indented, causing events to be dropped
+	state.batch = append(state.batch, event)
+
+	if len(state.batch) < s.config.BatchSize {
+		return
+	}
+
+	// Capture size BEFORE flushing (AA Team: prevent misleading logs)
+	batchSizeBeforeFlush := len(state.batch)
+	bufferUtilizationBeforeFlush := len(s.buffer)
+	timeSinceLastFlush := time.Since(state.lastFlushTime)
+
+	s.logger.V(2).Info("📦 Batch-full flush triggered",
+		"batch_size", batchSizeBeforeFlush,
+		"buffer_utilization", bufferUtilizationBeforeFlush,
+		"time_since_last_flush", timeSinceLastFlush)
+	written, err := s.writeBatchWithRetry(state.batch)
+	if written > 0 {
+		state.batch = state.batch[written:]
+	}
+	if err != nil {
+		// Keep the batch for a later tick/explicit Flush. Clearing it here
+		// would turn a transient DataStorage failure into silent audit loss.
+		s.logger.Error(err, "Audit batch flush failed; retaining unsent events for retry",
+			"flushed_count", written)
+		return
+	}
+	state.lastFlushTime = time.Now()
+	s.logger.V(2).Info("✅ Batch-full flush completed",
+		"flushed_count", written,
+		"batch_size_after_flush", len(state.batch),
+		"buffer_utilization_after_flush", len(s.buffer))
+}
+
+// handleFlushTick logs periodic timer diagnostics and flushes any partial
+// batch when the flush-interval ticker fires.
+func (s *BufferedAuditStore) handleFlushTick(state *auditWriterLoopState, tickTime time.Time) {
+	state.tickCount++
+	timeSinceLastFlush := time.Since(state.lastFlushTime)
+	expectedInterval := s.config.FlushInterval
+	drift := timeSinceLastFlush - expectedInterval
+
+	// Capture batch size BEFORE any flushing (AA Team: prevent misleading logs)
+	// This prevents the "batch_size: 0" confusion that occurred when logging AFTER flush
+	batchSizeBeforeFlush := len(state.batch)
+	bufferUtilizationBeforeFlush := len(s.buffer)
+
+	// V(2): Demoted from V(1) — per-second ticks drown real signals in
+	// E2E/debug logs. Enable with -v=2 when diagnosing flush timing delays.
+	s.logger.V(2).Info("⏰ Timer tick received",
+		"tick_number", state.tickCount,
+		"batch_size_before_flush", batchSizeBeforeFlush,
+		"buffer_utilization", bufferUtilizationBeforeFlush,
+		"expected_interval", expectedInterval,
+		"actual_interval", timeSinceLastFlush,
+		"drift", drift,
+		"tick_time", tickTime.Format(time.RFC3339Nano))
+
+	// Warn if tick drift exceeds 5x expected interval (genuine scheduling issue)
+	if timeSinceLastFlush > expectedInterval*5 {
+		s.logger.Error(nil, "🚨 TIMER BUG DETECTED: Tick interval significantly exceeded expected",
+			"expected_interval", expectedInterval,
+			"actual_interval", timeSinceLastFlush,
+			"drift", drift,
+			"drift_multiplier", float64(timeSinceLastFlush)/float64(expectedInterval))
+	}
+
+	if batchSizeBeforeFlush == 0 {
+		// Timer fired but no events to flush
+		s.logger.V(2).Info("⏱️  Timer tick (no events to flush)",
+			"buffer_utilization", bufferUtilizationBeforeFlush,
+			"time_since_last_flush", timeSinceLastFlush)
+		state.lastFlushTime = time.Now()
+		return
+	}
+
+	s.logger.V(2).Info("⏱️  Timer-based flush triggered",
+		"batch_size", batchSizeBeforeFlush,
+		"buffer_utilization", bufferUtilizationBeforeFlush,
+		"time_since_last_flush", timeSinceLastFlush)
+	written, err := s.writeBatchWithRetry(state.batch)
+	if written > 0 {
+		state.batch = state.batch[written:]
+	}
+	if err != nil {
+		// Keep the batch in memory so a subsequent tick or Flush can retry it.
+		s.logger.Error(err, "Audit timer flush failed; retaining unsent events for retry",
+			"flushed_count", written)
+		return
+	}
+	state.lastFlushTime = time.Now()
+	s.logger.V(2).Info("✅ Timer-based flush completed",
+		"flushed_count", written,
+		"batch_size_after_flush", len(state.batch),
+		"buffer_utilization_after_flush", len(s.buffer))
+}
+
+// handleExplicitFlush drains any events waiting in the buffer channel into
+// the batch and writes it immediately, signaling completion via done.
+// Explicit flushes are typically requested by tests or graceful shutdown prep.
+func (s *BufferedAuditStore) handleExplicitFlush(state *auditWriterLoopState, done chan<- error) {
+	initialBatchSize := len(state.batch)
+	initialBufferSize := len(s.buffer)
+
+	s.logger.V(2).Info("🔄 Processing explicit flush request",
+		"batch_size_before_drain", initialBatchSize,
+		"buffer_size_before_drain", initialBufferSize)
+
+	// BUG FIX (SP-AUDIT-001): Drain s.buffer channel into batch BEFORE flushing
+	// The explicit flush was only writing the batch array, missing events in s.buffer channel
+	// This caused test failures where events were "buffered successfully" but never written
+	drainedCount := 0
+drainLoop:
+	for {
+		select {
+		case event := <-s.buffer:
+			state.batch = append(state.batch, event)
+			drainedCount++
+		default:
+			// Buffer drained (no more events available without blocking)
+			break drainLoop
+		}
+	}
+
+	if drainedCount > 0 {
+		s.logger.V(2).Info("🔄 Drained buffer channel into batch",
+			"drained_count", drainedCount,
+			"batch_size_after_drain", len(state.batch),
+			"buffer_size_after_drain", len(s.buffer))
+	}
+
+	if len(state.batch) == 0 {
+		s.logger.V(2).Info("✅ Explicit flush completed (no events to flush)",
+			"buffer_was_empty", initialBufferSize == 0)
+		done <- nil // Signal success (nothing to flush)
+		return
+	}
+
+	written, err := s.writeBatchWithRetry(state.batch)
+	if written > 0 {
+		state.batch = state.batch[written:]
+	}
+	if err == nil {
+		state.lastFlushTime = time.Now()
+	}
+	if err == nil {
+		s.logger.V(2).Info("✅ Explicit flush completed",
+			"flushed_count", written,
+			"drained_from_buffer", drainedCount,
+			"buffer_size_after", len(s.buffer))
+	}
+	done <- err
+}
+
+// writeBatchWithRetryBackoff configures the exponential backoff (with jitter)
+// applied between retry attempts in writeBatchWithRetry.
+//
+// DD-AUDIT-003: This is application-level retry, intentionally NOT wrapped by
+// pkg/shared/transport.RetryTransport (see pkg/shared/tls/tls.go) to avoid
+// multiplying attempts across two retry layers.
+var writeBatchWithRetryBackoff = backoff.Config{
+	BasePeriod:    1 * time.Second,
+	MaxPeriod:     30 * time.Second,
+	Multiplier:    2.0,
+	JitterPercent: 10, // Anti-thundering-herd: avoids every replica retrying DataStorage in lockstep
+}
+
+// writeBatchWithRetry writes a batch in DataStorage-sized chunks. It returns
+// the number of events acknowledged before the first failed chunk and leaves
+// the caller responsible for removing that acknowledged prefix from its
+// in-memory batch.
+func (s *BufferedAuditStore) writeBatchWithRetry(batch []*ogenclient.AuditEventRequest) (int, error) {
+	written := 0
+	for written < len(batch) {
+		end := written + maxDataStorageAuditBatchSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+		if err := s.writeBatchChunkWithRetry(batch[written:end]); err != nil {
+			return written, err
+		}
+		written = end
+	}
+	return written, nil
+}
+
+// writeBatchChunkWithRetry writes one API-sized batch with exponential
+// backoff (+ jitter) retry logic.
+//
+// Retry strategy (GAP-10/GAP-11: Error differentiation):
+// - 4xx errors (client errors): Do NOT retry - indicates invalid data
+// - 5xx errors (server errors): Retry with exponential backoff
+// - Network errors: Retry with exponential backoff
+//
+// Retry timing (pkg/shared/backoff.Config, BasePeriod=1s, Multiplier=2.0, ±10% jitter):
+// - Attempt 1: Immediate
+// - Attempt 2: ~1 second delay
+// - Attempt 3: ~2 second delay
+// - After MaxRetries: Return an error and retain the batch for a later retry
+func (s *BufferedAuditStore) writeBatchChunkWithRetry(batch []*ogenclient.AuditEventRequest) error {
+	start := time.Now()
+	for attempt := 1; attempt <= s.config.MaxRetries; attempt++ {
+		// Use store-scoped context with per-attempt timeout
+		// During shutdown, s.ctx is cancelled so retry loops abort promptly
+		attemptCtx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+		err := s.client.StoreBatch(attemptCtx, batch)
+		cancel()
+
+		if err != nil {
+			// #1056: Distinguish auth errors from data errors for observability
+			if IsAuthError(err) {
+				s.logger.Error(err, "Auth error writing audit batch (token expired or insufficient permissions, will retry)",
+					"attempt", attempt,
+					"max_retries", s.config.MaxRetries,
+					"batch_size", len(batch),
+				)
+			} else {
+				s.logger.Error(err, "Failed to write audit batch",
+					"attempt", attempt,
+					"batch_size", len(batch),
+				)
+			}
+
+			// GAP-10/GAP-11/#1056: Check if error is retryable
+			// 401/403 auth errors ARE retryable (token refresh will fix)
+			// 5xx and network errors ARE retryable
+			// Other 4xx errors (400, 422) are NOT retryable (invalid request data)
+			if !IsRetryable(err) {
+				atomic.AddInt64(&s.failedBatchCount, 1)
+
+				s.logger.Error(nil, "Audit batch rejected by DataStorage due to non-retryable client error",
+					"batch_size", len(batch),
+					"is_4xx_error", Is4xxError(err),
+				)
+				return fmt.Errorf("audit batch rejected by DataStorage: %w", err)
+			}
+
+			if attempt < s.config.MaxRetries {
+				delay := writeBatchWithRetryBackoff.Calculate(int32(attempt))
+				// Context-aware sleep: abort retry if store is shutting down
+				select {
+				case <-time.After(delay):
+				case <-s.ctx.Done():
+					// Shutdown requested, drop remaining retries
+					s.logger.Info("Shutdown during retry backoff; audit batch remains unacknowledged",
+						"batch_size", len(batch),
+						"attempt", attempt,
+					)
+					atomic.AddInt64(&s.failedBatchCount, 1)
+					return fmt.Errorf("audit batch retry cancelled: %w", s.ctx.Err())
+				}
+				continue
+			}
+
+			// Final failure after max retries
+			atomic.AddInt64(&s.failedBatchCount, 1)
+
+			// DD-AUDIT-002 V3.0: Transport failures indicate infrastructure problem
+			// Server-side DLQ (in DataStorage) handles persistence failures
+			// Client-side audit loss is acceptable for transport failures (fix infrastructure)
+			s.logger.Error(err, "Audit batch retained in memory after max retries (infrastructure unavailable)",
+				"batch_size", len(batch),
+				"max_retries", s.config.MaxRetries,
+				"error_type", "transport_failure",
+				"mitigation", "Fix DataStorage connectivity - ensure service is running and reachable",
+			)
+			return fmt.Errorf("audit batch write failed after %d attempts: %w", s.config.MaxRetries, err)
+		}
+
+		// Success
+		atomic.AddInt64(&s.writtenCount, int64(len(batch)))
+
+		writeDuration := time.Since(start)
+		s.logger.V(2).Info("✅ Wrote audit batch",
+			"batch_size", len(batch),
+			"attempt", attempt,
+			"write_duration", writeDuration)
+
+		// Warn if write took unusually long (>2s)
+		if writeDuration > 2*time.Second {
+			s.logger.Error(nil, "⚠️  Slow audit batch write detected",
+				"batch_size", len(batch),
+				"write_duration", writeDuration,
+				"warning", "slow writes can delay timer-based flushes")
+		}
+
+		return nil
+	}
+	return fmt.Errorf("audit batch write exhausted retries")
+}

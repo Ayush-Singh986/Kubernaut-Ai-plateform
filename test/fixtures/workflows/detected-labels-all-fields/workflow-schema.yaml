@@ -1,0 +1,58 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: RemediationWorkflow
+metadata:
+  name: detected-labels-all-fields-v1
+spec:
+  # All 8 DetectedLabels Fields Test (BR-WORKFLOW-004, ADR-043 v1.3)
+  # Used by: DataStorage E2E -- E2E-DS-043-005
+  # Purpose: Validates all 8 detectedLabels fields survive full OCI -> DB -> HTTP round-trip
+  version: "1.0.0"
+  description:
+    what: "Test workflow with all 8 detectedLabels fields populated"
+    whenToUse: "For E2E testing that all detectedLabels fields survive the production pipeline"
+    whenNotToUse: "Not intended for production use"
+    preconditions: "DataStorage service running with action_type_taxonomy seeded"
+  
+  actionType: RestartPod
+  
+  labels:
+    severity: [critical]
+    environment: [production]
+    component: [v1/Pod]
+    priority: P0
+  
+  detectedLabels:
+    hpaEnabled: "true"
+    pdbProtected: "true"
+    stateful: "true"
+    helmManaged: "true"
+    networkIsolated: "true"
+    gitOpsManaged: "true"
+    gitOpsTool: "flux"
+    serviceMesh: "istio"
+  
+  execution:
+    engine: tekton
+    bundle: quay.io/kubernaut-cicd/tekton-bundles/hello-world:v1.0.0@sha256:a663ba9ddf8a074025723a4fbbef5542f520deb4e5eaf9814e07775456ecd7e0
+  
+  parameters:
+    - name: TARGET_RESOURCE_NAME
+      type: string
+      required: true
+      description: "Name of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_KIND
+      type: string
+      required: true
+      description: "Kind of the root managing resource (KA-injected)"
+    - name: TARGET_RESOURCE_NAMESPACE
+      type: string
+      required: true
+      description: "Namespace of the root managing resource (KA-injected)"
+    - name: NAMESPACE
+      type: string
+      required: true
+      description: "Target namespace containing the affected pod"
+    - name: POD_NAME
+      type: string
+      required: true
+      description: "Name of the pod to restart"

@@ -1,0 +1,353 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package adapters_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/jordigilh/kubernaut/pkg/fleet/fleettest"
+	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
+	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+)
+
+var _ = Describe("PrometheusAdapter — Fleet remote owner chain (P1)", func() {
+	var (
+		ctx context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	Describe("SetReaderFactory dispatch", func() {
+		It("UT-GW-P1-001 [AC-3]: single-cluster Parse uses local resolver when clusterID is empty", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+
+			payload := buildAlertPayload("")
+			signal, err := adapter.Parse(ctx, payload)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal).ToNot(BeNil())
+			Expect(signal.ClusterID).To(BeEmpty(),
+				"local signal must not have ClusterID")
+		})
+
+		It("UT-GW-2555-001 [BR-INTEGRATION-065, AC-4, AC-6, ASVS V4.1.1]: local Parse ignores common cluster attribution", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "local-nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+
+			localSignal, err := adapter.Parse(ctx, buildAlertPayload(""))
+			Expect(err).ToNot(HaveOccurred())
+
+			clusteredSignal, err := adapter.Parse(ctx, buildAlertPayload("local"))
+			Expect(err).ToNot(HaveOccurred(),
+				"local mode must not attempt remote resolution for a common cluster label")
+			Expect(clusteredSignal).ToNot(BeNil())
+			Expect(clusteredSignal.ClusterID).To(BeEmpty(),
+				"local mode must discard common cluster attribution")
+			Expect(clusteredSignal.Fingerprint).To(Equal(localSignal.Fingerprint),
+				"local cluster attribution must not change local deduplication identity")
+			Expect(clusteredSignal.Resource.Name).To(Equal("local-nginx"),
+				"local mode must resolve ownership with the local owner resolver")
+		})
+
+		It("UT-GW-2394-001 [AC-4, SI-10]: fleet Parse rejects signals without cluster attribution", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{"hub": nil},
+			})
+
+			signal, err := adapter.Parse(ctx, buildAlertPayload(""))
+			Expect(err).To(HaveOccurred(),
+				"fleet mode must reject un-attributed alerts instead of silently routing them to the local hub")
+			Expect(err.Error()).To(ContainSubstring("cluster"))
+			Expect(signal).To(BeNil())
+		})
+
+		It("UT-GW-P1-002 [AC-3]: Parse constructs remote resolver when clusterID is non-empty", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "local-nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{
+					"prod-east": nil,
+				},
+			})
+
+			payload := buildAlertPayload("prod-east")
+			signal, err := adapter.Parse(ctx, payload)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal).ToNot(BeNil())
+			Expect(signal.ClusterID).To(Equal("prod-east"),
+				"remote signal must preserve ClusterID")
+		})
+
+		It("UT-GW-2430-001 [AC-4, AC-6, SI-10, ASVS V4.1.5]: Parse fails closed for an unregistered Fleet cluster", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{},
+			})
+
+			payload := buildAlertPayload("prod-east")
+			signal, err := adapter.Parse(ctx, payload)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("remote owner resolver"))
+			Expect(signal).To(BeNil())
+		})
+
+		It("UT-GW-2430-002 [AC-4, AC-6, ASVS V4.1.5]: Parse fails closed when remote reader creation fails", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Err: fmt.Errorf("MCP session unavailable"),
+			})
+
+			payload := buildAlertPayload("prod-east")
+			signal, err := adapter.Parse(ctx, payload)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("remote owner resolver"))
+			Expect(signal).To(BeNil())
+		})
+
+		It("UT-GW-P1-005 [AC-3]: SetReaderFactory is optional and does not break existing behavior", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+
+			payload := buildAlertPayload("")
+			signal, err := adapter.Parse(ctx, payload)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal).ToNot(BeNil())
+			Expect(signal.Resource.Kind).To(Equal("Deployment"))
+			Expect(signal.Resource.Name).To(Equal("nginx"))
+		})
+
+		It("UT-GW-P1-006 [AU-3]: remote signal includes cluster-aware fingerprint", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{"prod-east": nil},
+			})
+
+			localAdapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			signalLocal, err := localAdapter.Parse(ctx, buildAlertPayload(""))
+			Expect(err).ToNot(HaveOccurred())
+
+			payloadRemote := buildAlertPayload("prod-east")
+			signalRemote, err := adapter.Parse(ctx, payloadRemote)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(signalRemote.Fingerprint).ToNot(Equal(signalLocal.Fingerprint),
+				"remote and local signals for same resource should have different fingerprints due to clusterID")
+		})
+
+		It("UT-GW-P1-007 [AC-3]: ParseBatch handles remote cluster alerts", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{"prod-east": nil},
+			})
+
+			payload := buildAlertPayload("prod-east")
+			signals, err := adapter.ParseBatch(ctx, payload)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signals).ToNot(BeEmpty())
+			Expect(signals[0].ClusterID).To(Equal("prod-east"),
+				"ParseBatch must preserve clusterID from remote alerts")
+		})
+
+		It("UT-GW-2555-002 [BR-INTEGRATION-065, AC-4, AC-6, ASVS V4.1.1]: local ParseBatch ignores per-alert cluster attribution", func() {
+			localResolver := &stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "local-nginx",
+			}
+			adapter := adapters.NewPrometheusAdapter(localResolver, nil, logr.Discard())
+
+			localSignals, err := adapter.ParseBatch(ctx, buildAlertPayloadWithPerAlertCluster("", ""))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(localSignals).To(HaveLen(1))
+
+			clusteredSignals, err := adapter.ParseBatch(ctx, buildAlertPayloadWithPerAlertCluster("", "local"))
+			Expect(err).ToNot(HaveOccurred(),
+				"local mode must not attempt remote resolution for a per-alert cluster label")
+			Expect(clusteredSignals).To(HaveLen(1))
+			Expect(clusteredSignals[0].ClusterID).To(BeEmpty(),
+				"local mode must discard per-alert cluster attribution")
+			Expect(clusteredSignals[0].Fingerprint).To(Equal(localSignals[0].Fingerprint),
+				"local cluster attribution must not change local batch deduplication identity")
+			Expect(clusteredSignals[0].Resource.Name).To(Equal("local-nginx"),
+				"local mode must resolve ownership with the local owner resolver")
+		})
+	})
+
+	// Issue #2362: AlertManager groups by alertname by default, so `cluster`
+	// never reaches commonLabels even when the firing alert carries it --
+	// the adapter must fall back to the per-alert label instead of
+	// attributing the signal to the local hub cluster.
+	Describe("per-alert cluster label fallback (#2362)", func() {
+		It("UT-GW-2362-101 [AC-3]: Parse attributes ClusterID from per-alert labels when commonLabels lacks cluster", func() {
+			adapter := adapters.NewPrometheusAdapter(&stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{"remote-cluster": nil},
+			})
+
+			signal, err := adapter.Parse(ctx, buildAlertPayloadWithPerAlertCluster("", "remote-cluster"))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal.ClusterID).To(Equal("remote-cluster"),
+				"a per-alert cluster label must attribute the signal when grouping strips it from commonLabels")
+		})
+
+		It("UT-GW-2362-102 [AC-3]: commonLabels cluster keeps precedence over a conflicting per-alert cluster", func() {
+			adapter := adapters.NewPrometheusAdapter(&stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}, nil, logr.Discard())
+			adapter.SetReaderFactory(&fleettest.StubReaderFactory{
+				Readers: map[string]client.Reader{"hub": nil},
+			})
+
+			signal, err := adapter.Parse(ctx, buildAlertPayloadWithPerAlertCluster("hub", "remote-cluster"))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal.ClusterID).To(Equal("hub"),
+				"group-level attribution must win over a conflicting per-alert label")
+		})
+
+		It("UT-GW-2362-103 [AC-3]: no cluster anywhere still yields empty ClusterID (local preserved)", func() {
+			adapter := adapters.NewPrometheusAdapter(&stubOwnerResolver{
+				ownerKind: "Deployment",
+				ownerName: "nginx",
+			}, nil, logr.Discard())
+
+			signal, err := adapter.Parse(ctx, buildAlertPayloadWithPerAlertCluster("", ""))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(signal.ClusterID).To(BeEmpty(),
+				"genuinely unattributed signals keep today's local semantics")
+		})
+	})
+})
+
+// buildAlertPayloadWithPerAlertCluster creates a webhook payload with
+// independent group-level (commonLabels) and per-alert cluster labels,
+// modeling an AlertManager grouped by alertname where `cluster` never
+// reaches commonLabels.
+func buildAlertPayloadWithPerAlertCluster(commonCluster, alertCluster string) []byte {
+	commonLabels := map[string]string{}
+	if commonCluster != "" {
+		commonLabels["cluster"] = commonCluster
+	}
+
+	labels := map[string]string{
+		"alertname": "HighCPU",
+		"severity":  "warning",
+		"namespace": "default",
+		"pod":       "nginx-abc",
+	}
+	if alertCluster != "" {
+		labels["cluster"] = alertCluster
+	}
+
+	payload := map[string]any{
+		"status": "firing",
+		"alerts": []map[string]any{
+			{
+				"status": "firing",
+				"labels": labels,
+			},
+		},
+		"commonLabels": commonLabels,
+	}
+	data, _ := json.Marshal(payload)
+	return data
+}
+
+// stubOwnerResolver returns fixed owner resolution results for testing.
+type stubOwnerResolver struct {
+	ownerKind string
+	ownerName string
+	err       error
+}
+
+func (s *stubOwnerResolver) ResolveTopLevelOwner(_ context.Context, _, _, _ string) (string, string, error) {
+	return s.ownerKind, s.ownerName, s.err
+}
+
+var _ types.OwnerResolver = (*stubOwnerResolver)(nil)
+
+// buildAlertPayload creates a minimal AlertManager webhook JSON payload for testing.
+func buildAlertPayload(clusterID string) []byte {
+	commonLabels := map[string]string{}
+	if clusterID != "" {
+		commonLabels["cluster"] = clusterID
+	}
+
+	labels := map[string]string{
+		"alertname": "HighCPU",
+		"severity":  "warning",
+		"namespace": "default",
+		"pod":       "nginx-abc",
+	}
+
+	payload := map[string]any{
+		"status": "firing",
+		"alerts": []map[string]any{
+			{
+				"status": "firing",
+				"labels": labels,
+			},
+		},
+		"commonLabels": commonLabels,
+	}
+	data, _ := json.Marshal(payload)
+	return data
+}

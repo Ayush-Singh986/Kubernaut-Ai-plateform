@@ -1,0 +1,406 @@
+/*
+Copyright 2025 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package handlers provides error classification and retry logic for AIAnalysis.
+//
+// Business Requirements:
+// - BR-AI-009: Error classification and handling
+// - BR-AI-010: Retry logic for transient failures
+//
+// Design Decision: DD-AIANALYSIS-006 - Error Classification Pattern
+// Error classification follows these principles:
+// - ✅ Classify by cause (authentication, network, transient, permanent)
+// - ✅ Determine retry strategy based on classification
+// - ✅ Track error patterns for monitoring and alerting
+// - ✅ Provide clear error messages for debugging
+package handlers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+)
+
+// ErrorType represents the classification of an error
+type ErrorType string
+
+const (
+	// ErrorTypeAuthentication indicates authentication failure
+	ErrorTypeAuthentication ErrorType = "Authentication"
+
+	// ErrorTypeAuthorization indicates authorization/permission failure
+	ErrorTypeAuthorization ErrorType = "Authorization"
+
+	// ErrorTypeConfiguration indicates configuration error (e.g., 404 Not Found)
+	ErrorTypeConfiguration ErrorType = "Configuration"
+
+	// ErrorTypeRateLimit indicates rate limiting
+	ErrorTypeRateLimit ErrorType = "RateLimit"
+
+	// ErrorTypeTransient indicates temporary/transient failure
+	ErrorTypeTransient ErrorType = "Transient"
+
+	// ErrorTypeTimeout indicates request timeout
+	ErrorTypeTimeout ErrorType = "Timeout"
+
+	// ErrorTypeNetwork indicates network connectivity error
+	ErrorTypeNetwork ErrorType = "Network"
+
+	// ErrorTypePermanent indicates permanent failure (bad request, etc.)
+	ErrorTypePermanent ErrorType = "Permanent"
+
+	// ErrorTypeSessionLost indicates KA session was lost (404 on poll)
+	// BR-AA-KA-064.5: Triggers session regeneration, not standard retry
+	ErrorTypeSessionLost ErrorType = "SessionLost"
+)
+
+// ErrorClassification contains error analysis results
+type ErrorClassification struct {
+	// ErrorType is the classified error type
+	ErrorType ErrorType
+
+	// IsRetryable indicates if the error should be retried
+	IsRetryable bool
+
+	// ShouldAlert indicates if this error requires immediate attention
+	ShouldAlert bool
+
+	// RetryAfter suggests when to retry (0 = immediate, -1 = never)
+	RetryAfter time.Duration
+
+	// Message provides human-readable error description
+	Message string
+
+	// OriginalError is the underlying error
+	OriginalError error
+}
+
+// ErrorClassifier handles error classification and retry strategies
+//
+// Design Decision: DD-SHARED-001 - Shared Backoff Library
+// Uses pkg/shared/backoff for consistent exponential backoff with jitter
+// across all services (AIAnalysis, Notification, WorkflowExecution, etc.)
+type ErrorClassifier struct {
+	log logr.Logger
+
+	// Backoff configuration (DD-SHARED-001 compliant)
+	backoffConfig backoff.Config
+	maxRetries    int
+}
+
+// NewErrorClassifier creates a new ErrorClassifier with default configuration
+//
+// Default Configuration (DD-SHARED-001 compliant):
+// - Base period: 1 second (faster than standard 30s for API errors)
+// - Max period: 5 minutes
+// - Multiplier: 2.0 (standard exponential)
+// - Jitter: ±10% (anti-thundering herd protection)
+// - Max retries: 5
+//
+// Exponential backoff sequence:
+// - Attempt 1: ~1s (0.9-1.1s with jitter)
+// - Attempt 2: ~2s (1.8-2.2s with jitter)
+// - Attempt 3: ~4s (3.6-4.4s with jitter)
+// - Attempt 4: ~8s (7.2-8.8s with jitter)
+// - Attempt 5: ~16s (14.4-17.6s with jitter)
+// - Attempt 6+: 300s (5 minutes max)
+func NewErrorClassifier(logger logr.Logger) *ErrorClassifier {
+	return &ErrorClassifier{
+		log: logger,
+		backoffConfig: backoff.Config{
+			BasePeriod:    1 * time.Second, // Fast initial retry for transient API errors
+			MaxPeriod:     5 * time.Minute, // Cap at 5 minutes
+			Multiplier:    2.0,             // Standard exponential (power-of-2)
+			JitterPercent: 10,              // ±10% variance (production anti-thundering herd)
+		},
+		maxRetries: 5,
+	}
+}
+
+// ClassifyError determines the error type and retry strategy
+//
+// Business Requirement: BR-AI-009
+// Classifies errors into categories for appropriate handling:
+// - Authentication (401): Alert required, no retry
+// - Authorization (403): Alert required, no retry
+// - Configuration (404): Alert required, no retry
+// - Rate Limit (429): Retry with backoff, no alert
+// - Transient (5xx): Retry with backoff, no alert
+// - Timeout: Retry with backoff, no alert
+// - Network: Retry with backoff, no alert
+// - Permanent (4xx): No retry, alert
+func (ec *ErrorClassifier) ClassifyError(err error) ErrorClassification {
+	if err == nil {
+		return ErrorClassification{
+			ErrorType:     ErrorTypePermanent,
+			IsRetryable:   false,
+			ShouldAlert:   false,
+			RetryAfter:    -1,
+			Message:       "no error",
+			OriginalError: nil,
+		}
+	}
+
+	if classification, matched := classifyContextError(err); matched {
+		return classification
+	}
+
+	if classification, matched := ec.classifyNetworkError(err); matched {
+		return classification
+	}
+
+	// Check for Kubernetes API errors (DD-AA-KA-001: GetOrCreate errors are
+	// now K8s API failures, not agentclient HTTP responses). apierrors'
+	// concrete error types (StatusError, etc.) all implement APIStatus,
+	// exposing the same HTTP-equivalent status code the retired
+	// agentclient.APIError carried.
+	var apiStatus apierrors.APIStatus
+	if errors.As(err, &apiStatus) {
+		return ec.classifyHTTPError(err, apiStatus)
+	}
+
+	// Check for connection refused errors
+	if strings.Contains(err.Error(), "connection refused") {
+		return ErrorClassification{
+			ErrorType:     ErrorTypeNetwork,
+			IsRetryable:   true,
+			ShouldAlert:   true, // Service unavailable
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       "Connection refused - service unavailable",
+			OriginalError: err,
+		}
+	}
+
+	// Default: permanent error (unknown)
+	return ErrorClassification{
+		ErrorType:     ErrorTypePermanent,
+		IsRetryable:   false,
+		ShouldAlert:   true,
+		RetryAfter:    -1,
+		Message:       fmt.Sprintf("Unknown error: %v", err),
+		OriginalError: err,
+	}
+}
+
+// classifyContextError classifies context.Canceled (caller-initiated abort:
+// shutdown, user cancel). The returned bool reports whether err matched.
+// Extracted from ClassifyError (Wave 6 6c GREEN: funlen remediation) — pure
+// code motion, no behavior change.
+func classifyContextError(err error) (ErrorClassification, bool) {
+	if errors.Is(err, context.Canceled) {
+		return ErrorClassification{
+			ErrorType:     ErrorTypePermanent,
+			IsRetryable:   false,
+			ShouldAlert:   false,
+			RetryAfter:    -1,
+			Message:       "Request canceled by caller",
+			OriginalError: err,
+		}, true
+	}
+	return ErrorClassification{}, false
+}
+
+// classifyNetworkError classifies DNS resolution errors and generic
+// net.Error values (timeout vs. general connectivity failure). *net.DNSError
+// implements net.Error, so it is checked first for a more specific
+// classification. The returned bool reports whether err matched a network
+// error type. Extracted from ClassifyError (Wave 6 6c GREEN: funlen
+// remediation) — pure code motion, no behavior change.
+func (ec *ErrorClassifier) classifyNetworkError(err error) (ErrorClassification, bool) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ErrorClassification{
+			ErrorType:     ErrorTypeTimeout,
+			IsRetryable:   true,
+			ShouldAlert:   false,
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       "Request timed out",
+			OriginalError: err,
+		}, true
+	}
+
+	// Check for DNS resolution errors (before generic net.Error)
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return ErrorClassification{
+			ErrorType:     ErrorTypeNetwork,
+			IsRetryable:   true,
+			ShouldAlert:   true, // DNS errors might indicate configuration issues
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       fmt.Sprintf("DNS resolution failed: %s", dnsErr.Name),
+			OriginalError: err,
+		}, true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return ErrorClassification{
+				ErrorType:     ErrorTypeTimeout,
+				IsRetryable:   true,
+				ShouldAlert:   false,
+				RetryAfter:    ec.backoffConfig.BasePeriod,
+				Message:       "Network timeout",
+				OriginalError: err,
+			}, true
+		}
+		return ErrorClassification{
+			ErrorType:     ErrorTypeNetwork,
+			IsRetryable:   true,
+			ShouldAlert:   false,
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       "Network connectivity error",
+			OriginalError: err,
+		}, true
+	}
+
+	return ErrorClassification{}, false
+}
+
+// classifyHTTPError classifies Kubernetes API errors by their HTTP-equivalent
+// status code (DD-AA-KA-001: GetOrCreate's errors are K8s API failures).
+// Dispatches to one helper per classification family; the switch itself
+// stays a thin lookup. Status-code cases are unchanged from the retired
+// agentclient.APIError-based classification.
+func (ec *ErrorClassifier) classifyHTTPError(err error, apiStatus apierrors.APIStatus) ErrorClassification {
+	status := apiStatus.Status()
+	code := int(status.Code)
+	message := status.Message
+	switch code {
+	case 401: // Authentication error
+		return ec.prefixedErrorClassification(err, message, ErrorTypeAuthentication, "Authentication failed")
+	case 403: // Authorization error
+		return ec.prefixedErrorClassification(err, message, ErrorTypeAuthorization, "Authorization failed")
+	case 404: // Configuration error
+		return ec.prefixedErrorClassification(err, message, ErrorTypeConfiguration, "Resource not found")
+	case 422: // Unprocessable Entity - Validation error (permanent)
+		return ec.prefixedErrorClassification(err, message, ErrorTypePermanent, "Client error (HTTP 422)")
+	case 429: // Too Many Requests - Rate limit error
+		return ErrorClassification{
+			ErrorType:     ErrorTypeRateLimit,
+			IsRetryable:   true,
+			ShouldAlert:   false,                          // Rate limiting is expected behavior
+			RetryAfter:    ec.backoffConfig.BasePeriod * 2, // Wait longer for rate limits
+			Message:       fmt.Sprintf("Rate limit exceeded: %s", message),
+			OriginalError: err,
+		}
+	case 500, 502, 503, 504: // Server Errors - Transient errors
+		return ErrorClassification{
+			ErrorType:     ErrorTypeTransient,
+			IsRetryable:   true,
+			ShouldAlert:   false, // Transient errors are expected
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       fmt.Sprintf("Server error (HTTP %d): %s", code, message),
+			OriginalError: err,
+		}
+	case 400: // Bad Request - Permanent error (invalid request data)
+		return ec.prefixedErrorClassification(err, message, ErrorTypePermanent, "Client error (HTTP 400)")
+	default:
+		// 4xx Client Errors (other than explicitly handled) and any other
+		// unknown status code - Treat as Transient with alert. Rationale:
+		// unknown codes might be temporary issues or misconfigurations that
+		// could be resolved, so give them a chance to recover.
+		return ErrorClassification{
+			ErrorType:     ErrorTypeTransient,
+			IsRetryable:   true,
+			ShouldAlert:   true, // Alert for investigation
+			RetryAfter:    ec.backoffConfig.BasePeriod,
+			Message:       fmt.Sprintf("Unknown HTTP status %d: %s", code, message),
+			OriginalError: err,
+		}
+	}
+}
+
+// prefixedErrorClassification builds the common shape shared by the
+// non-retryable HTTP error classifications (401/403/404/422/400): message is
+// "<prefix>: <message>", never retryable, always alerts. Extracted from
+// classifyHTTPError (Wave 6 6c GREEN: funlen remediation) — pure code
+// motion, no behavior change.
+func (ec *ErrorClassifier) prefixedErrorClassification(err error, message string, errType ErrorType, prefix string) ErrorClassification {
+	return ErrorClassification{
+		ErrorType:     errType,
+		IsRetryable:   false,
+		ShouldAlert:   true,
+		RetryAfter:    -1,
+		Message:       fmt.Sprintf("%s: %s", prefix, message),
+		OriginalError: err,
+	}
+}
+
+// IsRetryable checks if an error should be retried
+// Business Requirement: BR-AI-010
+func (ec *ErrorClassifier) IsRetryable(classification ErrorClassification) bool {
+	return classification.IsRetryable
+}
+
+// GetRetryDelay calculates exponential backoff delay using shared backoff library
+//
+// Business Requirement: BR-AI-010
+// Design Decision: DD-SHARED-001 - Shared Backoff Library
+//
+// Uses pkg/shared/backoff for consistent exponential backoff with jitter.
+// Formula: min(BasePeriod * (Multiplier ^ attemptCount), MaxPeriod) ± jitter
+//
+// Example with defaults (BasePeriod=1s, Multiplier=2.0, MaxPeriod=5min, Jitter=±10%):
+// - Attempt 0: ~1s (0.9-1.1s with jitter)
+// - Attempt 1: ~2s (1.8-2.2s with jitter)
+// - Attempt 2: ~4s (3.6-4.4s with jitter)
+// - Attempt 3: ~8s (7.2-8.8s with jitter)
+// - Attempt 4: ~16s (14.4-17.6s with jitter)
+// - Attempt 5: ~32s (28.8-35.2s with jitter)
+// - ...
+// - Attempt 9+: ~300s (5 minutes max, 270-330s with jitter)
+//
+// Jitter Benefits:
+// - Prevents thundering herd when multiple AIAnalysis fail simultaneously
+// - Distributes retry load over time for better API stability
+// - Battle-tested in Notification v3.1 (0 issues in 6 months)
+func (ec *ErrorClassifier) GetRetryDelay(attemptCount int) time.Duration {
+	if attemptCount < 0 {
+		attemptCount = 0
+	}
+
+	// Use shared backoff library (DD-SHARED-001 compliant)
+	// Note: attemptCount is 0-based in our usage, backoff.Calculate expects 1-based
+	return ec.backoffConfig.Calculate(int32(attemptCount + 1))
+}
+
+// GetMaxRetries returns the maximum number of retry attempts
+func (ec *ErrorClassifier) GetMaxRetries() int {
+	return ec.maxRetries
+}
+
+// ShouldRetry determines if retry should be attempted based on attempt count
+// Returns true if attemptCount < maxRetries and error is retryable
+func (ec *ErrorClassifier) ShouldRetry(classification ErrorClassification, attemptCount int) bool {
+	if !classification.IsRetryable {
+		return false
+	}
+
+	if attemptCount >= ec.maxRetries {
+		ec.log.Info("Max retries reached", "attemptCount", attemptCount, "maxRetries", ec.maxRetries)
+		return false
+	}
+
+	return true
+}

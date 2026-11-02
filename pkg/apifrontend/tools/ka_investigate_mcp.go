@@ -1,0 +1,1157 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/dynamic"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	aiav1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+)
+
+// isPhaseActivePollTimeout caps the IS phase Active polling after AIA readiness.
+// This is a coordination deadline, not a retry interval: AwaitAgentSessionInteractive
+// already watches (or polls) the CRD, and the phase transition should follow almost
+// immediately after AA submits. The known-active preflight skips this barrier.
+const isPhaseActivePollTimeout = 5 * time.Second
+
+// activeSessionStatusTimeout bounds the best-effort ownership preflight. A
+// failed or unavailable status probe must never delay the normal investigation
+// path, so this is intentionally a single bounded attempt rather than an
+// exponential-backoff retry budget. StartInvestigation remains the authoritative
+// race-safe check.
+const activeSessionStatusTimeout = 2 * time.Second
+
+// Status/warning text emitted during the interactive-investigation await
+// loop (#1916, SI-11). Deliberately omits internal service acronyms (KA, AA)
+// and CRD names (IS CRD) — console users must never see internal system
+// architecture, per pkg/apifrontend/agent/prompt.txt's Behavioral Constraints
+// item 1. That constraint only governs LLM-generated text; these are Go
+// harness literals, so they must independently avoid the same leakage.
+const (
+	statusSessionReadyText        = "Investigation session ready, connecting..."
+	statusSessionAcknowledgedText = "Interactive session created, starting investigation..."
+	warnSessionTrackingFailedFmt  = "Warning: session tracking setup failed (%s), investigation continues"
+)
+
+type rrIDContextKey struct{}
+
+// WithRRID attaches the remediation request ID to the context so that
+// bridgeEventsCollectSummary can include it in structured event metadata.
+func WithRRID(ctx context.Context, rrID string) context.Context {
+	return context.WithValue(ctx, rrIDContextKey{}, rrID)
+}
+
+func extractRRIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(rrIDContextKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// takeoverISPhaseTimeout is used for the takeover path where AA must cancel
+// the autonomous session and re-submit before setting IS phase=Active.
+const takeoverISPhaseTimeout = 15 * time.Second
+
+// signalInteractiveMaxAttempts bounds the retry budget for transient
+// SignalInteractive (IS CRD creation) failures (#2289) before falling back
+// to fail-open with a surfaced warning. Short/bounded (max ~2.1s across 3
+// attempts with signalInteractiveRetryBackoff below) because this runs
+// synchronously inside a single kubernaut_investigate MCP tool call, well
+// within the takeoverISPhaseTimeout/isPhaseActivePollTimeout budgets
+// downstream.
+const signalInteractiveMaxAttempts = 3
+
+// signalInteractiveRetryBackoff configures the exponential backoff between
+// SignalInteractive retry attempts (pkg/shared/backoff, DD-SHARED-001).
+// Tuning mirrors pkg/shared/transport.DefaultRetryConfig(), the existing
+// in-repo precedent for short, bounded, synchronous in-request retries.
+var signalInteractiveRetryBackoff = backoff.Config{
+	BasePeriod:    100 * time.Millisecond,
+	MaxPeriod:     1 * time.Second,
+	Multiplier:    2.0,
+	JitterPercent: 20,
+}
+
+// signalInteractiveRequest groups the arguments threaded through
+// signalInteractiveWithRetry. Extracted per AGENTS.md's 8+-param
+// Options-pattern rule.
+type signalInteractiveRequest struct {
+	RRNamespace string
+	RRName      string
+	TaskID      string
+	Username    string
+	Groups      []string
+	JoinMode    string
+}
+
+// signalInteractiveWithRetry wraps signaler.SignalInteractive with a bounded
+// exponential-backoff retry (#2289, fixing the fail-open-on-first-error bug
+// reported against #2265) for transient failures. A "session_active"
+// conflict is a legitimate single-driver rejection from KA, never a
+// transient failure, so it is returned immediately without retrying.
+func signalInteractiveWithRetry(ctx context.Context, signaler ISSignaler, req signalInteractiveRequest) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= signalInteractiveMaxAttempts; attempt++ {
+		isCRDName, err := signaler.SignalInteractive(ctx, req.RRNamespace, req.RRName, req.TaskID, req.Username, req.Groups, req.JoinMode)
+		if err == nil {
+			return isCRDName, nil
+		}
+		if strings.Contains(err.Error(), "session_active") {
+			return "", err
+		}
+		lastErr = err
+		if attempt < signalInteractiveMaxAttempts {
+			delay := signalInteractiveRetryBackoff.Calculate(int32(attempt))
+			if sleepErr := sleepInterruptible(ctx, delay); sleepErr != nil {
+				break
+			}
+		}
+	}
+	return "", lastErr
+}
+
+// sleepInterruptible sleeps for d, returning early with ctx.Err() if ctx is
+// cancelled first.
+func sleepInterruptible(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// emitInteractiveSignalFailedAudit records a SOC2/FedRAMP-auditable trace
+// (AU-2/AU-3) when SignalInteractive still fails after exhausting retries
+// (#2289) and the caller fails closed -- the consent-gating guarantee IS
+// CRD creation is meant to provide (DD-INTERACTIVE-002, BR-INTERACTIVE-010)
+// could not be established for this RR, so neither the RR (new-RR path) nor
+// the interactive attach (existing-RR/takeover path) is allowed to proceed.
+func emitInteractiveSignalFailedAudit(ctx context.Context, auditor audit.Emitter, rrID string, sigErr error) {
+	if auditor == nil {
+		return
+	}
+	auditor.Emit(ctx, &audit.Event{
+		Type:      audit.EventInteractiveSignalFailed,
+		ClusterID: ClusterIDFromContext(ctx),
+		Detail: map[string]string{
+			"rr_id": rrID,
+			"error": sigErr.Error(),
+		},
+	})
+}
+
+// ISSignaler abstracts IS CRD creation for the investigate tool.
+// Implemented by session.CRDSessionService via an adapter in the handler layer.
+type ISSignaler interface {
+	// SignalInteractive creates an IS CRD before the await/connect loop.
+	// joinMode should be "start" for fresh interactive or "takeover" for upgrading autonomous.
+	// Returns the CRD name for later correlation updates.
+	SignalInteractive(ctx context.Context, rrNamespace, rrName, taskID, username string, groups []string, joinMode string) (string, error)
+
+	// UpdateCorrelation writes the KA session ID to IS CRD status after MCP connect.
+	UpdateCorrelation(ctx context.Context, crdName, kaSessionID string) error
+}
+
+// InvestigateMCPArgs defines the input for the MCP-based kubernaut_investigate tool.
+// Either RRID (for an existing RR) or APIVersion/Kind/Name (to create a new one)
+// must be provided. When creating, an IS CRD is also created for the interactive flow.
+type InvestigateMCPArgs struct {
+	RRID string `json:"rr_id,omitempty"`
+	// APIVersion is the Kubernetes API group/version (e.g., "apps/v1", "v1").
+	// Required when creating a new RR (not using rr_id) (#1372).
+	APIVersion string `json:"api_version,omitempty"`
+	Namespace  string `json:"namespace,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Name       string `json:"name,omitempty"`
+	// ClusterID is the registered MCP Gateway cluster name for the target
+	// resource, including the hub when fleet mode is enabled. It must exactly
+	// match the Prometheus alert/rule "cluster" label. Only meaningful when
+	// creating a new RR (ignored for the rr_id takeover path, since identity is
+	// read back from the existing RR object instead).
+	ClusterID string `json:"cluster_id,omitempty"`
+
+	// InteractionMode declares how much autonomy the harness should grant
+	// for phase transitions following this investigation (DD-AF-011,
+	// #1899). One of "interactive" (default when omitted -- wait for
+	// genuine user confirmation before discover_workflows/select_workflow),
+	// "full_remediation" (auto-proceed to workflow discovery, but still
+	// wait for user confirmation before executing a workflow), or
+	// "full_remediation_autonomous" (auto-proceed through both discovery
+	// and execution -- only use this when the user explicitly requested
+	// full, unattended remediation). An omitted or unrecognized value fails
+	// safe to "interactive" (AC-6 least privilege, SI-10 input validation).
+	InteractionMode string `json:"interaction_mode,omitempty" jsonschema:"one of interactive (default), full_remediation, full_remediation_autonomous -- declares how much autonomy to grant for post-investigation phase transitions"`
+
+	// ConfirmedSignalName re-supplies a previously-surfaced ambiguous
+	// candidate's alert name after the user has explicitly confirmed it
+	// (DD-AF-012, #2027/#2028). Leave empty on the first call.
+	ConfirmedSignalName string `json:"confirmed_signal_name,omitempty"`
+	// SessionID is an ambient hint the LLM propagates via cross-phase
+	// preservation (#2364 Tier 2). Tolerated here so strict ADK schema
+	// validation does not kill the turn; ignored by the handler, which owns
+	// session lifecycle server-side.
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// InvestigateMCPResult is the output of the MCP investigate tool.
+type InvestigateMCPResult struct {
+	SessionID string          `json:"session_id"`
+	Status    string          `json:"status"`
+	Summary   string          `json:"summary,omitempty"`
+	RRID      string          `json:"rr_id,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	RCA       *InvestigateRCA `json:"rca,omitempty"`
+	// Ambiguous/CandidateSignalName/CandidateSeverity: see CreateRRResult
+	// (DD-AF-012, #2027/#2028). Re-call with ConfirmedSignalName set to
+	// CandidateSignalName once the user has confirmed it. Only meaningful
+	// on the new-RR (api_version/kind/name) path -- the rr_id takeover path
+	// never sets this, since that RR was already triaged at its own
+	// creation time.
+	Ambiguous           bool   `json:"ambiguous,omitempty"`
+	CandidateSignalName string `json:"candidate_signal_name,omitempty"`
+	CandidateSeverity   string `json:"candidate_severity,omitempty"`
+	// AlignmentVerdict carries KA's #1096 shadow-agent full-context grounding
+	// review verdict for this investigation, when ai.alignmentCheck is
+	// enabled on KA (#2071, forward-port of release/v1.5's #2034 Stage 3b).
+	// Hardening beyond the original #2047 gate: AF's present_decision
+	// grounding guard (phase_guard.go, investigateHasGroundedContent) treats
+	// a non-"aligned" Result here as ungrounded even when Summary/RCA are
+	// otherwise present, since KA's own reviewer already found the
+	// conclusions weren't well-supported by tool evidence. Always nil when
+	// alignment checking is disabled (the default).
+	AlignmentVerdict *katypes.AlignmentVerdictResult `json:"alignment_verdict,omitempty"`
+}
+
+// InvestigateRCA is the structured RCA data extracted from the KA complete event.
+// It carries the AF-relevant subset of InvestigationResult for the LLM to pass
+// through into present_decision (#1396).
+type InvestigateRCA struct {
+	katypes.LiveSelectionContext
+	Severity       string   `json:"severity,omitempty"`
+	Confidence     float64  `json:"confidence,omitempty"`
+	CausalChain    []string `json:"causal_chain,omitempty"`
+	Target         string   `json:"target,omitempty"`
+	RCASummary     string   `json:"rca_summary,omitempty"`
+	TotalLLMTurns  int      `json:"total_llm_turns,omitempty"`
+	TotalToolCalls int      `json:"total_tool_calls,omitempty"`
+	// PromptTokens/CompletionTokens/TotalTokens carry KA's cumulative raw
+	// provider token counts for console display (#2387 tokens; never costs).
+	// Parsed from the wire like the counts above — never requested from the
+	// LLM. Omitempty like every other field on this struct.
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+	// IsActionable/HasWorkflow (#1918) mirror KA's rcaEventPayload fields of
+	// the same name, giving phase_guard.go's harness-enforced gate a
+	// structured signal for whether Phase 2 (kubernaut_discover_workflows)
+	// should stay reachable, independent of the model's own reading of the
+	// RCA narrative. *bool (not bool) so an absent key (older/unset signal)
+	// stays distinguishable from a genuine computed false.
+	IsActionable *bool `json:"is_actionable,omitempty"`
+	HasWorkflow  bool  `json:"has_workflow,omitempty"`
+	// Provisional identifies an RCA synthesized from severity-triage metadata
+	// rather than extracted from KA's EventTypeComplete payload (#2071,
+	// forward-port of release/v1.5's #2068). The status-only fallback path does
+	// not construct provisional RCAs, but the field remains part of the result
+	// contract for grounded-summary state and backwards compatibility.
+	Provisional bool `json:"provisional,omitempty"`
+}
+
+// SessionStartedHook is called after a successful StartInvestigation with the
+// session context. Implementations typically create an InvestigationSession CRD.
+// Errors are logged but do not fail the investigation.
+type SessionStartedHook func(ctx context.Context, namespace, rrID, sessionID string) error
+
+// InvestigateConfig bundles the dependencies for HandleInvestigationMCPWithRegistry
+// and NewInvestigateMCPTool, replacing positional parameters.
+type InvestigateConfig struct {
+	MCPClient ka.MCPClient
+	Client    crclient.Client
+	// DynClient is used to ground a newly-created hub-local RR from Kubernetes
+	// Events. Fleet RRs use Prometheus/Thanos signal grounding instead; Events
+	// are not fetched through a direct hub-to-spoke Kubernetes connection.
+	DynClient dynamic.Interface
+	Namespace string
+	Auditor   audit.Emitter
+	Registry  *MonitorRegistry
+	OnStarted SessionStartedHook
+	Pool      *ka.KASessionPool
+	Signaler  ISSignaler
+	Triager   *severity.Triager
+	// ScopeChecker rejects RR creation for out-of-scope resources on the
+	// "new investigation" (api_version/kind/name) path (#2025, main-tracking
+	// clone of #2022; ADR-053 Addendum "Point 3"). Not consulted on the
+	// existing-rr_id (takeover) path — that RR was already scope-checked at
+	// its own creation time. Nil fails closed because scope cannot be verified.
+	ScopeChecker scope.ScopeChecker
+	// ClusterLister names known fleet clusters for the unattributed-refusal
+	// message (#2362). Nil-safe: a nil lister preserves the legacy message.
+	ClusterLister ClusterLister
+}
+
+// HandleInvestigationMCP starts a dedicated MCP investigation session. When a
+// K8s client and namespace are provided, it first polls the AIAnalysis CRD to
+// wait for AA to submit the investigation to KA (BR-INTERACTIVE-010). After
+// confirmation (or best-effort timeout), it calls action=start on KA via the
+// dedicated MCP session, starts a background goroutine that bridges
+// investigation events to the A2A stream, and returns immediately.
+//
+// Event streaming is conditional: events only flow when KA's deferred
+// investigation launches successfully (InvestigationSessionID is populated).
+// If no pending session exists, the MCP session still acquires the interactive
+// lease but the Events channel may be nil or empty.
+func HandleInvestigationMCP(ctx context.Context, mcpClient ka.MCPClient, client crclient.Client, namespace string, args InvestigateMCPArgs, auditor audit.Emitter) (InvestigateMCPResult, error) {
+	return HandleInvestigationMCPWithRegistry(ctx, &InvestigateConfig{
+		MCPClient: mcpClient,
+		Client:    client,
+		Namespace: namespace,
+		Auditor:   auditor,
+	}, args, false, "")
+}
+
+// HandleInvestigationMCPWithRegistry is like HandleInvestigationMCP but also
+// registers the session in a MonitorRegistry for lifecycle management and
+// invokes onStarted (if provided) to create the IS CRD after a successful start.
+//
+// When blocking is true, the function waits for the investigation to complete
+// (or ctx cancellation) and returns the collected summary in InvestigateMCPResult.
+// Events are streamed to the A2A SSE via the EventBridge during the wait.
+// After the investigation completes, if pool is non-nil the MCP session is
+// handed off to the pool (keyed by rr_id + username) so that subsequent tool
+// calls (discover_workflows, select_workflow) reuse the same connection and
+// driver lease without requiring a separate takeover.
+// When blocking is false, a background goroutine bridges events and the function
+// returns immediately (legacy behavior for the MCP bridge path).
+//
+// signaler (optional): When provided, creates the IS CRD BEFORE the await loop
+// (pure CRD-driven coordination per DD-INTERACTIVE-002). This enables AA to detect
+// interactive intent via IS watch and resubmit with interactive=true. After successful
+// MCP connect, UpdateCorrelation writes the KA session ID to the IS status.
+func HandleInvestigationMCPWithRegistry(ctx context.Context, cfg *InvestigateConfig, args InvestigateMCPArgs, blocking bool, username string) (InvestigateMCPResult, error) {
+	if cfg.MCPClient == nil {
+		return InvestigateMCPResult{}, fmt.Errorf("KA MCP client unavailable")
+	}
+
+	rrSeverity, ambiguous, preSignaledISCRDName, err := resolveInvestigationRR(ctx, cfg, &args)
+	if err != nil {
+		return InvestigateMCPResult{}, err
+	}
+	if ambiguous != nil {
+		return InvestigateMCPResult{
+			Ambiguous:           true,
+			CandidateSignalName: ambiguous.CandidateSignalName,
+			CandidateSeverity:   ambiguous.CandidateSeverity,
+			Error:               ambiguous.Message,
+		}, nil
+	}
+
+	// BR-INTERACTIVE-004: reject a known interactive lease holder before the
+	// readiness barriers. The barriers remain necessary for new/takeover paths.
+	if earlyResult, active := rejectKnownActiveSession(ctx, cfg, args.RRID, rrSeverity); active {
+		return *earlyResult, nil
+	}
+
+	identity := auth.UserIdentityFromContext(ctx)
+	// #2265: for a genuinely-new RR, createRRForInvestigation's BeforeCreate
+	// hook already signaled interactively -- strictly before the RR became
+	// visible to any other component. Calling signalInteractiveSession again
+	// here would be a redundant (if harmless) second attempt for that case,
+	// so it only runs when the hook didn't already succeed (pre-existing RR
+	// via rr_id, a dedup/AlreadyExists hit, or the hook itself fail-opened).
+	isCRDName := preSignaledISCRDName
+	if isCRDName == "" {
+		isCRDName, err = signalInteractiveSession(ctx, cfg, args.RRID, identity)
+		if err != nil {
+			return InvestigateMCPResult{}, err
+		}
+	}
+
+	kaSessionID := awaitInvestigationReady(ctx, cfg, args.RRID, isCRDName, blocking)
+
+	logger := logr.FromContextOrDiscard(ctx)
+	result, earlyResult, err := startKAInvestigation(ctx, cfg, args.RRID, kaSessionID, rrSeverity, logger)
+	if err != nil {
+		return InvestigateMCPResult{}, err
+	}
+	if earlyResult != nil {
+		return *earlyResult, nil
+	}
+
+	finalizeInvestigationStart(ctx, cfg, args.RRID, isCRDName, result, logger)
+
+	cleanup := func() {
+		if result.Closer != nil {
+			result.Closer()
+		}
+		if cfg.Registry != nil {
+			cfg.Registry.Deregister(result.SessionID)
+		}
+	}
+
+	if result.Events == nil {
+		cleanup()
+		return InvestigateMCPResult{
+			SessionID: result.SessionID,
+			Status:    result.Status,
+			RRID:      args.RRID,
+		}, nil
+	}
+
+	if blocking {
+		return runBlockingInvestigation(ctx, cfg, blockingInvestigationParams{
+			RRID:       args.RRID,
+			Username:   username,
+			RRSeverity: rrSeverity,
+			Result:     result,
+			Cleanup:    cleanup,
+			Logger:     logger,
+		}), nil
+	}
+
+	// Non-blocking: spawn background goroutine for MCP bridge path.
+	startNonBlockingBridge(ctx, result.Events, cleanup)
+
+	return InvestigateMCPResult{
+		SessionID: result.SessionID,
+		Status:    result.Status,
+		RRID:      args.RRID,
+	}, nil
+}
+
+// resolveInvestigationRR validates args, optionally creates a new RR from
+// resource args (rr_id vs api_version/kind/name), and seeds the EventBridge
+// RR context (#1423) for Console banner population. Returns the severity
+// assessed during RR creation (if any) for later status guidance, and
+// (#2265) the IS CRD name if createRRForInvestigation's BeforeCreate hook
+// already signaled interactively for a genuinely-new RR -- empty otherwise,
+// so the caller falls back to its own post-hoc signalInteractiveSession call.
+func resolveInvestigationRR(ctx context.Context, cfg *InvestigateConfig, args *InvestigateMCPArgs) (rrSeverity string, ambiguous *CreateRRResult, preSignaledISCRDName string, err error) {
+	hasRRID := args.RRID != ""
+	hasResourceArgs := args.APIVersion != "" || args.Kind != "" || args.Name != "" || args.Namespace != ""
+
+	if !hasRRID && !hasResourceArgs {
+		return "", nil, "", fmt.Errorf("rr_id or api_version/kind/name required")
+	}
+	if hasRRID {
+		if err := validate.RRID(args.RRID); err != nil {
+			return "", nil, "", fmt.Errorf("invalid rr_id: %w", err)
+		}
+	}
+
+	identity := auth.UserIdentityFromContext(ctx)
+
+	if !hasRRID && hasResourceArgs {
+		rrSeverity, ambiguous, preSignaledISCRDName, err = createRRForInvestigation(ctx, cfg, args, identity)
+		if err != nil {
+			return "", nil, "", err
+		}
+		// DD-AF-012/#2027/#2028: no RR was created -- the caller must ask
+		// the user to confirm the candidate before retrying. args.RRID was
+		// never populated, so the takeover-fetch logic below must not run.
+		if ambiguous != nil {
+			return "", ambiguous, "", nil
+		}
+	}
+
+	if args.RRID == "" {
+		return "", nil, "", fmt.Errorf("rr_id is required for MCP investigation")
+	}
+
+	// For the existing-RR path (rr_id provided as input, i.e. a takeover of
+	// an autonomous investigation), attempt to fetch the full RemediationRequest
+	// to reconstruct complete context for Console banner population (#1423,
+	// #1409). Falls back to minimal rr_id+phase context if the fetch is
+	// unavailable or fails (SI-17: fail-safe degradation, not fail-closed —
+	// a takeover session must still proceed even when the RR can't be read).
+	if !hasResourceArgs {
+		setTakeoverRRContext(ctx, cfg, args.RRID)
+	}
+
+	return rrSeverity, nil, preSignaledISCRDName, nil
+}
+
+// setTakeoverRRContext seeds the EventBridge RR context for the takeover
+// (rr_id-only) path. On success, reconstructs the complete context
+// (namespace, kind, target, alert_name, cluster_id) from the fetched RR
+// object, closing the #1423 gap where takeover sessions previously carried
+// only rr_id+phase. On any failure (no client/namespace configured, or the
+// fetch itself errors), degrades to the minimal rr_id+phase context instead
+// of failing the tool call (SI-17, AU-2: failure is logged, not silent).
+func setTakeoverRRContext(ctx context.Context, cfg *InvestigateConfig, rrID string) {
+	if cfg.Client != nil && cfg.Namespace != "" {
+		var rr remediationv1.RemediationRequest
+		err := cfg.Client.Get(ctx, crclient.ObjectKey{Namespace: cfg.Namespace, Name: rrID}, &rr)
+		if err == nil {
+			launcher.SetRRContextSafe(ctx, &launcher.RRContext{
+				RRID:      rrID,
+				Namespace: rr.Spec.TargetResource.Namespace,
+				Kind:      rr.Spec.TargetResource.Kind,
+				Target:    remediationrequest.FormatResourceDisplay(rr.Spec.TargetResource.Kind, rr.Spec.TargetResource.Name),
+				AlertName: rr.Spec.SignalName,
+				Phase:     "Investigating",
+				ClusterID: rr.Spec.ClusterID,
+			})
+			return
+		}
+		logr.FromContextOrDiscard(ctx).Info("takeover RR context fetch failed, degrading to minimal context",
+			"rr_id", rrID, "error", err)
+	}
+	launcher.SetRRContextSafe(ctx, &launcher.RRContext{
+		RRID:  rrID,
+		Phase: "Investigating",
+	})
+}
+
+// createRRForInvestigation creates a new RemediationRequest from
+// api_version/kind/name/namespace args, resolving cluster-scoped namespace
+// stripping and rejecting service-account-initiated interactive
+// investigations. Mutates args.RRID/args.Namespace and seeds the
+// EventBridge RR context (#1423, AU-3, SI-4). Returns (#2265) the IS CRD
+// name if buildPreCreateISHooks's BeforeCreate hook signaled interactively
+// for a genuinely-new RR -- empty when the hook didn't fire (dedup hit) or
+// fail-opened (signaler error other than a single-driver conflict).
+func createRRForInvestigation(ctx context.Context, cfg *InvestigateConfig, args *InvestigateMCPArgs, identity *auth.UserIdentity) (severityOut string, ambiguous *CreateRRResult, preSignaledISCRDName string, err error) {
+	if err := validate.APIVersion(args.APIVersion); err != nil {
+		return "", nil, "", fmt.Errorf("%w", err)
+	}
+	if args.Kind == "" || args.Name == "" {
+		return "", nil, "", fmt.Errorf("kind and name required when providing api_version/kind/name")
+	}
+
+	clusterScoped := resolveClusterScoped(ctx, args)
+	if clusterScoped && args.Namespace != "" {
+		args.Namespace = ""
+	}
+
+	if identity != nil && identity.IsServiceAccount {
+		return "", nil, "", fmt.Errorf("interactive investigation cannot be started by service accounts")
+	}
+	if cfg.Client == nil {
+		return "", nil, "", fmt.Errorf("k8s client unavailable for RR creation")
+	}
+
+	createArgs := &CreateRRArgs{
+		Namespace:                    args.Namespace,
+		Kind:                         args.Kind,
+		Name:                         args.Name,
+		APIVersion:                   args.APIVersion,
+		ClusterScoped:                clusterScoped,
+		ClusterID:                    args.ClusterID,
+		ConfirmedAmbiguousSignalName: args.ConfirmedSignalName,
+	}
+	createUser := ""
+	if identity != nil {
+		createUser = identity.Username
+	}
+
+	hooks, signaledISCRDName := buildPreCreateISHooks(cfg, identity)
+	result, err := HandleCreateRRWithHooks(ctx, &ToolDeps{Client: cfg.Client, DynClient: cfg.DynClient, ControllerNS: cfg.Namespace, Triager: cfg.Triager, Auditor: cfg.Auditor, ScopeChecker: cfg.ScopeChecker, ClusterLister: cfg.ClusterLister}, createArgs, createUser, hooks)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("create RR for investigation: %w", err)
+	}
+	// DD-AF-012/#2027/#2028: no RR was created -- surface the candidate to
+	// the caller instead of treating this as a fatal error.
+	if result.Ambiguous {
+		return "", &result, "", nil
+	}
+	args.RRID = result.RRID
+
+	launcher.SetRRContextSafe(ctx, newlyCreatedRRContext(result.RRID, args.Namespace, args.Kind, args.Name, result.SignalName, result.ClusterID))
+
+	return result.Severity, nil, *signaledISCRDName, nil
+}
+
+// buildPreCreateISHooks builds the CreateRRHooks (#2265) that let
+// createRRForInvestigation signal interactive intent (and later back-fill
+// the resulting IS CRD's OwnerReference) strictly between "the new RR's
+// name is known" and "the RR becomes visible to any other component" --
+// closing the race where RO/AA/KA could otherwise process the RR before
+// AF's own, separately-issued InvestigationSession Create call lands. The
+// returned *string is populated with the created IS CRD's name once
+// BeforeCreate succeeds (read by the caller after HandleCreateRRWithHooks
+// returns); it stays empty when no signaler is configured or the dedup
+// branch is hit (BeforeCreate never fires).
+//
+// SignalInteractive is retried with bounded exponential backoff on
+// transient failures (#2289, signalInteractiveWithRetry); if it still fails
+// after exhausting retries, BeforeCreate returns the error and
+// HandleCreateRRWithHooks aborts before the RR is ever created (fail
+// closed) -- an interactively-requested investigation must never silently
+// downgrade to an unconsented autonomous RR.
+func buildPreCreateISHooks(cfg *InvestigateConfig, identity *auth.UserIdentity) (CreateRRHooks, *string) {
+	signaledISCRDName := new(string)
+	if cfg.Signaler == nil || cfg.Client == nil || cfg.Namespace == "" {
+		return CreateRRHooks{}, signaledISCRDName
+	}
+
+	signalUsername := ""
+	var groups []string
+	if identity != nil {
+		signalUsername = identity.Username
+		groups = identity.Groups
+	}
+
+	hooks := CreateRRHooks{
+		BeforeCreate: func(hctx context.Context, rrName string) error {
+			// A genuinely-new RR cannot yet have an autonomous investigation
+			// running (AA needs the RR to exist and be processed by
+			// SignalProcessing -> RemediationOrchestrator -> AIAnalysis
+			// first) -- joinMode is unconditionally "start", unlike the
+			// pre-existing-RR takeover path in signalInteractiveSession.
+			taskID := fmt.Sprintf("a2a-%s", rrName)
+			isCRDName, sigErr := signalInteractiveWithRetry(hctx, cfg.Signaler, signalInteractiveRequest{
+				RRNamespace: cfg.Namespace, RRName: rrName, TaskID: taskID,
+				Username: signalUsername, Groups: groups, JoinMode: "start",
+			})
+			if sigErr != nil {
+				logger := logr.FromContextOrDiscard(hctx)
+				if strings.Contains(sigErr.Error(), "session_active") {
+					logger.Info("IS CRD single-driver enforcement: rejecting duplicate session", "rr_id", rrName, "error", sigErr)
+					return sigErr
+				}
+				logger.Error(sigErr, "failed to create IS CRD before RR after retries, failing closed (#2289)", "rr_id", rrName, "attempts", signalInteractiveMaxAttempts)
+				emitInteractiveSignalFailedAudit(hctx, cfg.Auditor, rrName, sigErr)
+				return fmt.Errorf("failed to establish interactive session after %d attempts: %w", signalInteractiveMaxAttempts, sigErr)
+			}
+			*signaledISCRDName = isCRDName
+			return nil
+		},
+		AfterCreate: func(actx context.Context, rr *remediationv1.RemediationRequest) {
+			if *signaledISCRDName == "" {
+				return
+			}
+			if backfiller, ok := cfg.Signaler.(OwnerReferenceBackfiller); ok {
+				backfiller.BackfillOwnerReference(actx, rr.Namespace, rr.Name, rr.UID)
+			}
+		},
+	}
+	return hooks, signaledISCRDName
+}
+
+// resolveClusterScoped determines whether the target resource is
+// cluster-scoped, preferring the REST mapper (if attached to ctx) over the
+// static fallback map.
+func resolveClusterScoped(ctx context.Context, args *InvestigateMCPArgs) bool {
+	if args.Namespace == "" {
+		return true
+	}
+	mapper := RESTMapperFromContext(ctx)
+	if mapper != nil {
+		resolved := ResolveEffectiveNamespace(mapper, args.Kind, args.Namespace, logr.FromContextOrDiscard(ctx))
+		return resolved == ""
+	}
+	clusterScoped := scope.IsClusterScopedKind(args.Kind)
+	if clusterScoped {
+		logr.FromContextOrDiscard(ctx).Info("stripping namespace for cluster-scoped resource (static fallback)",
+			"kind", args.Kind,
+			"stripped_namespace", args.Namespace,
+		)
+	}
+	return clusterScoped
+}
+
+// signalInteractiveSession creates the IS CRD before the await loop when a
+// signaler is configured (DD-INTERACTIVE-002, BR-INTERACTIVE-010), detecting
+// and announcing a takeover if an autonomous investigation is already
+// running. SignalInteractive is retried with bounded exponential backoff on
+// transient failures (#2289, signalInteractiveWithRetry).
+//
+// Returns the created IS CRD name (used later for UpdateCorrelation), or an
+// error -- either KA's single-driver enforcement rejecting a duplicate
+// session, or (#2289) SignalInteractive still failing after exhausting
+// retries. Both fail closed: the caller aborts the interactive attach
+// entirely rather than silently starting an investigation with no
+// consent-gating established. This does not stop an already-running
+// autonomous RR on the takeover path (that decision was already committed
+// by the prior kubernaut_remediate call) -- it only refuses to accept the
+// interactive attach on top of it.
+func signalInteractiveSession(ctx context.Context, cfg *InvestigateConfig, rrID string, identity *auth.UserIdentity) (string, error) {
+	if cfg.Signaler == nil || cfg.Client == nil || cfg.Namespace == "" {
+		return "", nil
+	}
+	joinMode := "start"
+	if isAutonomousInvestigation(ctx, cfg.Client, cfg.Namespace, rrID) {
+		joinMode = "takeover"
+		_ = launcher.EmitStatusSafe(ctx, "Autonomous investigation detected, signaling takeover...")
+	}
+
+	signalUsername := ""
+	var groups []string
+	if identity != nil {
+		signalUsername = identity.Username
+		groups = identity.Groups
+	}
+
+	taskID := fmt.Sprintf("a2a-%s", rrID)
+	isCRDName, sigErr := signalInteractiveWithRetry(ctx, cfg.Signaler, signalInteractiveRequest{
+		RRNamespace: cfg.Namespace, RRName: rrID, TaskID: taskID,
+		Username: signalUsername, Groups: groups, JoinMode: joinMode,
+	})
+	if sigErr != nil {
+		logger := logr.FromContextOrDiscard(ctx)
+		if strings.Contains(sigErr.Error(), "session_active") {
+			logger.Info("IS CRD single-driver enforcement: rejecting duplicate session", "rr_id", rrID, "error", sigErr)
+			return "", sigErr
+		}
+		logger.Error(sigErr, "failed to create IS CRD after retries, failing closed (#2289)", "rr_id", rrID, "attempts", signalInteractiveMaxAttempts)
+		emitInteractiveSignalFailedAudit(ctx, cfg.Auditor, rrID, sigErr)
+		return "", fmt.Errorf("failed to establish interactive session after %d attempts: %w", signalInteractiveMaxAttempts, sigErr)
+	}
+	return isCRDName, nil
+}
+
+// awaitInvestigationReady waits for the AIA CRD to show a pending KA session
+// (confirming AA submitted with interactive=true) and for the IS CRD phase
+// to become Active (confirming AA acknowledged the interactive session).
+// Both waits are best-effort: on timeout the investigation proceeds without
+// a resolved kaSessionID. The blocking path uses a longer await timeout
+// because AA needs time to detect the IS CRD and resubmit to KA.
+func awaitInvestigationReady(ctx context.Context, cfg *InvestigateConfig, rrID, isCRDName string, blocking bool) string {
+	if cfg.Client == nil || cfg.Namespace == "" {
+		return ""
+	}
+
+	awaitTimeout := 10 * time.Second
+	if blocking {
+		awaitTimeout = 60 * time.Second
+	}
+	checkCtx, checkCancel := context.WithTimeout(ctx, awaitTimeout)
+	awaitResult, awaitErr := HandleAwaitSession(checkCtx, cfg.Client, AwaitSessionArgs{
+		Namespace: cfg.Namespace,
+		RRName:    rrID,
+	})
+	checkCancel()
+
+	var kaSessionID string
+	if awaitErr == nil && awaitResult.Status == "ready" {
+		kaSessionID = awaitResult.SessionID
+		_ = launcher.EmitStatusSafe(ctx, statusSessionReadyText)
+	}
+
+	// Wait for KA's own AgentSession.Status.Interactive ack (DD-AA-KA-001
+	// Amendment Gap 1 / #2172) — set the instant KA's dispatcher confirms an
+	// interactive driver, independent of AA. Without this, action=start may
+	// arrive before KA has a pending session to activate.
+	isPhaseTimeout := isPhaseActivePollTimeout
+	if isCRDName != "" {
+		isPhaseTimeout = takeoverISPhaseTimeout
+	}
+	isCtx, isCancel := context.WithTimeout(ctx, isPhaseTimeout)
+	interactive, awaitInteractiveErr := AwaitAgentSessionInteractive(isCtx, cfg.Client, cfg.Namespace, rrID)
+	if awaitInteractiveErr != nil {
+		logr.FromContextOrDiscard(ctx).Error(awaitInteractiveErr, "AwaitAgentSessionInteractive failed (proceeding without ack)", "rr_id", rrID)
+	} else if interactive {
+		_ = launcher.EmitStatusSafe(ctx, statusSessionAcknowledgedText)
+	}
+	isCancel()
+
+	return kaSessionID
+}
+
+// startKAInvestigation calls action=start on KA via the dedicated MCP
+// session. When KA reports session_active (another driver already owns the
+// investigation), this returns a non-nil structured "in progress" result
+// (emitting an early RCA from rrSeverity, if available) instead of an
+// error, so the LLM sees a normal tool response rather than a
+// retry-triggering error.
+func startKAInvestigation(ctx context.Context, cfg *InvestigateConfig, rrID, kaSessionID, rrSeverity string, logger logr.Logger) (*ka.StartInvestigationResult, *InvestigateMCPResult, error) {
+	logger.Info("StartInvestigation: calling MCP client",
+		"rr_id", rrID, "ka_session_id", kaSessionID, "ctx_err", ctx.Err())
+
+	result, err := cfg.MCPClient.StartInvestigation(ctx, ka.StartInvestigationArgs{
+		RRID:      rrID,
+		SessionID: kaSessionID,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "session_active") {
+			driver := extractDriverFromSessionActiveError(err)
+			logger.Info("session_active from KA: returning structured result instead of error",
+				"rr_id", rrID, "driver", driver)
+
+			return nil, sessionActiveInvestigationResult(ctx, rrID, rrSeverity, driver), nil
+		}
+		return nil, nil, fmt.Errorf("start MCP investigation: %w", err)
+	}
+	logger.Info("StartInvestigation: MCP session established",
+		"rr_id", rrID, "session_id", result.SessionID,
+		"status", result.Status, "events_nil", result.Events == nil)
+	return result, nil, nil
+}
+
+type investigationStatusResponse struct {
+	Mode   string `json:"mode"`
+	Driver string `json:"driver,omitempty"`
+}
+
+// activeInteractiveSession performs a short, best-effort status probe. KA's
+// status action reports mode=interactive only while a driver currently holds
+// the investigation lease; mode=autonomous must continue through the normal
+// takeover path. Any probe failure or unrecognised response deliberately falls
+// through to the existing readiness and StartInvestigation race barriers.
+func activeInteractiveSession(ctx context.Context, cfg *InvestigateConfig, rrID string) (string, bool) {
+	statusCtx, cancel := context.WithTimeout(ctx, activeSessionStatusTimeout)
+	defer cancel()
+
+	result, err := cfg.MCPClient.InvokeAction(statusCtx, ka.InvokeActionArgs{
+		RRID:   rrID,
+		Action: "status",
+	})
+	if err != nil {
+		logr.FromContextOrDiscard(ctx).V(1).Info(
+			"interactive session status preflight unavailable; continuing with normal start path",
+			"rr_id", rrID, "error", err)
+		return "", false
+	}
+	if result == nil || result.Response == "" {
+		logr.FromContextOrDiscard(ctx).V(1).Info(
+			"interactive session status preflight returned no response; continuing with normal start path",
+			"rr_id", rrID)
+		return "", false
+	}
+
+	var status investigationStatusResponse
+	if err := json.Unmarshal([]byte(result.Response), &status); err != nil {
+		logr.FromContextOrDiscard(ctx).Error(err,
+			"interactive session status preflight returned malformed response; continuing with normal start path",
+			"rr_id", rrID)
+		return "", false
+	}
+	if status.Mode != "interactive" {
+		return "", false
+	}
+	return status.Driver, true
+}
+
+func rejectKnownActiveSession(ctx context.Context, cfg *InvestigateConfig, rrID, rrSeverity string) (*InvestigateMCPResult, bool) {
+	driver, active := activeInteractiveSession(ctx, cfg, rrID)
+	if !active {
+		return nil, false
+	}
+	logr.FromContextOrDiscard(ctx).Info("active interactive session detected before readiness wait",
+		"rr_id", rrID, "driver", driver)
+	return sessionActiveInvestigationResult(ctx, rrID, rrSeverity, driver), true
+}
+
+func sessionActiveInvestigationResult(ctx context.Context, rrID, rrSeverity, driver string) *InvestigateMCPResult {
+	if driver == "" {
+		driver = "another user"
+	}
+	guidance := sessionActiveGuidance(rrID, rrSeverity, driver)
+	_ = launcher.EmitStatusSafe(ctx, guidance)
+
+	return &InvestigateMCPResult{
+		Status: "session_active",
+		RRID:   rrID,
+		Error:  guidance,
+	}
+}
+
+func sessionActiveGuidance(rrID, rrSeverity, driver string) string {
+	severityText := ""
+	if rrSeverity != "" {
+		severityText = fmt.Sprintf(" Preliminary severity from resource metadata: %s.", rrSeverity)
+	}
+	return fmt.Sprintf(
+		"An investigation for this resource is already in progress, driven by %s.%s "+
+			"Do not retry kubernaut_investigate. "+
+			"Use kubernaut_get_remediation with rr_id %s to check its status.",
+		driver, severityText, rrID)
+}
+
+func noRCAStatusText(rrID, rrSeverity string) string {
+	severityText := ""
+	if rrSeverity != "" {
+		severityText = fmt.Sprintf(" Preliminary severity from resource metadata: %s.", rrSeverity)
+	}
+	return fmt.Sprintf(
+		"No root-cause findings are available yet.%s Use kubernaut_get_remediation with rr_id %s to check its status.",
+		severityText, rrID)
+}
+
+// finalizeInvestigationStart emits the KA-delegation audit event, invokes
+// the OnStarted hook (IS CRD creation) and IS correlation update, and
+// registers the session in the MonitorRegistry so StopAll can force-close
+// on shutdown (the bridge goroutine/blocking path deregisters on exit).
+func finalizeInvestigationStart(ctx context.Context, cfg *InvestigateConfig, rrID, isCRDName string, result *ka.StartInvestigationResult, logger logr.Logger) {
+	// correlationSessionID is the pollable investigation-analysis session ID, NOT
+	// the MCP driver-lease result.SessionID. Correlating the driver-lease ID into
+	// IS.Status.KACorrelationID causes AA's handleSessionLost to 404-loop forever
+	// (#2029). Fall back to SessionID only when KA omits InvestigationSessionID
+	// (back-compat).
+	correlationSessionID := result.InvestigationSessionID
+	if correlationSessionID == "" {
+		correlationSessionID = result.SessionID
+	}
+
+	if cfg.Auditor != nil {
+		clusterID := ClusterIDFromContext(ctx)
+		cfg.Auditor.Emit(ctx, &audit.Event{
+			Type:      audit.EventKADelegated,
+			ClusterID: clusterID,
+			Detail: map[string]string{
+				"rr_id":             rrID,
+				"session_id":        result.SessionID,
+				"ka_correlation_id": correlationSessionID,
+				"delegation_type":   "interactive",
+				"cluster_id":        clusterID,
+			},
+		})
+	}
+
+	if cfg.OnStarted != nil && result.SessionID != "" {
+		if hookErr := cfg.OnStarted(ctx, cfg.Namespace, rrID, result.SessionID); hookErr != nil {
+			logr.FromContextOrDiscard(ctx).Error(hookErr, "IS CRD creation failed after investigate",
+				"rr_id", rrID,
+				"session_id", result.SessionID,
+				"namespace", cfg.Namespace,
+			)
+			_ = launcher.EmitStatusSafe(ctx, fmt.Sprintf(warnSessionTrackingFailedFmt, security.RedactError(hookErr)))
+		}
+	}
+
+	if cfg.Signaler != nil && isCRDName != "" && correlationSessionID != "" {
+		if corrErr := cfg.Signaler.UpdateCorrelation(ctx, isCRDName, correlationSessionID); corrErr != nil {
+			logger.Error(corrErr, "IS CRD correlation update failed (non-fatal)",
+				"crd_name", isCRDName, "session_id", correlationSessionID)
+		}
+	}
+
+	// Track session in registry before starting goroutine so StopAll can
+	// force-close on SIGTERM. The goroutine deregisters on natural exit.
+	if cfg.Registry != nil {
+		cfg.Registry.Register(result.SessionID, result.Closer)
+	}
+}
+
+// blockingInvestigationParams groups the values threaded through
+// runBlockingInvestigation. Extracted per AGENTS.md's 8+-param
+// Options-pattern rule (GO-ANTIPATTERN-AUDIT-2026-07-01 Phase 4h).
+type blockingInvestigationParams struct {
+	RRID       string
+	Username   string
+	RRSeverity string
+	Result     *ka.StartInvestigationResult
+	Cleanup    func()
+	Logger     logr.Logger
+}
+
+// runBlockingInvestigation bridges KA events into a collected RCA summary,
+// reports severity-only outcomes through the status channel when KA produced
+// no RCA, emits an investigation_summary artifact for genuine RCA results
+// (#2247, SI-10), and hands the MCP session off to the pool (if available) so
+// subsequent tool calls reuse the connection; otherwise it closes the session
+// via cleanup.
+func runBlockingInvestigation(ctx context.Context, cfg *InvestigateConfig, p blockingInvestigationParams) InvestigateMCPResult {
+	rrID, username, rrSeverity, result, cleanup, logger := p.RRID, p.Username, p.RRSeverity, p.Result, p.Cleanup, p.Logger
+	logger.Info("bridgeEventsCollectSummary: starting blocking event bridge",
+		"rr_id", rrID, "session_id", result.SessionID, "ctx_err", ctx.Err())
+	bridgeCtx := WithRRID(ctx, rrID)
+	summary, rca, exitReason, alignmentVerdict := bridgeEventsCollectSummary(bridgeCtx, result.Events, BridgeInactivityTimeout)
+	status := ExitReasonToStatus(exitReason)
+	logger.Info("bridgeEventsCollectSummary: finished",
+		"rr_id", rrID, "status", status, "exit_reason", exitReason, "summary_len", len(summary))
+
+	if exitReason == ExitReasonInactivityTimeout && cfg.Auditor != nil {
+		clusterID := ClusterIDFromContext(ctx)
+		cfg.Auditor.Emit(ctx, &audit.Event{
+			Type:      audit.EventInvestigationTimeout,
+			ClusterID: clusterID,
+			Detail: map[string]string{
+				"rr_id":              rrID,
+				"session_id":         result.SessionID,
+				"exit_reason":        exitReason,
+				"inactivity_timeout": BridgeInactivityTimeout.String(),
+				"summary_len":        fmt.Sprintf("%d", len(summary)),
+				"cluster_id":         clusterID,
+			},
+		})
+	}
+
+	// When KA produced no RCA at all (e.g. user-driving mode with no
+	// autonomous session), report the outcome through the status channel. Any
+	// severity from RR triage is grounded context only. Do not create a
+	// provisional RCA: no root-cause findings or confidence are available.
+	if rca == nil {
+		statusText := noRCAStatusText(rrID, rrSeverity)
+		_ = launcher.EmitStatusSafe(ctx, statusText)
+		logger.Info("emitted no-RCA investigation status",
+			"rr_id", rrID, "severity", rrSeverity)
+	}
+
+	// SI-10 (#2247): a genuine RCA must also produce a structured,
+	// audit-grade investigation_summary artifact. A status-only outcome above
+	// deliberately has no RCA-shaped artifact because it has no root-cause
+	// findings to report.
+	if rca != nil {
+		emitInvestigationSummaryArtifact(ctx, rca, rrID)
+	}
+
+	handoffOrCloseSession(ctx, cfg, rrID, username, result, cleanup, logger)
+
+	return InvestigateMCPResult{
+		SessionID:        result.SessionID,
+		Status:           status,
+		Summary:          summary,
+		RRID:             rrID,
+		RCA:              rca,
+		AlignmentVerdict: alignmentVerdict,
+	}
+}
+
+// handoffOrCloseSession hands the MCP session off to the pool (keyed by
+// rr_id+username) so discover_workflows/select_workflow reuse the same
+// connection and driver lease, or falls back to closing it via cleanup.
+func handoffOrCloseSession(ctx context.Context, cfg *InvestigateConfig, rrID, username string, result *ka.StartInvestigationResult, cleanup func(), logger logr.Logger) {
+	if cfg.Pool == nil || result.Session == nil || username == "" {
+		cleanup()
+		return
+	}
+	watchDone := make(chan struct{})
+	onRelease := func() { close(watchDone) }
+	router, injectErr := cfg.Pool.InjectVerified(ctx, rrID, username, result.Session, onRelease)
+	if injectErr != nil {
+		logger.Info("investigation session dead on handoff, skipping pool inject",
+			"rr_id", rrID, "session_id", result.SessionID, "error", injectErr.Error())
+		if cfg.Registry != nil {
+			cfg.Registry.Deregister(result.SessionID)
+		}
+		return
+	}
+	if cfg.Registry != nil {
+		cfg.Registry.Deregister(result.SessionID)
+	}
+	watchCtx := context.WithoutCancel(ctx)
+	go WatchTerminalEvents(watchCtx, result.Events, rrID, watchDone, router)
+	logger.Info("investigation session handed off to pool",
+		"rr_id", rrID, "session_id", result.SessionID, "username", username)
+}
+
+// startNonBlockingBridge spawns a background goroutine that bridges KA
+// events to the A2A stream and returns immediately (legacy MCP bridge
+// path). The goroutine is detached from the tool context (which wrapTool
+// cancels via its deferred cancel() on handler return) and bounded by
+// NonBlockingBridgeTTL instead, so it survives past the handler call.
+func startNonBlockingBridge(ctx context.Context, events <-chan ka.InvestigationEvent, cleanup func()) {
+	bridgeCtx, bridgeCancel := context.WithTimeout(context.WithoutCancel(ctx), NonBlockingBridgeTTL)
+	// Snapshot the inactivity timeout synchronously, before spawning the
+	// goroutine. Reading the package-level BridgeInactivityTimeout directly
+	// inside the goroutine closure would defer the read until the goroutine
+	// is actually scheduled, which can race with a concurrent write to the
+	// same var (e.g. from a test overriding it for a different case).
+	inactivityTimeout := BridgeInactivityTimeout
+	go func() {
+		defer bridgeCancel()
+		defer cleanup()
+		BridgeEventsToA2A(bridgeCtx, events, inactivityTimeout)
+	}()
+}
+
+// NewInvestigateMCPTool creates the kubernaut_investigate tool backed by MCP
+// for the A2A agent path. The tool blocks until the investigation completes,
+// streaming live events to kagenti while collecting the final RCA summary.
+// The LLM receives the full results in the tool response and can proceed to
+// the next phase deterministically.
+//
+// client and namespace enable AIA CRD polling before starting the
+// investigation (BR-INTERACTIVE-010). Pass nil client to skip polling.
+// registry is optional; when provided, sessions are tracked for graceful shutdown.
+// onStarted is called after a successful start to create the IS CRD.
+// pool is optional; when provided, the MCP session is handed off to the pool
+// after the investigation so that discover_workflows / select_workflow reuse
+// the same connection and driver lease.
+func NewInvestigateMCPTool(cfg *InvestigateConfig, mapper meta.RESTMapper) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name: "kubernaut_investigate",
+		Description: "Investigate an infrastructure incident via MCP. " +
+			"Provide rr_id to resume an existing investigation, or " +
+			"api_version/kind/name (and optional namespace for namespaced resources) " +
+			"and cluster_id using the MCP Gateway registration name to create a new investigation. " +
+			"In fleet mode, the hub is registered too; cluster_id must match Prometheus cluster attribution. " +
+			"(ignored when resuming via rr_id, since cluster identity is read from the existing request). " +
+			"This tool blocks until the investigation completes and returns " +
+			"the root-cause analysis summary. Live progress events stream " +
+			"to the user automatically while the investigation runs.",
+	}, func(ctx agent.Context, args InvestigateMCPArgs) (InvestigateMCPResult, error) {
+		user := usernameFromContext(ctx)
+		toolCtx := ContextWithRESTMapper(ctx, mapper)
+		return HandleInvestigationMCPWithRegistry(toolCtx, cfg, args, true, user)
+	})
+}
+
+// isAutonomousInvestigation checks if the given RR has an active AIA CRD with
+// a session ID already assigned (indicating autonomous investigation in progress).
+// Returns true when a takeover is needed instead of a fresh start.
+func isAutonomousInvestigation(ctx context.Context, client crclient.Client, namespace, rrName string) bool {
+	if client == nil || namespace == "" || rrName == "" {
+		return false
+	}
+	var list aiav1alpha1.AIAnalysisList
+	if err := client.List(ctx, &list, crclient.InNamespace(namespace)); err != nil {
+		return false
+	}
+	for i := range list.Items {
+		item := &list.Items[i]
+		if item.Spec.RemediationRequestRef.Name != rrName {
+			continue
+		}
+		if item.Status.KASession != nil && item.Status.KASession.ID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+var reDriverFromMap = regexp.MustCompile(`driver:(\S+?)[\]\)\s,}]`)
+
+func extractDriverFromSessionActiveError(err error) string {
+	if m := reDriverFromMap.FindStringSubmatch(err.Error()); len(m) > 1 {
+		return m[1]
+	}
+	return "another user"
+}

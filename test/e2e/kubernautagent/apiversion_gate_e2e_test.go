@@ -1,0 +1,215 @@
+/*
+Copyright 2026 Jordi Gil.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package kubernautagent
+
+import (
+	"net/http"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
+	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/jordigilh/kubernaut/test/infrastructure"
+	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+)
+
+// apiVersion Validation Gate E2E Tests — Issue #1044
+// Test Plan: docs/tests/1044/E2E_TEST_PLAN.md
+// Scenarios: E2E-KA-1044-001 through E2E-KA-1044-002
+// Business Requirements: BR-AI-1044
+//
+// These tests validate that the apiVersionValidationGate correctly escalates
+// to human review when the LLM omits api_version for a Kind that exists in
+// multiple API groups (CRD kind collision). The mock LLM scenario
+// "ambiguous_kind" always returns an empty APIVersion, so the gate exhausts
+// its retries and sets HumanReviewNeeded=true — the security-critical path
+// that prevents incorrect RBAC grants.
+//
+// Infrastructure: Kind cluster with two CRDs (TestWidget in
+// alpha.kubernaut-test.ai/v1 and beta.kubernaut-test.ai/v1),
+// Mock LLM with ambiguous_kind scenario, full KA pipeline.
+
+var _ = Describe("E2E-KA-1044: apiVersion Validation Gate", Label("e2e", "ka", "apiversion-gate", "1044"), func() {
+
+	Context("BR-AI-1044: Gate exhaustion with ambiguous CRD kind", func() {
+
+		var dataStorageClient *ogenclient.Client
+
+		BeforeEach(func() {
+			saToken, err := infrastructure.GetServiceAccountToken(ctx, sharedNamespace, "kubernaut-agent-e2e-sa", kubeconfigPath)
+			Expect(err).ToNot(HaveOccurred(), "Failed to get ServiceAccount token")
+
+			dataStorageClient, err = ogenclient.NewClient(
+				dataStorageURL,
+				ogenclient.WithClient(&http.Client{
+					Transport: testauth.NewServiceAccountTransport(saToken),
+					Timeout:   30 * time.Second,
+				}),
+			)
+			Expect(err).ToNot(HaveOccurred(), "Failed to create authenticated DataStorage client")
+		})
+
+		It("E2E-KA-1044-001: Pod signal with RCA targeting ambiguous TestWidget triggers human review", func() {
+			// ========================================
+			// TEST PLAN MAPPING
+			// ========================================
+			// Scenario ID: E2E-KA-1044-001
+			// Business Outcome: When the LLM targets an ambiguous Kind (TestWidget)
+			//   without api_version and exhausts retries, the gate escalates to
+			//   human review, preventing incorrect RBAC grants.
+			// BR: BR-AI-1044 AC3
+			// Risk Mitigation: R1 (CRD kind collision → wrong GVK → wrong RBAC)
+
+			// ========================================
+			// ARRANGE: Pod signal that triggers ambiguous_kind scenario
+			// ========================================
+			spec := agentsessionv1.AgentSessionSpec{
+				RemediationRequestRef: agentsessionv1.ObjectRef{Name: "req-e2e-1044-001", Namespace: sharedNamespace},
+				IncidentID:            "e2e-1044-001-pod-ambiguous",
+				RemediationID:         "req-e2e-1044-001",
+				SignalName:            "MOCK_AMBIGUOUS_KIND",
+				Severity:              "high",
+				SignalSource:          "kubernetes",
+				ResourceNamespace:     "default",
+				ResourceKind:          "Pod",
+				ResourceName:          "test-pod",
+				ErrorMessage:          "mock_ambiguous_kind: TestWidget misconfiguration detected",
+				Environment:           "production",
+				Priority:              "P1",
+				RiskTolerance:         "medium",
+				BusinessCategory:      "infrastructure",
+			}
+
+			// ========================================
+			// ACT: Full investigation pipeline (#2190: AgentSession CRD flow)
+			// ========================================
+			result, err := infrastructure.InvestigateViaAgentSession(ctx, k8sClient, sharedNamespace, spec, 2*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), "investigation should succeed")
+			Expect(result).NotTo(BeNil(), "response should not be nil")
+
+			// ========================================
+			// ASSERT: Gate exhaustion → human review
+			// ========================================
+			Expect(result.NeedsHumanReview).To(BeTrue(),
+				"needsHumanReview must be true when gate exhausts retries for ambiguous kind without api_version")
+
+			Expect(result.HumanReviewReason).To(Equal("rca_incomplete"),
+				"humanReviewReason should be rca_incomplete (gate could not resolve ambiguous kind)")
+
+			Expect(result.SelectedWorkflow).To(BeNil(),
+				"selectedWorkflow must be nil when gate escalates to human review")
+
+			Expect(result.Warnings).NotTo(BeEmpty(),
+				"warnings should be present when gate exhausts retries for ambiguous kind")
+
+			// ========================================
+			// ASSERT (#2141, BR-AI-2120, FedRAMP AU-3): gate-retry diagnostic
+			// fields are reconstructable from the real persisted audit trail,
+			// not just from the in-process InvestigationResult above -- this
+			// is the full journey the UT (ds_store_test.go) and IT
+			// (IT-KA-2141-001) tiers prove piecewise: real gate exhaustion,
+			// through the real binary's DSAuditStore, into real Data
+			// Storage/Postgres, queryable by remediation_id.
+			// ========================================
+			var gateEvent *ogenclient.AuditEvent
+			Eventually(func() bool {
+				params := ogenclient.QueryAuditEventsParams{}
+				params.CorrelationID.SetTo(spec.RemediationID)
+				params.EventType.SetTo(kaaudit.EventTypeLLMRequest)
+				params.Limit.SetTo(100)
+
+				resp, qErr := dataStorageClient.QueryAuditEvents(ctx, params)
+				if qErr != nil {
+					return false
+				}
+				for i := range resp.Data {
+					if resp.Data[i].EventAction == kaaudit.ActionAPIVersionGate {
+						gateEvent = &resp.Data[i]
+						return true
+					}
+				}
+				return false
+			}, 30*time.Second, 2*time.Second).Should(BeTrue(),
+				"api_version_validation_gate audit event must be persisted and queryable by remediation_id")
+
+			payload, ok := gateEvent.EventData.GetLLMRequestPayload()
+			Expect(ok).To(BeTrue(), "persisted event_data must decode as LLMRequestPayload")
+
+			ambiguousKind, hasAmbiguousKind := payload.AmbiguousKind.Get()
+			Expect(hasAmbiguousKind).To(BeTrue(), "ambiguous_kind must survive the full journey into Data Storage")
+			Expect(ambiguousKind).NotTo(BeEmpty())
+
+			retryOutcome, hasRetryOutcome := payload.RetryOutcome.Get()
+			Expect(hasRetryOutcome).To(BeTrue(), "retry_outcome must survive the full journey into Data Storage")
+			Expect(retryOutcome).To(Equal("exhausted"))
+		})
+
+		It("E2E-KA-1044-002: TestWidget signal directly triggers gate exhaustion and human review", func() {
+			// ========================================
+			// TEST PLAN MAPPING
+			// ========================================
+			// Scenario ID: E2E-KA-1044-002
+			// Business Outcome: Same gate behavior when the signal resource itself
+			//   is the ambiguous kind — confirms gate fires regardless of whether
+			//   the ambiguity is in the signal or the RCA target.
+			// BR: BR-AI-1044 AC3
+			// Risk Mitigation: R1
+
+			// ========================================
+			// ARRANGE: TestWidget signal (ambiguous kind as signal resource)
+			// ========================================
+			spec := agentsessionv1.AgentSessionSpec{
+				RemediationRequestRef: agentsessionv1.ObjectRef{Name: "req-e2e-1044-002", Namespace: sharedNamespace},
+				IncidentID:            "e2e-1044-002-widget-direct",
+				RemediationID:         "req-e2e-1044-002",
+				SignalName:            "MOCK_AMBIGUOUS_KIND",
+				Severity:              "high",
+				SignalSource:          "kubernetes",
+				ResourceNamespace:     "default",
+				ResourceKind:          "TestWidget",
+				ResourceName:          "test-widget-instance",
+				ErrorMessage:          "mock_ambiguous_kind: TestWidget spec misconfiguration",
+				Environment:           "production",
+				Priority:              "P1",
+				RiskTolerance:         "medium",
+				BusinessCategory:      "infrastructure",
+			}
+
+			// ========================================
+			// ACT (#2190: AgentSession CRD flow)
+			// ========================================
+			result, err := infrastructure.InvestigateViaAgentSession(ctx, k8sClient, sharedNamespace, spec, 2*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), "investigation should succeed")
+			Expect(result).NotTo(BeNil(), "response should not be nil")
+
+			// ========================================
+			// ASSERT: Same gate exhaustion behavior
+			// ========================================
+			Expect(result.NeedsHumanReview).To(BeTrue(),
+				"needsHumanReview must be true for ambiguous TestWidget kind without api_version")
+
+			Expect(result.HumanReviewReason).To(Equal("rca_incomplete"),
+				"humanReviewReason should be rca_incomplete")
+
+			Expect(result.Warnings).NotTo(BeEmpty(),
+				"warnings should be present when gate exhausts retries")
+		})
+	})
+})
