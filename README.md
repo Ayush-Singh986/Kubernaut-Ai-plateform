@@ -12,7 +12,6 @@
 [![Latest Release](https://img.shields.io/github/v/release/Ayush-Singh986/Kubernaut-Ai-plateform)](https://github.com/Ayush-Singh986/Kubernaut-Ai-plateform/releases/latest)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-> This repository is a fork of [Jordi Gil's Kubernaut project](https://github.com/Ayush-Singh986/kubernaut). The upstream Go module path and copyright notices are retained.
 
 Kubernaut closes the loop from Kubernetes alert to automated remediation. It operates in two modes: **autonomously** — detecting signals, investigating root causes, and executing fixes end-to-end without human involvement — and **interactively** — letting operators join an in-progress investigation via MCP or A2A, guide the agent, and approve remediations in real time. The LLM-powered agent uses native Go client-go bindings against the Kubernetes API, Prometheus, and log endpoints to investigate, select a remediation workflow, and execute the fix — or escalate to a human with a full RCA when it can't. See the **[full documentation](https://Ayush-Singh986.github.io/kubernaut-docs/)** for architecture, installation, and usage guides.
 
