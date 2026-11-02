@@ -256,18 +256,4 @@ Security posture is tracked continuously via [OpenSSF Scorecard](https://scoreca
 
 ---
 
-## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. In short: create a feature branch, implement with tests, update docs, and open a PR.
-
----
-
-## License
-
-Apache License 2.0 — see [LICENSE](LICENSE).
-
----
-
-**Website**: [kubernaut.ai](https://kubernaut.ai) · **Issues**: [GitHub Issues](https://github.com/Ayush-Singh986/Kubernaut-Ai-plateform/issues) · **Discussions**: [GitHub Discussions](https://github.com/Ayush-Singh986/Kubernaut-Ai-plateform/discussions)
-
-**Kubernaut** — From alert to remediation, intelligently.
