@@ -35,9 +35,9 @@ import (
 
 	// BR-GATEWAY-036/037: K8s clientset for TokenReview/SAR
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1" // ADR-068: Federated scope checking factory
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1" // ADR-068: Federated scope checking factory
 	// BR-109: Request ID middleware
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 	// BR-HTTP-015: Shared CORS library
 	// DD-005: Shared sanitization library
 	// BR-SCOPE-002: Resource scope management

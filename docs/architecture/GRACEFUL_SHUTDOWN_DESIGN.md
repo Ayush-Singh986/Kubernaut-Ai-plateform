@@ -658,7 +658,7 @@ spec:
       terminationGracePeriodSeconds: 30  # Matches shutdown timeout
       containers:
         - name: gateway
-          image: quay.io/jordigilh/kubernaut-gateway:v0.1.0
+          image: quay.io/Ayush-Singh986/kubernaut-gateway:v0.1.0
           ports:
             - name: http
               containerPort: 8080

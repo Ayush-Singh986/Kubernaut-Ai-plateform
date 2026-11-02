@@ -8,7 +8,7 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/genai"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 // ContentGenerator abstracts the LLM content generation call for testability.

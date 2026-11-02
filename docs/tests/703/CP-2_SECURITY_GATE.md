@@ -21,9 +21,9 @@ CP-2 is the most critical security gate. It validates that the MCP endpoint auth
 - **Framework**: Ginkgo/Gomega BDD
 - **Key Imports**:
   ```go
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/auth"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/middleware"
-  "github.com/jordigilh/kubernaut/pkg/shared/auth"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/auth"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/middleware"
+  "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
   authenticationv1 "k8s.io/api/authentication/v1"
   authorizationv1 "k8s.io/api/authorization/v1"
   "k8s.io/client-go/kubernetes/fake"

@@ -9,7 +9,7 @@
 **Related ADRs**: None
 **Related BRs**: BR-PLATFORM-054 (Dependency Validator Removal), BR-WORKFLOW-004 (Workflow Schema Format), BR-WE-014 (Kubernetes Job Execution Backend), BR-ORCH-028 (RemediationOrchestrator Executing-Phase Timeout)
 **Related Design Decisions**: DD-WE-006 (Schema-Declared Infrastructure Dependencies — partially superseded)
-**GitHub Issues**: [#1481](https://github.com/jordigilh/kubernaut/issues/1481)
+**GitHub Issues**: [#1481](https://github.com/Ayush-Singh986/kubernaut/issues/1481)
 
 ---
 

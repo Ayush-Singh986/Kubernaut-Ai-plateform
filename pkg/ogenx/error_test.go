@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/ogenx"
+	"github.com/Ayush-Singh986/kubernaut/pkg/ogenx"
 )
 
 // Mock response types simulating ogen-generated structures

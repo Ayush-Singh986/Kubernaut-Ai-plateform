@@ -26,12 +26,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 // IT-FLEET-READY-RO-001: cmd/remediationorchestrator must wire a

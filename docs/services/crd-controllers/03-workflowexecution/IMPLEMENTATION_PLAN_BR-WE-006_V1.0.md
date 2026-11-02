@@ -366,7 +366,7 @@ import (
     . "github.com/onsi/gomega"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    wev1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    wev1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 var _ = Describe("Conditions Infrastructure", Label("unit", "conditions"), func() {
@@ -533,7 +533,7 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/api/meta"
 
-    wev1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    wev1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 // ========================================

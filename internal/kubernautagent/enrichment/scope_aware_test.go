@@ -32,9 +32,9 @@ import (
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	"k8s.io/utils/ptr"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
 )
 
 var _ = Describe("TP-762: Scope-Aware K8sAdapter (#762)", func() {

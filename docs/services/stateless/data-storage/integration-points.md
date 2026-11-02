@@ -6,13 +6,13 @@
 **Ports**: `8080` (REST API), `8081` (Health), `9090` (Metrics)
 **Authentication**: In-process middleware — TokenReview + SubjectAccessReview (DD-AUTH-014), no sidecar
 
-> **Rewritten** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): the previous version of this
+> **Rewritten** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): the previous version of this
 > document (dated November 2025) described a `GET /api/v1/incidents` read API, per-domain audit tables
 > (`remediation_audit`, `workflow_audit`), a `pgvector`-based Vector DB, and an `ose-oauth-proxy` sidecar —
 > none of which exist in the current implementation. See [What Changed](#what-changed-since-the-november-2025-version)
 > at the end of this document for the full list of corrections.
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**:
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**:
 > this document predates the current DataStorage API surface. `GET /api/v1/incidents` does not exist in
 > `api/openapi/data-storage-v1.yaml` (audit/query endpoints have since superseded it); the KA integration
 > example's claim that KA "queries workflow catalog for semantic search" is also stale — the workflow
@@ -253,7 +253,7 @@ rewrite:
 
 | Previous claim | Current reality |
 |---|---|
-| `GET /api/v1/incidents`, `GET /api/v1/incidents/:id` | Never implemented; not in the OpenAPI spec. `api-specification.md` itself flags this API as disabled pending [#238](https://github.com/jordigilh/kubernaut/issues/238) |
+| `GET /api/v1/incidents`, `GET /api/v1/incidents/:id` | Never implemented; not in the OpenAPI spec. `api-specification.md` itself flags this API as disabled pending [#238](https://github.com/Ayush-Singh986/kubernaut/issues/238) |
 | `POST /api/v1/audit/remediation`, `/workflow`, per-domain write endpoints | Superseded by a single unified `POST /api/v1/audit/events` (+ `/batch`), ADR-034 |
 | `remediation_audit`, `workflow_audit`, `audit_embeddings` tables | Single unified `audit_events` table; no vector/embedding table |
 | pgvector Vector DB, embedding generation, cosine-similarity search | Fully retired (`BR-STORAGE-012`–`016`) |

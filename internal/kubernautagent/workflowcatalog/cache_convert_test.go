@@ -25,10 +25,10 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	atv1alpha1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/contenthash"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	atv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/contenthash"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ========================================

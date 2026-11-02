@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

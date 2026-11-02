@@ -88,7 +88,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 var _ = Describe("Service Discovery (BR-TOOLSET-001)", func() {
@@ -309,7 +309,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset/discovery"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/discovery"
 )
 
 var _ = Describe("Service Detection", func() {
@@ -405,7 +405,7 @@ import (
     . "github.com/onsi/gomega"
 
     corev1 "k8s.io/api/core/v1"
-    "github.com/jordigilh/kubernaut/pkg/toolset/configmap"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/configmap"
 )
 
 var _ = Describe("ConfigMap Generation", func() {
@@ -506,7 +506,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset/discovery"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/discovery"
 )
 
 var _ = Describe("Service Health Validation", func() {
@@ -594,8 +594,8 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("Kubernetes Service Discovery Integration", func() {
@@ -705,7 +705,7 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 var _ = Describe("ConfigMap Reconciliation Integration", func() {
@@ -814,7 +814,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 var _ = Describe("Cross-Service Integration", func() {
@@ -870,8 +870,8 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
-    "github.com/jordigilh/kubernaut/test/e2e/helpers"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/test/e2e/helpers"
 )
 
 var _ = Describe("E2E: Complete Service Discovery and Toolset Generation", func() {

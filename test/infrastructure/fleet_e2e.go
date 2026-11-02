@@ -40,10 +40,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

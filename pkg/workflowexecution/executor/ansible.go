@@ -33,8 +33,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // CredentialTypeField represents a single input field definition for an AWX credential type.

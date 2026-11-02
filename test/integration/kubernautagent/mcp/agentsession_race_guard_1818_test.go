@@ -27,13 +27,13 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	mcptools "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	mcptools "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // countingRunner is a minimal InvestigatorRunner test double used only to

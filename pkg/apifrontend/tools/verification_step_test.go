@@ -4,8 +4,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 func float64Ptr(f float64) *float64 { return &f }

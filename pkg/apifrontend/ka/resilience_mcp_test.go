@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/resilience"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/resilience"
 	gobreaker "github.com/sony/gobreaker/v2"
 )
 

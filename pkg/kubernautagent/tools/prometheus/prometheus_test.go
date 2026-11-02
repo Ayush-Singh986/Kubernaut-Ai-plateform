@@ -11,8 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/prometheus"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

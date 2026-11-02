@@ -36,9 +36,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // Test suite for Notification E2E tests

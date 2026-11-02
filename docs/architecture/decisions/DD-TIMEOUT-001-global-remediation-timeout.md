@@ -4,7 +4,7 @@
 > Approval rejection now transitions the RemediationRequest to **Failed** (not "Rejected").
 > See `pkg/remediationorchestrator/phase/types.go` for the authoritative phase state machine.
 >
-> **Extended (2026-08, [Issue #2176](https://github.com/jordigilh/kubernaut/issues/2176))**: this
+> **Extended (2026-08, [Issue #2176](https://github.com/Ayush-Singh986/kubernaut/issues/2176))**: this
 > document stops at RO's own boundary — it never specified propagating RO's authoritative
 > per-phase timeout into any child CRD's own Spec. See
 > [DD-TIMEOUT-002](DD-TIMEOUT-002-child-crd-timeout-self-enforcement.md) for the child-CRD
@@ -118,7 +118,7 @@ import (
     "context"
     "time"
 
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     ctrl "sigs.k8s.io/controller-runtime"
 )

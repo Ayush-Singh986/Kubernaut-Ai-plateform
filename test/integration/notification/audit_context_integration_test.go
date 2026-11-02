@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // Issue #453 Phase B: audit metadata shape matches Context + Extensions merge (BR-NOT-064),

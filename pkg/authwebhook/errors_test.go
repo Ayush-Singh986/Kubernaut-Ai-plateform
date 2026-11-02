@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
 )
 
 // PermanentError/IsPermanentError are generic error-classification helpers.

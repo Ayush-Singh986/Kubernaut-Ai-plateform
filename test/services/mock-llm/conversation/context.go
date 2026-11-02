@@ -20,7 +20,7 @@ import (
 	"regexp"
 	"strings"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 )
 
 // Context holds the state for a single conversation execution.

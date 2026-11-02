@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 type groundingResponse struct {

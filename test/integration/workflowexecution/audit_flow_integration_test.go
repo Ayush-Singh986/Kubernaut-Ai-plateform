@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,10 +30,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	weaudit "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // WorkflowExecution Audit Flow Integration Tests

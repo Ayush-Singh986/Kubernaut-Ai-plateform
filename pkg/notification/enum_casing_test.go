@@ -25,10 +25,10 @@ import (
 	"github.com/slack-go/slack"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/notification/formatting"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/formatting"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 )
 
 var _ = Describe("Issue #640: NotificationRequest PascalCase Enum Migration", func() {

@@ -16,7 +16,7 @@ limitations under the License.
 
 package audit
 
-import ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+import ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 
 const (
 	decisionLedgerStringMaxLen                  = 128

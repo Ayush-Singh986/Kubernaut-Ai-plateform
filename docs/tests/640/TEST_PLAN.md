@@ -389,7 +389,7 @@ go test ./test/unit/... -count=1
 go test ./test/integration/... -count=1
 
 # Coverage
-go test ./test/unit/notification/... -coverpkg=github.com/jordigilh/kubernaut/api/notification/v1alpha1 -coverprofile=coverage.out
+go test ./test/unit/notification/... -coverpkg=github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1 -coverprofile=coverage.out
 ```
 
 ---

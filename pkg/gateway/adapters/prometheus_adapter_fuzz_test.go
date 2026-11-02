@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
 )
 
 // FuzzPrometheusAdapterParse exercises PrometheusAdapter.Parse (BR-GATEWAY-001..010)

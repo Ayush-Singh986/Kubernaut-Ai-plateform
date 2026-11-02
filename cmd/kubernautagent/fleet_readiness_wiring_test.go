@@ -25,12 +25,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	infrastructure "github.com/jordigilh/kubernaut/test/infrastructure"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	infrastructure "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // eaigwGatewayType is the fleet.GatewayType value for the Envoy AI Gateway

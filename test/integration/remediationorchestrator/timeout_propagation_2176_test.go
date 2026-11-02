@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
 )
 
 // DD-TIMEOUT-002 / Issue #2176: proves RO's authoritative

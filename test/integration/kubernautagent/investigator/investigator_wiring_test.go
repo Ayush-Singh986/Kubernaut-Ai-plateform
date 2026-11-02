@@ -21,8 +21,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/tools/custom"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/tools/custom"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
 )
 
 var _ = Describe("Kubernaut Agent Registry Wiring — TP-433-WIR Phase 2", func() {

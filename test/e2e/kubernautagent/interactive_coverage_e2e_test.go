@@ -28,9 +28,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 var _ = Describe("CP-5 INT Coverage: Interactive gap-closure tests", Label("e2e", "ka", "interactive", "coverage"), func() {

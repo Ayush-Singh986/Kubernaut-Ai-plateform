@@ -92,7 +92,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
 )
 
 func TestMyService(t *testing.T) {
@@ -141,8 +141,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
-    "github.com/jordigilh/kubernaut/pkg/toolset/discovery"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/discovery"
 )
 
 var _ = Describe("BR-TOOLSET-001: Service Discovery", func() {
@@ -190,8 +190,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
-    "github.com/jordigilh/kubernaut/pkg/toolset/reconciler"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/reconciler"
 )
 
 var _ = Describe("BR-TOOLSET-004: ConfigMap Reconciliation", func() {
@@ -251,8 +251,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
-    "github.com/jordigilh/kubernaut/pkg/datastorage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage"
 )
 
 var _ = Describe("BR-STORAGE-001: Audit Persistence", func() {
@@ -308,7 +308,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
 )
 
 var _ = Describe("BR-TOOLSET-005: Multi-Service Discovery", func() {

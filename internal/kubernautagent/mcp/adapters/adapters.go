@@ -23,14 +23,14 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // InvestigatorRunnerAdapter bridges the MCP tools.InvestigatorRunner interface

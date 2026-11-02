@@ -12,10 +12,10 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/validate"
 )
 
 // InteractiveActionArgs defines the shared input for interactive investigation actions.

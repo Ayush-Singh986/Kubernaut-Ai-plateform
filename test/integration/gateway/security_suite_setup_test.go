@@ -29,7 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/jordigilh/kubernaut/test/integration/gateway/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/integration/gateway/helpers"
 )
 
 // SecurityTestTokens holds ServiceAccount tokens for security integration tests

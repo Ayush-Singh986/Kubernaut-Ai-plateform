@@ -5,7 +5,7 @@
 **Priority**: **P1 (HIGH)**
 **Status**: ❌ Deferred to v1.6 for both API Frontend and Kubernaut Agent — see [§ Fully Deferred to v1.6](#fully-deferred-to-v16-1900). Only the [SOC2 audit-reason enrichment](#soc2-audit-reason-enrichment-delivered) below was delivered.
 **Date**: August 3, 2026 (implemented and reverted the same day, see Changelog)
-**GitHub Issues**: [#1900](https://github.com/jordigilh/kubernaut/issues/1900) (tracks the deferred work, targeting v1.6)
+**GitHub Issues**: [#1900](https://github.com/Ayush-Singh986/kubernaut/issues/1900) (tracks the deferred work, targeting v1.6)
 
 ---
 
@@ -46,14 +46,14 @@ This means a valid ServiceAccount token minted (via the `TokenRequest` API) for 
 ### Grounding: What was built and reverted
 
 - **Design Decision**: [DD-AUTH-014](../architecture/decisions/DD-AUTH-014-middleware-based-sar-authentication.md) v4.0 added the mechanism, v4.1/v4.2 documented its full reversion.
-- Both `pkg/apifrontend/auth.TokenReviewer` (AF) and the shared `pkg/shared/auth.K8sAuthenticator` (KA, also used by DataStorage/Gateway) briefly gained a `WithExpectedAudiences(...)` functional option that set `Spec.Audiences` on the outbound request and cross-checked `Status.Audiences` client-side. Both were fully reverted in the same PR ([#1909](https://github.com/jordigilh/kubernaut/pull/1909)) — see below for why.
+- Both `pkg/apifrontend/auth.TokenReviewer` (AF) and the shared `pkg/shared/auth.K8sAuthenticator` (KA, also used by DataStorage/Gateway) briefly gained a `WithExpectedAudiences(...)` functional option that set `Spec.Audiences` on the outbound request and cross-checked `Status.Audiences` client-side. Both were fully reverted in the same PR ([#1909](https://github.com/Ayush-Singh986/kubernaut/pull/1909)) — see below for why.
 - DataStorage and Gateway also consume the shared `pkg/shared/auth.K8sAuthenticator` (`cmd/datastorage/main.go`, `pkg/gateway/server_constructors.go`) but never called `NewK8sAuthenticator` with an audience option — zero behavior change for those services throughout.
 
 ---
 
 ## Fully Deferred to v1.6 (#1900)
 
-Both AF's and KA's audience-bound `TokenReview` were implemented, then fully reverted, in [#1909](https://github.com/jordigilh/kubernaut/pull/1909). [#1900](https://github.com/jordigilh/kubernaut/issues/1900) remains open, tracking this as deferred work for the v1.6 milestone, with the full analysis below recorded there too.
+Both AF's and KA's audience-bound `TokenReview` were implemented, then fully reverted, in [#1909](https://github.com/Ayush-Singh986/kubernaut/pull/1909). [#1900](https://github.com/Ayush-Singh986/kubernaut/issues/1900) remains open, tracking this as deferred work for the v1.6 milestone, with the full analysis below recorded there too.
 
 ### KA: structurally cannot be bound safely
 
@@ -72,7 +72,7 @@ The direct-client half of that population is an arbitrary K8s principal (a human
 Unlike KA, AF's `TokenReviewer` has no dual-population constraint, and its audience check was fully implemented and proven against a real `kube-apiserver` via envtest (`IT-AF-1900-001/002`, both green — the only tests in the implementation that exercised a real, live audience check). It was reverted anyway on further review:
 
 - AF already gates all tool/action use via `SubjectAccessReview` (`pkg/apifrontend/auth/sar.go`'s `SARChecker`) — an authenticated-but-audience-mismatched caller is already denied at the authorization layer regardless of whether the audience check exists. The audience check is defense-in-depth *only* at the authentication layer, narrowing which tokens are accepted before SAR ever runs; that has some value, but it's narrower than "closes a replay hole" as originally framed, since SAR already closes the practical exploitation path.
-- This issue's original motivation — unblocking [kubernaut-operator#139](https://github.com/jordigilh/kubernaut-operator/issues/139)'s custom-audience projected-token plan for AF's ServiceAccount — is untouched by shipping AF's half in isolation, since KA's half (finding above) is what the operator plan actually depends on for AF→KA traffic. Shipping AF alone doesn't unblock the operator issue.
+- This issue's original motivation — unblocking [kubernaut-operator#139](https://github.com/Ayush-Singh986/kubernaut-operator/issues/139)'s custom-audience projected-token plan for AF's ServiceAccount — is untouched by shipping AF's half in isolation, since KA's half (finding above) is what the operator plan actually depends on for AF→KA traffic. Shipping AF alone doesn't unblock the operator issue.
 - Deferring both together to v1.6 keeps the decision coherent: revisit AF's audience check alongside a KA-side design that actually unblocks kubernaut-operator#139, rather than shipping half a feature now.
 
 ### What was reverted (both AF and KA)
@@ -104,7 +104,7 @@ The `invalid_token_audience` reason string itself remains defined (`pkg/shared/a
 
 ## Success Criteria
 
-Audience-bound `TokenReview` (AF and KA) is deferred — its success criteria will be re-established when [#1900](https://github.com/jordigilh/kubernaut/issues/1900) is picked up for v1.6. The criteria for the work that *was* delivered:
+Audience-bound `TokenReview` (AF and KA) is deferred — its success criteria will be re-established when [#1900](https://github.com/Ayush-Singh986/kubernaut/issues/1900) is picked up for v1.6. The criteria for the work that *was* delivered:
 
 1. KA's persisted audit-table events for auth failures/denials (`aiagent.auth.failure`/`aiagent.auth.denied`) include a specific `reason` when the shared middleware classified one, and omit it otherwise (backward compatible).
 
@@ -116,8 +116,8 @@ Audience-bound `TokenReview` (AF and KA) is deferred — its success criteria wi
 - [BR-SECURITY-017](./BR-SECURITY-017-serviceaccount-token-authentication.md) — Parent requirement: ServiceAccount token authentication via `TokenReview`
 - [DD-AUTH-MCP-001](../architecture/decisions/DD-AUTH-MCP-001-mcp-endpoint-security.md) — MCP Endpoint Security (Trusted Intermediary Model); the documented dual-population constraint on KA's `/api/v1/mcp` that drove the KA revert above
 - [DD-AUTH-016](../architecture/decisions/DD-AUTH-016-signed-user-identity-delegation.md) — Sibling design exploring signed user-identity delegation; shares this BR's "compromised minting authority is out of scope" threat-model boundary
-- [#1900](https://github.com/jordigilh/kubernaut/issues/1900) — tracks the deferred audience-binding work for v1.6, carrying the full investigation findings
-- [#1919](https://github.com/jordigilh/kubernaut/issues/1919) / [kubernaut-console#48](https://github.com/jordigilh/kubernaut-console/issues/48) — related but distinct authorization gap found during this review (console UI renders before any authorization check; proposed fix is a dedicated coarse-grained role, not an audience check) — tracked separately for v1.6, out of scope here
+- [#1900](https://github.com/Ayush-Singh986/kubernaut/issues/1900) — tracks the deferred audience-binding work for v1.6, carrying the full investigation findings
+- [#1919](https://github.com/Ayush-Singh986/kubernaut/issues/1919) / [kubernaut-console#48](https://github.com/Ayush-Singh986/kubernaut-console/issues/48) — related but distinct authorization gap found during this review (console UI renders before any authorization check; proposed fix is a dedicated coarse-grained role, not an audience check) — tracked separately for v1.6, out of scope here
 - Test evidence (SOC2 audit-reason enrichment — the only surviving delivered scope): `UT-KA-1900-012..015` ([`internal/kubernautagent/audit/auth_reason_payload_test.go`](../../internal/kubernautagent/audit/auth_reason_payload_test.go), [`internal/kubernautagent/server/audit_middleware_reason_test.go`](../../internal/kubernautagent/server/audit_middleware_reason_test.go)), `IT-KA-1900-006..011` ([`pkg/shared/auth/middleware_audience_reason_test.go`](../../pkg/shared/auth/middleware_audience_reason_test.go), [`pkg/shared/auth/failure_reason_capture_test.go`](../../pkg/shared/auth/failure_reason_capture_test.go))
 
 ---
@@ -128,6 +128,6 @@ Audience-bound `TokenReview` (AF and KA) is deferred — its success criteria wi
 
 ### Changelog
 
-- **v3.0 (August 4, 2026)**: Reverted AF's audience-bound `TokenReview` too (full symmetry with the v2.0 KA revert) after concluding its incremental value was unclear given AF's existing SAR-based authorization already denies unauthorized tool access regardless of the authentication layer, and given the original motivation (kubernaut-operator#139) needs KA's half too, which remains structurally unbuildable. Audience-binding for both services is now fully deferred to [#1900](https://github.com/jordigilh/kubernaut/issues/1900), targeting v1.6. Only the SOC2 audit-reason enrichment work remains delivered. Also filed [#1919](https://github.com/jordigilh/kubernaut/issues/1919)/[kubernaut-console#48](https://github.com/jordigilh/kubernaut-console/issues/48) for a related, separate authorization gap found during this review (console UI has no pre-render authorization gate).
+- **v3.0 (August 4, 2026)**: Reverted AF's audience-bound `TokenReview` too (full symmetry with the v2.0 KA revert) after concluding its incremental value was unclear given AF's existing SAR-based authorization already denies unauthorized tool access regardless of the authentication layer, and given the original motivation (kubernaut-operator#139) needs KA's half too, which remains structurally unbuildable. Audience-binding for both services is now fully deferred to [#1900](https://github.com/Ayush-Singh986/kubernaut/issues/1900), targeting v1.6. Only the SOC2 audit-reason enrichment work remains delivered. Also filed [#1919](https://github.com/Ayush-Singh986/kubernaut/issues/1919)/[kubernaut-console#48](https://github.com/Ayush-Singh986/kubernaut-console/issues/48) for a related, separate authorization gap found during this review (console UI has no pre-render authorization gate).
 - **v2.0 (August 3, 2026)**: Descoped Kubernaut Agent entirely after tracing AF's real production traffic to KA (100% via the dual-purpose MCP endpoint, which DD-AUTH-MCP-001 requires to stay audience-unaware; the one path that could be bound has no production callers). Retained AF's audience check and the SOC2 audit-reason enrichment work, both unaffected by the KA finding at that time.
 - **v1.0 (August 3, 2026)**: Initial version — audience-bound `TokenReview` for both AF and KA.

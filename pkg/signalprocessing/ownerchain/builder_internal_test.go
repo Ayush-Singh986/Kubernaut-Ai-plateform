@@ -29,7 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // ========================================

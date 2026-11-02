@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
@@ -46,16 +46,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/controller/workflowexecution"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
-	weconditions "github.com/jordigilh/kubernaut/pkg/workflowexecution"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
-	weexecutor "github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/status"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/controller/workflowexecution"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
+	weconditions "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
+	weexecutor "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/status"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

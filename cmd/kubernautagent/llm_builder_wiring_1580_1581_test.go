@@ -27,10 +27,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
-	kaopenai "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/openai"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
+	kaopenai "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // helloChatRequest is a minimal single-turn request shared by the

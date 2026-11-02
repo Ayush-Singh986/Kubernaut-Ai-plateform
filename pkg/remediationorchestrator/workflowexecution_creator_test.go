@@ -33,12 +33,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 var _ = Describe("WorkflowExecutionCreator", func() {

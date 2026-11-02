@@ -28,7 +28,7 @@ import (
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 var _ = Describe("Test 17: Error Response Codes (BR-GATEWAY-101, BR-GATEWAY-043)", Ordered, ContinueOnFailure, func() {

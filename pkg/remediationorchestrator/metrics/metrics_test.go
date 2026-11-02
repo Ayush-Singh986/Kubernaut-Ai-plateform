@@ -29,7 +29,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 )
 
 func TestMetrics(t *testing.T) {

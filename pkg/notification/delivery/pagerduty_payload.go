@@ -3,7 +3,7 @@ package delivery
 import (
 	"fmt"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // PagerDutyEvent represents a PagerDuty Events API v2 event envelope.

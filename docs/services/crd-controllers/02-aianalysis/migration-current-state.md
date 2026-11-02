@@ -2,7 +2,7 @@
 
 ---
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This
 > document's code-reuse plan describes a `pkg/ai/*` package tree (`pkg/ai/holmesgpt/`, `pkg/ai/analysis/`,
 > `pkg/ai/llm/`, `pkg/ai/insights/`, `pkg/ai/context/`) that does not exist in the current codebase.
 > `cmd/aianalysis/main.go` **does** exist today, but as an independently-developed entry point (wiring
@@ -162,8 +162,8 @@ import (
     clientgoscheme "k8s.io/client-go/kubernetes/scheme"
     ctrl "sigs.k8s.io/controller-runtime"
 
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/v1"
-    "github.com/jordigilh/kubernaut/pkg/ai/analysis"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ai/analysis"
 )
 
 var (

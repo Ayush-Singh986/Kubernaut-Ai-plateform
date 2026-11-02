@@ -213,7 +213,7 @@ Data Storage Service (Go)
 
 **Service Name**: `embedding-service`
 **Port**: 8086
-**Image**: `quay.io/jordigilh/embedding-service:v1.0`
+**Image**: `quay.io/Ayush-Singh986/embedding-service:v1.0`
 
 **API Endpoint**:
 ```

@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 var _ = Describe("TP-1051: ComponentGVK — fully-qualified apiVersion/Kind for workflow discovery", func() {

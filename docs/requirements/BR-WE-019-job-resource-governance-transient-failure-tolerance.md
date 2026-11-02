@@ -8,7 +8,7 @@
 **Date**: July 6, 2026
 **Related DDs**: DD-WE-008 (Job Resource Governance and Transient-Failure Tolerance)
 **Related BRs**: BR-WE-014 (Kubernetes Job Execution Backend), BR-WE-016 (Engine Config Discriminator), BR-WE-018 (Execution Pod Security Hardening), BR-WORKFLOW-008 (Runtime Dependency-Failure Observability)
-**GitHub Issues**: [#1564](https://github.com/jordigilh/kubernaut/issues/1564), [#1572](https://github.com/jordigilh/kubernaut/issues/1572)
+**GitHub Issues**: [#1564](https://github.com/Ayush-Singh986/kubernaut/issues/1564), [#1572](https://github.com/Ayush-Singh986/kubernaut/issues/1572)
 
 ---
 
@@ -123,8 +123,8 @@ weakening today's fail-fast behavior for genuine remediation-script failures.**
 - [BR-WE-016: Engine Config Discriminator](./BR-WE-016-engine-config-discriminator.md)
 - [BR-WE-018: Execution Pod Security Hardening](./BR-WE-018-execution-pod-security-hardening.md)
 - [BR-WORKFLOW-008: Runtime Dependency-Failure Observability](./BR-WORKFLOW-008-runtime-dependency-failure-observability.md)
-- [Issue #1564](https://github.com/jordigilh/kubernaut/issues/1564) — originating issue
-- [Issue #1572](https://github.com/jordigilh/kubernaut/issues/1572) — implementation tracking
+- [Issue #1564](https://github.com/Ayush-Singh986/kubernaut/issues/1564) — originating issue
+- [Issue #1572](https://github.com/Ayush-Singh986/kubernaut/issues/1572) — implementation tracking
 
 ---
 

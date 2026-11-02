@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 	"gopkg.in/yaml.v3"
 )
 

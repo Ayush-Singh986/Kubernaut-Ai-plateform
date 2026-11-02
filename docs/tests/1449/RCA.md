@@ -1,6 +1,6 @@
 # RCA: AIAnalysis Stuck in Investigating After InvestigationSession Completes
 
-**Issue**: [#1449](https://github.com/jordigilh/kubernaut/issues/1449)
+**Issue**: [#1449](https://github.com/Ayush-Singh986/kubernaut/issues/1449)
 **Incident**: `rr-660dc089f630-18a2d12b` (namespace: `kubernaut-system`)
 **Date**: 2026-06-17
 **Severity**: High (RR pipeline stall — user action not reflected in backend)

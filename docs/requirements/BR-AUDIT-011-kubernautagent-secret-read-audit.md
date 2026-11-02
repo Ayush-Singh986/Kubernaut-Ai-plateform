@@ -7,7 +7,7 @@
 **Status**: ✅ Implemented
 **Date**: June 30, 2026
 **Related BRs**: BR-AUDIT-005 (Core Audit Business Requirement), BR-SEC-012 (log all secret access attempts), BR-INTERACTIVE-003 (per-request K8s call audit)
-**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-13)
+**GitHub Issues**: [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505) (GAP-13)
 
 ---
 

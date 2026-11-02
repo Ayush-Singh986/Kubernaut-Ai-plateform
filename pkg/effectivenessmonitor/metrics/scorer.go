@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // MetricComparison represents a pre/post remediation metric comparison.

@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 var _ = Describe("Propagation Timing Integration (#253, BR-EM-010.3, BR-EM-010.4)", func() {

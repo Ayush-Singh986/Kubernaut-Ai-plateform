@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
 )
 
 func TestRemediationOrchestratorConfig(t *testing.T) {

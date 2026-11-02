@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
 )
 
 type statusRecorder struct {

@@ -155,8 +155,8 @@ import (
     "net/http"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/shared/errors"
-    "github.com/jordigilh/kubernaut/pkg/shared/middleware"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/errors"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/middleware"
 )
 
 func (h *WebhookHandler) HandlePrometheusWebhook(w http.ResponseWriter, r *http.Request) {
@@ -338,9 +338,9 @@ import (
     "fmt"
     "time"
 
-    processingv1 "github.com/jordigilh/kubernaut/apis/processing/v1"
-    sharedv1 "github.com/jordigilh/kubernaut/apis/shared/v1"
-    "github.com/jordigilh/kubernaut/pkg/shared/errors"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/apis/processing/v1"
+    sharedv1 "github.com/Ayush-Singh986/kubernaut/apis/shared/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/errors"
 
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -727,7 +727,7 @@ import (
     "context"
     "database/sql"
 
-    "github.com/jordigilh/kubernaut/pkg/shared/errors"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/errors"
 )
 
 func (s *DataStorageService) GetActionTrace(ctx context.Context, id string) (*ActionTrace, error) {
@@ -800,7 +800,7 @@ import (
     "errors"
     "database/sql"
 
-    sharedErrors "github.com/jordigilh/kubernaut/pkg/shared/errors"
+    sharedErrors "github.com/Ayush-Singh986/kubernaut/pkg/shared/errors"
 )
 
 func handleError(err error) {
@@ -1661,7 +1661,7 @@ package logging
 
 import (
     "github.com/go-logr/logr"
-    "github.com/jordigilh/kubernaut/pkg/shared/errors"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/errors"
 )
 
 // LogError logs error with structured context

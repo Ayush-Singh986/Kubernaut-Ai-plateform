@@ -24,10 +24,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 var _ = Describe("kubernaut_remediate (#1332 Intent-Based Tool Redesign)", func() {

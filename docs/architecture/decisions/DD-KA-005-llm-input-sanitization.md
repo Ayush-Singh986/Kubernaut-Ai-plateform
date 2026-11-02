@@ -6,7 +6,7 @@
 **Priority**: P0 (CRITICAL)
 
 **Last Updated**: 2026-08-01 — Renamed from `DD-HAPI-005` and rewritten against the actual Go
-implementation ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). The original
+implementation ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). The original
 document described a proposed Python `llm_sanitizer.py` module and `Tool.invoke()` monkey-patch
 that were never implemented — HolmesGPT-API was rewritten in Go before this design shipped. This
 version documents the credential-sanitization pipeline that actually exists in

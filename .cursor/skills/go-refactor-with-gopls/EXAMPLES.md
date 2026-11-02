@@ -93,7 +93,7 @@ package oldutil
 func FormatString(s string) string { ... }
 
 // pkg/processor/handler.go
-import "github.com/jordigilh/kubernaut/pkg/oldutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/oldutil"
 
 func process() {
     formatted := oldutil.FormatString(data)
@@ -145,7 +145,7 @@ package utils
 func FormatString(s string) string { ... }
 
 // pkg/processor/handler.go (import automatically updated!)
-import "github.com/jordigilh/kubernaut/pkg/common/utils"
+import "github.com/Ayush-Singh986/kubernaut/pkg/common/utils"
 
 func process() {
     formatted := utils.FormatString(data)

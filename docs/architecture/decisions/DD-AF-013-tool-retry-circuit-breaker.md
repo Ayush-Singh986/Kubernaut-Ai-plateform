@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-08-13
-**Issue**: [#2078](https://github.com/jordigilh/kubernaut/issues/2078)
+**Issue**: [#2078](https://github.com/Ayush-Singh986/kubernaut/issues/2078)
 **Related**: [DD-AF-011](DD-AF-011-phase-transition-consent-guard.md) (`reinvokingRunner.Run` — the same
 wrapping iterator this decision extends), KA's `AnomalyDetector.RecordFailure`
 (`internal/kubernautagent/investigator/anomaly.go` — the repeated-tool-failure precedent this

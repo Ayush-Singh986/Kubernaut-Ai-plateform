@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // Issue #667: BR-STORAGE-040 — Concurrent batch writes must not deadlock

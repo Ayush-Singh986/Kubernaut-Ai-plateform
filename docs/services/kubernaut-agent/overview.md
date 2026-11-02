@@ -83,7 +83,7 @@ KA does not expose a synchronous "analyze and return" endpoint — nor an HTTP s
 any kind. Per [DD-AA-KA-001](../../architecture/decisions/DD-AA-KA-001-agentsession-crd-http-removal.md),
 the retired HTTP channel (`POST /api/v1/incident/analyze`, `GET /api/v1/incident/session/{id}`,
 etc., and its generated client `pkg/agentclient`) is fully deleted
-([issue #2190](https://github.com/jordigilh/kubernaut/issues/2190)). AIAnalysis creates an
+([issue #2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190)). AIAnalysis creates an
 `AgentSession` CRD per investigation and watches its `Status`:
 
 ```
@@ -170,8 +170,8 @@ LLM runtime YAML file (`-llm-runtime`, file-watcher reload except for LLM identi
 - **Confidence scoring**: [DD-KA-004](../../architecture/decisions/DD-KA-004-v1-confidence-scoring.md)
   originally rejected pure LLM self-assessment as a confidence source, but the current implementation
   is 100% LLM self-reported (no computed semantic-similarity/label-matching component). Tracked by
-  [Issue #1826](https://github.com/jordigilh/kubernaut/issues/1826) (KA-side investigation-outcome
-  confidence bands) and [Issue #1828](https://github.com/jordigilh/kubernaut/issues/1828)
+  [Issue #1826](https://github.com/Ayush-Singh986/kubernaut/issues/1826) (KA-side investigation-outcome
+  confidence bands) and [Issue #1828](https://github.com/Ayush-Singh986/kubernaut/issues/1828)
   (AIAnalysis-side hardcoded 0.7 floor).
 
 ---

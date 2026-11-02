@@ -26,8 +26,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/enrichment"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/enrichment"
 )
 
 const testUUID = "53c7c5d3-ee13-42e5-a920-43f3df75ec6d"

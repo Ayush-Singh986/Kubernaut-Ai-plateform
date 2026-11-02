@@ -30,10 +30,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
 )
 
 // ServiceName is the canonical service identifier for audit events.

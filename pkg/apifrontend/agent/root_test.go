@@ -24,13 +24,13 @@ import (
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	sessionpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/session"
-	toolspkg "github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	sessionpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
+	toolspkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 // newMockToolContext returns a minimal agent.Context with a specific

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/sanitization"
 )
 
 // BenchmarkCredentialSanitizer characterizes G4 (credential scrubbing) throughput.

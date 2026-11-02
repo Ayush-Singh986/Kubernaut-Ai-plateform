@@ -38,7 +38,7 @@ to the requested `cluster_id`, while preserving hub-local behavior.
 - BR-AI-056: grounded AF investigation signal identity
 - [ADR-065: Fleet Cluster Identity on RR](../../architecture/decisions/ADR-065-fleet-cluster-identity-on-rr.md)
 - [ADR-068: Fleet Federation Architecture](../../architecture/decisions/ADR-068-fleet-federation-architecture.md)
-- [Issue #2394](https://github.com/jordigilh/kubernaut/issues/2394)
+- [Issue #2394](https://github.com/Ayush-Singh986/kubernaut/issues/2394)
 
 ### 2.2 Security Control Objectives
 

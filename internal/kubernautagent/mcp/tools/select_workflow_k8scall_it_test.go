@@ -27,11 +27,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	mcptools "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	mcptools "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // k8sCallFakeK8sClient implements enrichment.K8sClient with canned

@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 type recordingClient struct {

@@ -12,8 +12,8 @@ import (
 	"github.com/a2aproject/a2a-go/a2a"
 	"github.com/a2aproject/a2a-go/a2asrv"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
 )
 
 var _ = Describe("SessionInterceptor (BR-SESS-020, BR-SESS-021, BR-SESS-023)", func() {

@@ -2,7 +2,7 @@
 
 **Status**: ✅ Approved
 **Version**: 1.3
-**Date**: 2025-12-01 (v1.2); 2026-08-02 (v1.3 correction, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))
+**Date**: 2025-12-01 (v1.2); 2026-08-02 (v1.3 correction, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 **Confidence**: 95%
 
 > **v1.3 correction note (2026-08-02)**: Following up on the 2026-08-01 partial pass noted below, this
@@ -552,7 +552,7 @@ Before implementing any service, verify:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.3 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)): Rewrote Contract 3 to describe KA's real in-process discovery protocol (DD-WORKFLOW-019) instead of a Data Storage MCP search endpoint that was retired as dead code. Renamed remaining HolmesGPT-API → Kubernaut Agent (KA) references throughout Contracts 1/4/5/6, the data-flow summary, and the validation checklist. Fixed `kubernaut.io` → `kubernaut.ai` API group. Replaced `containerImage`/`containerDigest` with the real `executionBundle`/`executionBundleDigest` (`sharedtypes.WorkflowSnapshot`). Removed the obsolete "HolmesGPT-API Amendment Required" section (its TODO shipped long ago, in this different field shape). Corrected Contract 4/6 to note the 3 execution engines (Tekton/Job/Ansible), not just Tekton. |
+| 1.3 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): Rewrote Contract 3 to describe KA's real in-process discovery protocol (DD-WORKFLOW-019) instead of a Data Storage MCP search endpoint that was retired as dead code. Renamed remaining HolmesGPT-API → Kubernaut Agent (KA) references throughout Contracts 1/4/5/6, the data-flow summary, and the validation checklist. Fixed `kubernaut.io` → `kubernaut.ai` API group. Replaced `containerImage`/`containerDigest` with the real `executionBundle`/`executionBundleDigest` (`sharedtypes.WorkflowSnapshot`). Removed the obsolete "HolmesGPT-API Amendment Required" section (its TODO shipped long ago, in this different field shape). Corrected Contract 4/6 to note the 3 execution engines (Tekton/Job/Ansible), not just Tekton. |
 | 1.2 | 2025-12-01 | Fixed internal inconsistencies: Updated integration diagram and Contract 4 to consistently state RO passes through containerImage from AIAnalysis.status (no catalog lookup). Removed stale "FROM CATALOG LOOKUP" comments. |
 | 1.1 | 2025-11-28 | Updated contracts for HolmesGPT-API containerImage resolution (DD-CONTRACT-001 v1.2). RO no longer calls Data Storage. Added HolmesGPT-API amendment requirement. |
 | 1.0 | 2025-11-28 | Initial authoritative integration contracts |

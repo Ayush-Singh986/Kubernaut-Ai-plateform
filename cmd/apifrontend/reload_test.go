@@ -6,8 +6,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ratelimit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ratelimit"
 )
 
 func TestReloadCallback_LogLevel(t *testing.T) {

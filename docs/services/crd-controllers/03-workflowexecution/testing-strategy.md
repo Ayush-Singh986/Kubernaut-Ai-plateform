@@ -247,10 +247,10 @@ import (
     . "github.com/onsi/gomega"
     "context"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
     tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/runtime"

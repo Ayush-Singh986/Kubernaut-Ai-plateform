@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 var _ = Describe("Workflow selection discovery membership", func() {

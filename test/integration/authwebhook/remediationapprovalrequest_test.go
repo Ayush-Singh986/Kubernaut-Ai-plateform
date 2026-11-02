@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

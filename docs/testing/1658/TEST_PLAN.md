@@ -1,6 +1,6 @@
 # Test Plan: AF Raw Tool-Call Arg Leak on Unavailable Alert Tools
 
-**Issue**: [#1658](https://github.com/jordigilh/kubernaut/issues/1658)
+**Issue**: [#1658](https://github.com/Ayush-Singh986/kubernaut/issues/1658)
 **Business Requirements**: BR-AI-023 (detect/handle AI hallucinations or invalid responses), BR-AI-024 (graceful degradation when a dependency is unavailable)
 **Branch**: `fix/1658-af-tool-error-leak`
 **Created**: 2026-08-01

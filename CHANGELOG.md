@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`apifrontend.mcp.session_init` audit event only fired once per pod lifetime (#2139, AU-3)** — `NewMCPHandler`'s session-init audit logic deduplicated on the incoming request's (always-empty, pre-assignment) `Mcp-Session-Id` header via a handler-lifetime `sync.Map`, so only the very first session-less `/mcp` request a given API Frontend pod ever received got audited; every subsequent new MCP session was silently skipped. The MCP SDK only invokes this callback when creating a brand-new session in the first place (existing sessions route directly, bypassing it), so the dedup guard was solving a problem that didn't exist and is removed entirely — every new session is now audited.
-- **AIAnalysis session-lost regeneration could still exceed its retry cap despite an already-computed exponential backoff (#2080 recurrence)** — The original #2080/#2079 fix computed a `RequeueAfter` backoff before resubmitting a lost KA session, but the controller's own self-watch predicate (`aiAnalysisUpdatePredicate`) re-triggers `reconcileInvestigating` immediately whenever `Status.KASession.ID` changes — which `handleSessionLost`'s own regeneration write does on every attempt — bypassing that backoff entirely and burning through the regeneration cap in rapid succession (observed in CI runs [31454349115](https://github.com/jordigilh/kubernaut/actions/runs/31454349115) and [31695817033](https://github.com/jordigilh/kubernaut/actions/runs/31695817033)). Added a durable `KASession.BackoffUntil` deadline, checked by `reconcileInvestigating` before the handler runs regardless of what woke the reconciler, so any early wake-up is absorbed instead of spending another regeneration attempt.
+- **AIAnalysis session-lost regeneration could still exceed its retry cap despite an already-computed exponential backoff (#2080 recurrence)** — The original #2080/#2079 fix computed a `RequeueAfter` backoff before resubmitting a lost KA session, but the controller's own self-watch predicate (`aiAnalysisUpdatePredicate`) re-triggers `reconcileInvestigating` immediately whenever `Status.KASession.ID` changes — which `handleSessionLost`'s own regeneration write does on every attempt — bypassing that backoff entirely and burning through the regeneration cap in rapid succession (observed in CI runs [31454349115](https://github.com/Ayush-Singh986/kubernaut/actions/runs/31454349115) and [31695817033](https://github.com/Ayush-Singh986/kubernaut/actions/runs/31695817033)). Added a durable `KASession.BackoffUntil` deadline, checked by `reconcileInvestigating` before the handler runs regardless of what woke the reconciler, so any early wake-up is absorbed instead of spending another regeneration attempt.
 - **API Frontend's `vertex_ai` + Gemini gap (#1792)** — API Frontend previously routed every `provider: vertex_ai` profile to the Claude client regardless of the configured model, so a Gemini model under `vertex_ai` would silently misbehave. Fixed with the same model-name dispatch as #1778.
 - **Misleading `vertex_ai` + Gemini chart docs/examples (#1793)** — `charts/kubernaut`'s README and values examples suggested `gemini-2.5-pro` worked under `provider: vertex_ai` when it did not; now genuinely supported and covered by Helm + Go wiring tests.
 - **`GOOGLE_APPLICATION_CREDENTIALS` no longer statically declared in API Frontend's Deployment (#1801)** — This credential-adjacent env var was previously rendered as a static `env:` entry whenever `provider: vertex_ai` was configured, visible via `kubectl get pod -o yaml` to anyone with pod-read RBAC. It's now injected in-process at construction time (`pkg/apifrontend/launcher.InjectAmbientGoogleCredentials`) only for the model families whose SDK has no explicit-credentials-bytes option, matching Kubernaut Agent's and the HolmesGPT API predecessor's precedent. API Frontend's Gemini-on-Vertex path now authenticates with explicit credential bytes end-to-end, touching zero env vars.
@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Kubernaut Console** — Web UI for interactive investigation, real-time agent chat, remediation monitoring, and workflow management ([kubernaut-console](https://github.com/jordigilh/kubernaut-console))
+- **Kubernaut Console** — Web UI for interactive investigation, real-time agent chat, remediation monitoring, and workflow management ([kubernaut-console](https://github.com/Ayush-Singh986/kubernaut-console))
 
 ### Fixed
 
@@ -344,7 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database migrations required** — Run v1.4 migrations before upgrading controllers. The Helm pre-upgrade hook handles this automatically.
 - **NetworkPolicy** (#285) — NetworkPolicies are now deployed for all services by default with a default-deny posture. Verify your cluster's CNI supports NetworkPolicy enforcement. Disable per-service with `networkPolicies.<service>.enabled: false`.
 
-[1.4.0]: https://github.com/jordigilh/kubernaut/compare/v1.3.2...v1.4.0
+[1.4.0]: https://github.com/Ayush-Singh986/kubernaut/compare/v1.3.2...v1.4.0
 ## [1.2.0] - 2026-04-06
 
 ### Added
@@ -428,7 +428,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking: NotificationRequest PascalCase enums** (#640) — `NotificationType` values changed from lowercase (e.g., `escalation`, `manual-review`) to PascalCase (e.g., `Escalation`, `ManualReview`). `NotificationPriority` values changed similarly (e.g., `critical` → `Critical`). Update any routing configurations or tooling that matches on these values.
 - **Database migration required** — Run migrations 002 and 003 before upgrading controllers. The Helm pre-upgrade hook handles this automatically.
 
-[1.2.0]: https://github.com/jordigilh/kubernaut/compare/v1.1.0...v1.2.0
+[1.2.0]: https://github.com/Ayush-Singh986/kubernaut/compare/v1.1.0...v1.2.0
 
 ## [1.1.0] - 2026-03-28
 
@@ -562,7 +562,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Helm values restructured** — `externalPostgresql`/`externalValkey` sections removed; use `postgresql.enabled=false` with `postgresql.auth.existingSecret` instead. `eventExporter` removed entirely.
 - **OCI chart location** — Chart moved from `ghcr.io` to `oci://quay.io/kubernaut-ai/kubernaut`.
 
-[1.1.0]: https://github.com/jordigilh/kubernaut/compare/v1.0.0...v1.1.0
+[1.1.0]: https://github.com/Ayush-Singh986/kubernaut/compare/v1.0.0...v1.1.0
 
 ## [1.0.0] - 2026-03-02
 
@@ -578,6 +578,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Notification Service** -- Slack and console notification channels for remediation lifecycle events
 - **Human Approval Gates** -- RemediationApprovalRequest CRD with configurable auto-approve and timeout policies
 - **Helm Chart** -- Single-command deployment via `helm install` with CRD management and configurable RBAC
-- **22 Demo Scenarios** -- End-to-end validated scenarios covering CrashLoopBackOff, OOMKill, HPA scaling, node failures, GitOps drift, certificate expiry, network policies, and more (see [kubernaut-demo-scenarios](https://github.com/jordigilh/kubernaut-demo-scenarios))
+- **22 Demo Scenarios** -- End-to-end validated scenarios covering CrashLoopBackOff, OOMKill, HPA scaling, node failures, GitOps drift, certificate expiry, network policies, and more (see [kubernaut-demo-scenarios](https://github.com/Ayush-Singh986/kubernaut-demo-scenarios))
 
-[1.0.0]: https://github.com/jordigilh/kubernaut/compare/v0.0.0...v1.0.0
+[1.0.0]: https://github.com/Ayush-Singh986/kubernaut/compare/v0.0.0...v1.0.0

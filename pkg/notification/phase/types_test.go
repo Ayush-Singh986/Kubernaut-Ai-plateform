@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	notificationphase "github.com/jordigilh/kubernaut/pkg/notification/phase"
+	notificationphase "github.com/Ayush-Singh986/kubernaut/pkg/notification/phase"
 )
 
 var _ = Describe("Notification Phase State Machine", func() {

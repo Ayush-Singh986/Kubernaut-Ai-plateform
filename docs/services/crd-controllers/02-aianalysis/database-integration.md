@@ -146,8 +146,8 @@ import (
 
     "github.com/google/uuid"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/storage/database"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage/database"
 )
 
 type AuditClient struct {

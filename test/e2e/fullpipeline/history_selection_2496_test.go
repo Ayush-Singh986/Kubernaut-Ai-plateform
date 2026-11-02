@@ -31,15 +31,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	"github.com/jordigilh/kubernaut/test/shared/validators"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 )
 
 // BR-KA-016 / DD-KA-2496. The first history entry is produced by the actual

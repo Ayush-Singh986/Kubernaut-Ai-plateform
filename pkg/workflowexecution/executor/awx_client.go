@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"time"
 
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // AWXHTTPClient implements AWXClient using the AWX REST API.

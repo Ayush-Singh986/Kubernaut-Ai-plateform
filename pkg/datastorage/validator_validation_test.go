@@ -18,11 +18,11 @@ package datastorage_test
 
 import (
 	"github.com/go-logr/logr"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/validation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/validation"
 )
 
 // Test entry point moved to notification_audit_validator_test.go to avoid "Rerunning Suite" error

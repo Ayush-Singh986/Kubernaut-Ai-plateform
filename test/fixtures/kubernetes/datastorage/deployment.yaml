@@ -39,7 +39,7 @@ spec:
         # - User identity injected into context for audit logging
         # ========================================
         - name: data-storage
-          image: quay.io/jordigilh/data-storage:latest
+          image: quay.io/Ayush-Singh986/data-storage:latest
           imagePullPolicy: Always
           ports:
             # DD-AUTH-014: Direct access (no proxy)

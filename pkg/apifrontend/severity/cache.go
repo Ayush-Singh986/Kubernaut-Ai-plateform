@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 // RulesCache provides TTL-based caching for Prometheus /api/v1/rules responses.

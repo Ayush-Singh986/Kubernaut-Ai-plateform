@@ -70,7 +70,7 @@ All common pattern files have this header:
 This is the "source of truth" for common patterns.
 
 ```bash
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut/docs/services/crd-controllers
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut/docs/services/crd-controllers
 
 # Edit the common pattern file
 vi 01-signalprocessing/testing-strategy.md
@@ -151,7 +151,7 @@ grep -r "LAST-UPDATED: 2025-01-15" */testing-strategy.md
 #### **1. Create Service Directory**
 
 ```bash
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut/docs/services/crd-controllers
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut/docs/services/crd-controllers
 
 # Create new service directory
 mkdir 06-newservice

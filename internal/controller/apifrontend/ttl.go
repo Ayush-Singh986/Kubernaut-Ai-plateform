@@ -14,10 +14,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // MinRetentionTTL is the minimum retention period for terminal sessions,

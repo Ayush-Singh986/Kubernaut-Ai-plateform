@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
 )
 
 var _ = Describe("Event Sink Context Helpers — #823 PR3", func() {

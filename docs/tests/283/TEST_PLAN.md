@@ -14,7 +14,7 @@
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
-- [Issue #283](https://github.com/jordigilh/kubernaut/issues/283)
+- [Issue #283](https://github.com/Ayush-Singh986/kubernaut/issues/283)
 - [DD-TEST-001 Port Allocation](../../architecture/decisions/DD-TEST-001-port-allocation-strategy.md)
 
 ---

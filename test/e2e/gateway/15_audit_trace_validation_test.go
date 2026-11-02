@@ -28,12 +28,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
-	"github.com/jordigilh/kubernaut/test/shared/validators"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 )
 
 // Test 15: Audit Trace Validation (DD-AUDIT-003)

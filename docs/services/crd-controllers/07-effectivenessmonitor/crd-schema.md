@@ -3,7 +3,7 @@
 > **📋 Changelog**
 > | Version | Date | Changes | Reference |
 > |---------|------|---------|-----------|
-> | **v2.0** | 2026-08-02 | **RENAMED + REWRITE** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): Renamed from `api-specification.md` — EM has no REST API, so an "API specification" framing was itself fictional. Replaced the entire fictional HTTP API (`POST /api/v1/assess/effectiveness`, `GET /api/v1/assess/effectiveness/:actionID`, `POST /api/v1/assess/batch`, `GET /api/v1/assess/data-availability`, port 8080, `shouldCallAI()`) with the real `EffectivenessAssessment` CRD schema, regenerated against `api/effectivenessassessment/v1alpha1/effectivenessassessment_types.go`. | [#1806](https://github.com/jordigilh/kubernaut/issues/1806) |
+> | **v2.0** | 2026-08-02 | **RENAMED + REWRITE** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): Renamed from `api-specification.md` — EM has no REST API, so an "API specification" framing was itself fictional. Replaced the entire fictional HTTP API (`POST /api/v1/assess/effectiveness`, `GET /api/v1/assess/effectiveness/:actionID`, `POST /api/v1/assess/batch`, `GET /api/v1/assess/data-availability`, port 8080, `shouldCallAI()`) with the real `EffectivenessAssessment` CRD schema, regenerated against `api/effectivenessassessment/v1alpha1/effectivenessassessment_types.go`. | [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) |
 > | v1.0 | 2025-10-06 | ⚠️ **STALE (superseded by v2.0)** — Original `api-specification.md`. Described a stateless HTTP API service that was never built as such. | — |
 
 **Source of Truth**: `api/effectivenessassessment/v1alpha1/effectivenessassessment_types.go`

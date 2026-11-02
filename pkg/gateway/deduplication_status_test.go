@@ -27,8 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 )
 
 // ========================================

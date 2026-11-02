@@ -13,9 +13,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 var _ = Describe("StreamingExecutor", func() {

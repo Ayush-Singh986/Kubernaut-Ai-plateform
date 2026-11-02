@@ -109,7 +109,7 @@ with keyless signing (Fulcio + GitHub OIDC). No manual key management is require
 ```bash
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/" \
+  --certificate-identity-regexp="^https://github.com/Ayush-Singh986/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/" \
   quay.io/kubernaut-ai/apifrontend:1.5.0
 ```
 
@@ -120,7 +120,7 @@ The CycloneDX SBOM attestation is currently attached to the **amd64** image only
 ```bash
 cosign verify-attestation \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/" \
+  --certificate-identity-regexp="^https://github.com/Ayush-Singh986/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/" \
   --type cyclonedx \
   quay.io/kubernaut-ai/apifrontend:1.5.0-amd64
 ```
@@ -141,7 +141,7 @@ a tamper-evident audit trail. The expected signer identity is:
 
 ```
 Issuer:  https://token.actions.githubusercontent.com
-Subject: https://github.com/jordigilh/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/vX.Y.Z
+Subject: https://github.com/Ayush-Singh986/kubernaut-apifrontend/.github/workflows/release.yml@refs/tags/vX.Y.Z
 ```
 
 The CycloneDX SBOM is also uploaded as a GitHub Release artifact (`sbom-X.Y.Z`).

@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-03-04  
-**Issue**: [#666](https://github.com/jordigilh/kubernaut/issues/666)  
+**Issue**: [#666](https://github.com/Ayush-Singh986/kubernaut/issues/666)  
 **Supersedes**: None (refactoring of existing monolithic reconciler)
 
 ## Context
@@ -129,7 +129,7 @@ func (r *Reconciler) Reconcile(ctx, req) (ctrl.Result, error) {
 
 ## References
 
-- Issue [#666](https://github.com/jordigilh/kubernaut/issues/666): Refactor RO controller into Phase Handler Registry
+- Issue [#666](https://github.com/Ayush-Singh986/kubernaut/issues/666): Refactor RO controller into Phase Handler Registry
 - Test Plan: `docs/tests/666/TEST_PLAN.md`
 - `pkg/remediationorchestrator/phase/transition.go`: TransitionIntent types
 - `pkg/remediationorchestrator/phase/registry.go`: PhaseHandler interface and Registry

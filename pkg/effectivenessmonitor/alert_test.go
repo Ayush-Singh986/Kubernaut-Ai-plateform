@@ -23,9 +23,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/alert"
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/alert"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // mockAlertManagerClient implements emclient.AlertManagerClient for unit tests.

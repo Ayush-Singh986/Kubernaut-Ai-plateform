@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/sanitization"
 )
 
 var _ = Describe("Kubernaut Agent I1 Injection Stripping — #433", func() {

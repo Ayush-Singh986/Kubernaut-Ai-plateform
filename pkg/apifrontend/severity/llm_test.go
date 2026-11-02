@@ -9,8 +9,8 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/genai"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
 )
 
 var _ = Describe("LLM Triage", func() {

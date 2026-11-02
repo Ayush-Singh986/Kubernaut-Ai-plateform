@@ -45,14 +45,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	aianalysispkg "github.com/jordigilh/kubernaut/pkg/aianalysis"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/creator"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/status"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	aianalysispkg "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/status"
 )
 
 const (

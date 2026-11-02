@@ -26,9 +26,9 @@ import (
 	"github.com/go-chi/cors"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp" // GAP-14 / Issue #1519: inbound tracing
 
-	dsaudit "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
-	dsmiddleware "github.com/jordigilh/kubernaut/pkg/datastorage/server/middleware"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	dsaudit "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
+	dsmiddleware "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/middleware"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // Handler returns the configured HTTP handler for the server

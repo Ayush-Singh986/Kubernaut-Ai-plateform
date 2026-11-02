@@ -1,6 +1,6 @@
 # Test Plan: v1.5.6 QE Batch — present_decision Schema/Ordering, WatchTerminalEvents Leak, Interactive Session Janitor
 
-**Issues**: [#2092](https://github.com/jordigilh/kubernaut/issues/2092), [#2094](https://github.com/jordigilh/kubernaut/issues/2094), [#2098](https://github.com/jordigilh/kubernaut/issues/2098), [#2100](https://github.com/jordigilh/kubernaut/issues/2100) (all `v1.5.6`, `release/v1.5`)
+**Issues**: [#2092](https://github.com/Ayush-Singh986/kubernaut/issues/2092), [#2094](https://github.com/Ayush-Singh986/kubernaut/issues/2094), [#2098](https://github.com/Ayush-Singh986/kubernaut/issues/2098), [#2100](https://github.com/Ayush-Singh986/kubernaut/issues/2100) (all `v1.5.6`, `release/v1.5`)
 **Related (investigated, not in scope)**: #1995 (already fixed by merged PR #2000), #2096 (spiked and re-scoped as client/harness disconnect, not an AF bug — see GitHub comment on #2096)
 **Branch**: `fix/2092-2094-2098-2100-interactive-session-batch` (off `origin/release/v1.5` @ `bb2cf8c57`)
 **Created**: 2026-08-11

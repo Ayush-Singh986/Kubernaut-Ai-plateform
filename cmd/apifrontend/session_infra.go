@@ -20,15 +20,15 @@ import (
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/apifrontend"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/apifrontend"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
 	adksession "google.golang.org/adk/v2/session"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // sessionInfra bundles the session-management components that buildSessionInfra

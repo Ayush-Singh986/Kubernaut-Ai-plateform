@@ -25,14 +25,14 @@
 
 ---
 
-> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This document
+> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This document
 > describes a pre-CRD, sequential-HTTP-call "10-service" design (`webhook-service`, `ai-service`,
 > `workflow-engine-service`, `executor-service`, `storage-service`, `intelligence-service`, `monitor-service`,
 > `context-api-service`, `notification-service`) that predates — and does not reflect — Kubernaut's current
 > CRD-controller architecture. See [Kubernaut Service Catalog](KUBERNAUT_SERVICE_CATALOG.md) for the
 > authoritative current 12-service decomposition. Two corrections specific to this issue: (1) **HolmesGPT** was
 > rewritten in Go and renamed **Kubernaut Agent (KA)** in v1.3 (issue
-> [#433](https://github.com/jordigilh/kubernaut/issues/433)); it runs as a first-class Kubernaut service
+> [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433)); it runs as a first-class Kubernaut service
 > (`cmd/kubernautagent/`, real ports: API `8443`, health `8081`, metrics `9090`), not as an external tool behind
 > a `context-service`. (2) **Context API** (`context-service`/`context-api-service` below) was deprecated and
 > folded into Data Storage per [DD-CONTEXT-006](decisions/DD-CONTEXT-006-CONTEXT-API-DEPRECATION.md); it no
@@ -58,70 +58,70 @@ Services:
   gateway-service:
     # Purpose: See Service Catalog for detailed specifications
     Port: 8080 (HTTP), 9080 (metrics), 8180 (health)
-    Image: quay.io/jordigilh/gateway-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/gateway-service:v1.0.0
     Dependencies: [alert-service]
     External: [Prometheus, Grafana]
 
   alert-service:
     # Purpose: See Service Catalog for detailed specifications
     Port: 8081 (HTTP), 9081 (metrics), 8181 (health)
-    Image: quay.io/jordigilh/alert-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/alert-service:v1.0.0
     Dependencies: [ai-service]
     External: [None - internal only]
 
   ai-service:
     # Purpose: See Service Catalog for detailed specifications
     Port: 8082 (HTTP), 9082 (metrics), 8182 (health)
-    Image: quay.io/jordigilh/ai-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/ai-service:v1.0.0
     Dependencies: [workflow-service]
     External: [OpenAI, Anthropic, Azure, AWS, Ollama]
 
   workflow-service:
     # Purpose: See Service Catalog for detailed specifications
     Port: 8083 (HTTP), 9083 (metrics), 8183 (health)
-    Image: quay.io/jordigilh/workflow-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/workflow-service:v1.0.0
     Dependencies: [executor-service]
     External: [None - internal only]
 
   executor-service:
     Purpose: Kubernetes Operations Only
     Port: 8084 (HTTP), 9084 (metrics), 8184 (health)
-    Image: quay.io/jordigilh/executor-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/executor-service:v1.0.0
     Dependencies: [storage-service]
     External: [Kubernetes Clusters]
 
   storage-service:
     Purpose: Data Persistence Only
     Port: 8085 (HTTP), 9085 (metrics), 8185 (health)
-    Image: quay.io/jordigilh/storage-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/storage-service:v1.0.0
     Dependencies: [intelligence-service]
     External: [PostgreSQL, Vector DBs]
 
   intelligence-service:
     Purpose: Pattern Discovery Only
     Port: 8086 (HTTP), 9086 (metrics), 8186 (health)
-    Image: quay.io/jordigilh/intelligence-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/intelligence-service:v1.0.0
     Dependencies: [monitor-service]
     External: [None - internal only]
 
   monitor-service:
     Purpose: Effectiveness Assessment Only
     Port: 8080 (HTTP), 9090 (metrics)
-    Image: quay.io/jordigilh/monitor-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/monitor-service:v1.0.0
     Dependencies: [context-service]
     External: [None - internal only]
 
   context-service:
     Purpose: Context Orchestration Only
     Port: 8091 (HTTP), 9091 (metrics), 8191 (health)
-    Image: quay.io/jordigilh/context-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/context-service:v1.0.0
     Dependencies: [notification-service]
     External: [Kubernaut Agent (KA), External AI]  # formerly "HolmesGPT" — see banner above
 
   notification-service:
     Purpose: Multi-Channel Notifications Only
     Port: 8089 (HTTP), 9089 (metrics), 8189 (health)
-    Image: quay.io/jordigilh/notification-service:v1.0.0
+    Image: quay.io/Ayush-Singh986/notification-service:v1.0.0
     Dependencies: [None - terminal service]
     External: [Slack, Teams, Email, PagerDuty]
 ```

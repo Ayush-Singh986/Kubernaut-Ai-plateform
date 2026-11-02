@@ -30,15 +30,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	crdvalidators "github.com/jordigilh/kubernaut/test/shared/validators"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	crdvalidators "github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 )
 
 // BR-ORCH-026, BR-ORCH-029: Approval Lifecycle E2E Test

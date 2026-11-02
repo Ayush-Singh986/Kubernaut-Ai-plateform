@@ -15,7 +15,7 @@
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 - [Phase 1 Test Plan (#292)](../292/TEST_PLAN.md)
-- [GitHub Issue #299](https://github.com/jordigilh/kubernaut/issues/299)
+- [GitHub Issue #299](https://github.com/Ayush-Singh986/kubernaut/issues/299)
 
 ---
 

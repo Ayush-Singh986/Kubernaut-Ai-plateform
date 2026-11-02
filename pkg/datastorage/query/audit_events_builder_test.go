@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/query"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/query"
 )
 
 var _ = Describe("AuditEventsQueryBuilder — JSONB field filter (Issue #1199)", func() {

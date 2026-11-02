@@ -1,6 +1,6 @@
 # Test Plan — #1326: Migrate AF-to-KA Communication from REST+MCP Hybrid to MCP-Only
 
-**IEEE 829 Compliant** | **Issue**: [#1326](https://github.com/jordigilh/kubernaut/issues/1326) | **Depends on**: TP-1310-INVESTIGATION-TRANSPARENCY, TP-1311-KIND-DISAMBIGUATION
+**IEEE 829 Compliant** | **Issue**: [#1326](https://github.com/Ayush-Singh986/kubernaut/issues/1326) | **Depends on**: TP-1310-INVESTIGATION-TRANSPARENCY, TP-1311-KIND-DISAMBIGUATION
 
 ## 1. Test Plan Identifier
 

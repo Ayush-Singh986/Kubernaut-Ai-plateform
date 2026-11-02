@@ -10,10 +10,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 // MCPToolDef defines a tool to be registered with the MCP server.

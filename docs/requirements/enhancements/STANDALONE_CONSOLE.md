@@ -2,7 +2,7 @@
 
 **Status**: Proposed; not an implementation approval or release commitment
 **Updated**: 2026-10-24
-**Tracking**: [#855](https://github.com/jordigilh/kubernaut/issues/855)
+**Tracking**: [#855](https://github.com/Ayush-Singh986/kubernaut/issues/855)
 
 ## Purpose and Agreed Direction
 
@@ -90,6 +90,6 @@ promised here. Investigation reasoning remains in the existing interactive flow.
 
 ## References
 
-- [Console intent-routing enhancement #856](https://github.com/jordigilh/kubernaut/issues/856)
-- [Operations-platform vision #818](https://github.com/jordigilh/kubernaut/issues/818)
+- [Console intent-routing enhancement #856](https://github.com/Ayush-Singh986/kubernaut/issues/856)
+- [Operations-platform vision #818](https://github.com/Ayush-Singh986/kubernaut/issues/818)
 - [Historical DD-CONSOLE-001](../../architecture/decisions/DD-CONSOLE-001-intent-driven-navigation-architecture.md)

@@ -8,7 +8,7 @@
 
 ---
 
-> **Note (2026-08-01, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Renamed `DD-HAPI-003` → `DD-KA-004` (the ID `DD-HAPI-003` was reused by two unrelated Python-era documents — the other one, on mandatory OpenAPI client usage, is now [DD-KA-003](DD-KA-003-mandatory-openapi-client-usage.md)). This document originally proposed a `0.7 * semantic_similarity + 0.3 * label_match_ratio` formula. **That formula was never implemented in the Go rewrite.** What actually shipped is Alternative 2 from this very document ("LLM Self-Assessed Confidence") — the exact alternative this DD rejected in December 2025. This rewrite documents the current Go reality and keeps the original decision record below for historical context.
+> **Note (2026-08-01, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Renamed `DD-HAPI-003` → `DD-KA-004` (the ID `DD-HAPI-003` was reused by two unrelated Python-era documents — the other one, on mandatory OpenAPI client usage, is now [DD-KA-003](DD-KA-003-mandatory-openapi-client-usage.md)). This document originally proposed a `0.7 * semantic_similarity + 0.3 * label_match_ratio` formula. **That formula was never implemented in the Go rewrite.** What actually shipped is Alternative 2 from this very document ("LLM Self-Assessed Confidence") — the exact alternative this DD rejected in December 2025. This rewrite documents the current Go reality and keeps the original decision record below for historical context.
 
 ---
 
@@ -101,4 +101,4 @@ The `rationale`/reasoning explanation is still expected to explain the confidenc
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-12-02 | HAPI Team | Initial creation — V1.0 semantic-similarity + label-match methodology proposed |
-| 2.0 | 2026-08-01 | Docs cleanup ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)) | Renamed `DD-HAPI-003` → `DD-KA-004`; documented that the Go implementation never adopted the proposed formula and instead uses LLM self-reported confidence (the originally rejected Alternative 2); corrected the approval-threshold and production-always-approval claims against the current two-gate (0.7 hard floor + 0.80 Rego default) reality |
+| 2.0 | 2026-08-01 | Docs cleanup ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)) | Renamed `DD-HAPI-003` → `DD-KA-004`; documented that the Go implementation never adopted the proposed formula and instead uses LLM self-reported confidence (the originally rejected Alternative 2); corrected the approval-threshold and production-always-approval claims against the current two-gate (0.7 hard floor + 0.80 Rego default) reality |

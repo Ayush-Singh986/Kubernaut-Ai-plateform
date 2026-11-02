@@ -28,9 +28,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	karbac "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/rbac"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
 )
 
 // readyWfCatalog returns a *workflowcatalog.LazyCatalog that is immediately

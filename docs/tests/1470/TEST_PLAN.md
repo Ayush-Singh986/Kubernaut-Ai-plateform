@@ -4,7 +4,7 @@
 > this historical plan is retired by BR-AI-090/#2515. Current complete-profile
 > and reload coverage is maintained in [TP-2515](../2515/TEST_PLAN.md).
 
-**IEEE 829 Compliant** | **Issue**: [#1470](https://github.com/jordigilh/kubernaut/issues/1470) | **Milestone**: v1.5
+**IEEE 829 Compliant** | **Issue**: [#1470](https://github.com/Ayush-Singh986/kubernaut/issues/1470) | **Milestone**: v1.5
 
 ## 1. Test Plan Identifier
 

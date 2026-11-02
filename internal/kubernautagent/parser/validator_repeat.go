@@ -21,7 +21,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // RepeatSelectionContext is constructed from trusted, target-scoped history,

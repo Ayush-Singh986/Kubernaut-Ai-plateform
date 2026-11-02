@@ -156,9 +156,9 @@ grep -rn "OldFieldName\|types.LLMOverride" --include="*.go" .
 ## Out of Scope
 
 - **Operator CRD exposure of `reasoning`**: `phaseModels` itself is already exposed via the
-  Kubernaut CRD (`kubernaut-operator` [#178](https://github.com/jordigilh/kubernaut-operator/issues/178),
+  Kubernaut CRD (`kubernaut-operator` [#178](https://github.com/Ayush-Singh986/kubernaut-operator/issues/178),
   merged); the new `reasoning` sub-field this issue adds is not yet exposable through the CRD —
-  that's tracked separately as `kubernaut-operator` [#211](https://github.com/jordigilh/kubernaut-operator/issues/211)
+  that's tracked separately as `kubernaut-operator` [#211](https://github.com/Ayush-Singh986/kubernaut-operator/issues/211)
   (open, cross-linked to kubernaut#1616 and vice versa). #211's own scope also has a gap (AF
   pass-through in `afAgentLLMConfig()`, and base-level `reasoning` not propagated by the operator
   at all) — flagged there, not folded into this PR.

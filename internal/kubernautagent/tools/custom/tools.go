@@ -27,13 +27,13 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	kaaudit "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 var listAvailableActionsSchema = json.RawMessage(`{

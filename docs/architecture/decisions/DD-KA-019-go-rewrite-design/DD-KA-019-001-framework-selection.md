@@ -211,9 +211,9 @@ This pattern means:
 
 ## References
 
-- [#505](https://github.com/jordigilh/kubernaut/issues/505): kagent evaluation
-- [#506](https://github.com/jordigilh/kubernaut/issues/506): LangChainGo evaluation
-- [#507](https://github.com/jordigilh/kubernaut/issues/507): Eino evaluation
+- [#505](https://github.com/Ayush-Singh986/kubernaut/issues/505): kagent evaluation
+- [#506](https://github.com/Ayush-Singh986/kubernaut/issues/506): LangChainGo evaluation
+- [#507](https://github.com/Ayush-Singh986/kubernaut/issues/507): Eino evaluation
 - PoC: `kubernaut-poc-langchaingo/`, `kubernaut-poc-eino/`, `kubernaut-poc-kagent/`
 
 ---

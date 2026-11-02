@@ -26,10 +26,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/query"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/schema"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/validation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/query"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/schema"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/validation"
 )
 
 // bug674LogEntry captures a single structured log message for assertion.

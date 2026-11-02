@@ -35,11 +35,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	gwtypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	gwtypes "github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

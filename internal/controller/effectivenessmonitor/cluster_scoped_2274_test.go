@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // Ginkgo DSL convention
 	. "github.com/onsi/gomega"    //nolint:staticcheck // Gomega DSL convention
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 // Issue #2274: Fleet metric/alert queries built by EM must be scoped to the

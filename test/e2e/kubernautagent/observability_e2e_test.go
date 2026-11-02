@@ -27,9 +27,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // E2E Observability Tests — BR-KA-OBSERVABILITY-001

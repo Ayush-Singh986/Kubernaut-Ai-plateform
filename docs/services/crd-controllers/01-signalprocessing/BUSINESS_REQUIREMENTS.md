@@ -762,7 +762,7 @@ volumeMounts:
 **Priority**: P1 (High)
 **Category**: Classification
 **Status**: 🆕 NEW (February 2026)
-**GitHub Issue**: [#55](https://github.com/jordigilh/kubernaut/issues/55)
+**GitHub Issue**: [#55](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 **Full Document**: [docs/requirements/BR-SP-106-proactive-signal-mode-classification.md](../../../requirements/BR-SP-106-proactive-signal-mode-classification.md)
 
 **Description**: SignalProcessing MUST classify incoming signals as `proactive` or `reactive` based on signal type, and normalize proactive signal types to their base type for workflow catalog matching. This enables Kubernaut to handle preemptive remediation for predicted incidents (e.g., Prometheus `predict_linear()` alerts) using the existing pipeline.
@@ -815,7 +815,7 @@ volumeMounts:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.5 | 2026-09-27 | #2467: Required SP severity fails closed on empty/`unknown`; operators define concrete Rego catch-alls; no Go or LLM fallback. Updated deprecated environment/priority summaries to match. |
-| 1.4 | 2026-02-08 | **NEW BR-SP-106**: Proactive Signal Mode Classification. Enables preemptive remediation via Prometheus `predict_linear()` alerts. Signal type normalization + `SignalMode` status field. [Issue #55](https://github.com/jordigilh/kubernaut/issues/55). |
+| 1.4 | 2026-02-08 | **NEW BR-SP-106**: Proactive Signal Mode Classification. Enables preemptive remediation via Prometheus `predict_linear()` alerts. Signal type normalization + `SignalMode` status field. [Issue #55](https://github.com/Ayush-Singh986/kubernaut/issues/55). |
 | 1.3 | 2026-01-09 | **NEW BR-SP-105**: Severity Determination via Rego Policy. Enables customer extensibility (Sev1-4, P0-P4 schemes). Operator-configurable severity mappings. Historical fallback wording superseded by v1.5. |
 | 1.2 | 2025-12-06 | BR-SP-071: Changed to severity-only fallback (not environment × severity matrix) |
 | 1.1 | 2025-12-06 | BR-SP-072: Updated to fsnotify-based hot-reload per DD-INFRA-001, added FileWatcher reference |

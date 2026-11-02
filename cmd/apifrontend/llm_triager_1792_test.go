@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // IT-AF-1792-003/004: newLLMTriagerFromConfig's provider: vertex_ai branch

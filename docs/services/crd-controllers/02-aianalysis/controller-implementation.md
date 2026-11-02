@@ -2,7 +2,7 @@
 
 **Version**: v3.0
 **Last Updated**: 2026-08-02
-**Status**: ✅ Corrected for [#1806](https://github.com/jordigilh/kubernaut/issues/1806)
+**Status**: ✅ Corrected for [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)
 
 ---
 
@@ -152,11 +152,11 @@ import (
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis/status"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/status"
 )
 
 const FinalizerName = "kubernaut.ai/finalizer"

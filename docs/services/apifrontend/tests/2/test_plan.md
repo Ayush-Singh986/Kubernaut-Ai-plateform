@@ -1,7 +1,7 @@
 # Test Plan: OIDC/OAuth2 Authentication with Issuer-Based Routing
 
 **Test Plan Identifier:** TP-AF-002
-**Issue:** [#2](https://github.com/jordigilh/kubernaut-apifrontend/issues/2)
+**Issue:** [#2](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/2)
 **Version:** 1.0
 **Date:** 2026-05-03
 **Status:** Draft

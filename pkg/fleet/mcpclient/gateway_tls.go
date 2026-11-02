@@ -23,8 +23,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // WithMCPGatewayTLSCAFile configures a scoped, reloadable CA transport for

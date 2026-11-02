@@ -27,14 +27,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ds"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ds"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

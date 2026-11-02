@@ -18,8 +18,8 @@ package handlers
 import (
 	"net/http"
 
-	mockmetrics "github.com/jordigilh/kubernaut/test/services/mock-llm/metrics"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/tracker"
+	mockmetrics "github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/tracker"
 )
 
 // verificationHandler exposes the /api/test/* endpoints for test assertions.

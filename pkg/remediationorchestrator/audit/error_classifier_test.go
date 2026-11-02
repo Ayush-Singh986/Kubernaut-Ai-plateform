@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	prodaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
+	prodaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
 )
 
 var _ = Describe("ErrorClassifier", func() {

@@ -228,8 +228,8 @@ import (
     "net/http"
 
     "github.com/gorilla/mux"
-    "github.com/jordigilh/kubernaut/pkg/gateway/auth"
-    "github.com/jordigilh/kubernaut/pkg/gateway/handlers"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/auth"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/handlers"
 )
 
 func main() {
@@ -293,9 +293,9 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/healthz"
     metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-    remediationv1 "github.com/jordigilh/kubernaut/pkg/apis/remediation/v1"
-    "github.com/jordigilh/kubernaut/pkg/remediationorchestrator"
-    "github.com/jordigilh/kubernaut/pkg/shared/auth"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediation/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 var (
@@ -631,7 +631,7 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/client-go/kubernetes/fake"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway/auth"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/auth"
 )
 
 func TestTokenReviewerAuthentication(t *testing.T) {

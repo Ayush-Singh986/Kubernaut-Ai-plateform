@@ -150,16 +150,16 @@ func GetImagePullPolicyV1() corev1.PullPolicy {
 // This is used in GitHub Actions CI/CD to avoid building images locally (saves ~60% disk space).
 //
 // Registry Configuration (Environment Variables):
-//   - IMAGE_REGISTRY: Registry URL (e.g., "ghcr.io/jordigilh/kubernaut")
+//   - IMAGE_REGISTRY: Registry URL (e.g., "ghcr.io/Ayush-Singh986/kubernaut")
 //   - IMAGE_TAG: Image tag (e.g., "pr-123", "main-abc1234")
 //
 // Returns the full image name for later loading to Kind.
 //
 // Example (CI/CD):
 //
-//	IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut IMAGE_TAG=pr-123
+//	IMAGE_REGISTRY=ghcr.io/Ayush-Singh986/kubernaut IMAGE_TAG=pr-123
 //	imageName, err := PullImageFromRegistry("datastorage", writer)
-//	// Returns: "ghcr.io/jordigilh/kubernaut/datastorage:pr-123"
+//	// Returns: "ghcr.io/Ayush-Singh986/kubernaut/datastorage:pr-123"
 func PullImageFromRegistry(serviceName string, writer io.Writer) (string, error) {
 	registry := os.Getenv("IMAGE_REGISTRY")
 	tag := os.Getenv("IMAGE_TAG")
@@ -206,7 +206,7 @@ func PullImageFromRegistry(serviceName string, writer io.Writer) (string, error)
 //
 // Example (CI/CD with registry):
 //
-//	IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut IMAGE_TAG=pr-123
+//	IMAGE_REGISTRY=ghcr.io/Ayush-Singh986/kubernaut IMAGE_TAG=pr-123
 //	imageName, err := BuildImageForKind(cfg, writer)
 //	// Pulls from registry instead of building
 //
@@ -690,7 +690,7 @@ func CleanupE2EImages(imageNames []string, writer io.Writer) error {
 // Example:
 //
 //	exists, err := VerifyImageExistsInRegistry(
-//	    "ghcr.io/jordigilh/kubernaut/datastorage:pr-24",
+//	    "ghcr.io/Ayush-Singh986/kubernaut/datastorage:pr-24",
 //	    GinkgoWriter,
 //	)
 //	if !exists {

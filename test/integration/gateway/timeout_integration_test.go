@@ -44,13 +44,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 var _ = Describe("Issue #673 L-3: K8s API Timeout (BR-GATEWAY-102)", Ordered, ContinueOnFailure, func() {

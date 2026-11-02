@@ -1,6 +1,6 @@
 # Test Plan: AF↔KA Interactive Bridge Fleet Cluster-Scoping (Gap D)
 
-**Issue**: [#1768](https://github.com/jordigilh/kubernaut/issues/1768) (Track 2 — Gap D)
+**Issue**: [#1768](https://github.com/Ayush-Singh986/kubernaut/issues/1768) (Track 2 — Gap D)
 **Authority**: [DD-FLEET-005](../../architecture/decisions/DD-FLEET-005-cluster-transparent-tool-exposure.md), [spike findings](../../spikes/1768-af-ka-interactive-fleet-scoping/README.md)
 **Business Requirements**: BR-INTEGRATION-054, BR-FLEET-054
 **Branch**: `fix/1768-track2-interactive-fleet-scoping`

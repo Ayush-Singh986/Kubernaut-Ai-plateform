@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 var _ = Describe("EffectivenessAssessment CRD Types (ADR-EM-001)", func() {

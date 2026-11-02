@@ -28,8 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	ntmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	ntmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
 )
 
 // Metrics E2E Validation using Kind NodePort

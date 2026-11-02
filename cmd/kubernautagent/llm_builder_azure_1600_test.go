@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaopenai "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/openai"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	kaopenai "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Issue #1600 / BR-AI-086: Azure OpenAI support wiring — end-to-end from

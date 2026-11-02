@@ -1,7 +1,7 @@
 # Test Plan: End-to-End AuthZ Enforcement — User Impersonation and JWT Delegation
 
 **Test Plan Identifier:** TP-AF-055
-**Issue:** [#55](https://github.com/jordigilh/kubernaut-apifrontend/issues/55)
+**Issue:** [#55](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/55)
 **Version:** 1.0
 **Date:** 2026-05-03
 **Status:** Draft

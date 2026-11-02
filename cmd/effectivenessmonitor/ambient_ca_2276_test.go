@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
 )
 
 func generateAmbientCATestCert(t *testing.T) string {

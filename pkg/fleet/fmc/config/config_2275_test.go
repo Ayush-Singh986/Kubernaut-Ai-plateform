@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc/config"
 )
 
 // BR-PLATFORM-012, Issue #2275: FMC is the one service whose buildFMCServers

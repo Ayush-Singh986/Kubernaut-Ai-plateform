@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
 )
 
 // failResourcesForAdapterMapper wraps a RESTMapper and forces ResourcesFor to

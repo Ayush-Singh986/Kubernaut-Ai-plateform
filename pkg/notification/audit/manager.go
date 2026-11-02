@@ -47,9 +47,9 @@ import (
 	"fmt"
 	"time"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // Event type constants for Notification audit events (from OpenAPI spec)

@@ -1,6 +1,6 @@
 # Test Plan: A2A Progressive Status Updates and 4-Phase Interactive Remediation Journey
 
-> **Partially superseded by [#1282](https://github.com/jordigilh/kubernaut/issues/1282):**
+> **Partially superseded by [#1282](https://github.com/Ayush-Singh986/kubernaut/issues/1282):**
 > `af_create_rr` FunctionCall status and FunctionResponse summary contracts updated.
 > `summarizeCreateRR` now produces human-friendly text (not raw JSON). LLM args reduced
 > to `{kind, name, description}`. See `docs/tests/1282/TEST_PLAN.md` and `UT-AF-1282-OUT-*`.
@@ -77,8 +77,8 @@ The user sees status indicators during tool execution, then LLM reasoning after 
 
 ### 2.1 Authoritative Documents
 
-- [Issue #1189](https://github.com/jordigilh/kubernaut/issues/1189) — 4-Phase Interactive Remediation Journey
-- [PR #1193](https://github.com/jordigilh/kubernaut/pull/1193) — Implementation PR
+- [Issue #1189](https://github.com/Ayush-Singh986/kubernaut/issues/1189) — 4-Phase Interactive Remediation Journey
+- [PR #1193](https://github.com/Ayush-Singh986/kubernaut/pull/1193) — Implementation PR
 - BR-AF-1189 — Progressive status updates for A2A tasks
 - [DD-TEST-006](../../architecture/decisions/DD-TEST-006-test-plan-policy.md) — Test Plan Policy
 - [TESTING_GUIDELINES.md](../../development/business-requirements/TESTING_GUIDELINES.md) — Per-tier coverage >=80%

@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // MockProvider is the interface expected by DiscoverAndBridgeFromMock for testing.

@@ -1,6 +1,6 @@
 # Test Plan: Fix #1451 bridgeEventsCollectSummary Reports "completed" on Inactivity Timeout
 
-**Issue**: [#1451](https://github.com/jordigilh/kubernaut/issues/1451)
+**Issue**: [#1451](https://github.com/Ayush-Singh986/kubernaut/issues/1451)
 **Service Type**: [x] Stateless HTTP API (API Frontend)
 **Date**: 2026-06-26
 **Status**: Active

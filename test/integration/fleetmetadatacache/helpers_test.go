@@ -30,8 +30,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 func createBackend(ctx context.Context, name string) {

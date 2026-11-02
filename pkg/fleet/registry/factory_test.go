@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 var _ = Describe("NewClusterRegistry factory (MCP Gateway Adapter)", func() {

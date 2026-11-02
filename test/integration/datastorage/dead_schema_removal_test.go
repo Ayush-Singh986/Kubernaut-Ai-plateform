@@ -45,9 +45,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/reconstruction"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/reconstruction"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // deadTables are the 8 tables (plus action_effectiveness_metrics, flagged

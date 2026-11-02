@@ -26,10 +26,10 @@ import (
 	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // RequestBuilder constructs KA requests from AIAnalysis CRD specs.

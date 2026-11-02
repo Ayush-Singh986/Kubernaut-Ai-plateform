@@ -24,15 +24,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 func (inv *Investigator) emitResponseComplete(ctx context.Context, result *katypes.InvestigationResult, tokens *TokenAccumulator, correlationID, modelName string) {

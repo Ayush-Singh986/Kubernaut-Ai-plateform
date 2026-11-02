@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 )
 
 // MaxRequestBodySize is the global body size limit applied by all middleware and

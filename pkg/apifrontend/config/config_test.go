@@ -9,8 +9,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

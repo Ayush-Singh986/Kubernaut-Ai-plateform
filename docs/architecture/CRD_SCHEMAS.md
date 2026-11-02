@@ -812,7 +812,7 @@ For schemas of CRDs created by Central Controller:
 
 **Purpose**: Temporary file containing schema extensions to be appended to `CRD_SCHEMAS.md`
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Beyond
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Beyond
 > the section-level DEPRECATED status above, the `AIAnalysisSpec` Go snippet below (including the
 > `LLMProvider` field and its `holmesgpt` enum value) does not match the current
 > `api/aianalysis/v1alpha1/aianalysis_types.go`, which has no `LLMProvider`/`llmProvider` field at all —
@@ -821,7 +821,7 @@ For schemas of CRDs created by Central Controller:
 > the retired application Helm values), not a per-CRD enum. Treat this entire extension section as historical;
 > defer to the Go types for the authoritative current schema, as the note below already instructs.
 >
-> **Also stale (2026-08, [Issue #2176](https://github.com/jordigilh/kubernaut/issues/2176) /
+> **Also stale (2026-08, [Issue #2176](https://github.com/Ayush-Singh986/kubernaut/issues/2176) /
 > [DD-TIMEOUT-002](decisions/DD-TIMEOUT-002-child-crd-timeout-self-enforcement.md))**: neither the
 > `AIAnalysisSpec` nor `WorkflowExecutionSpec` snippets below show the current `TimesOutAt *metav1.Time`
 > field. RO's creator populates it from `RemediationRequest.Status.TimeoutConfig` (Analyzing/Executing

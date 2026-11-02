@@ -15,7 +15,7 @@ limitations under the License.
 */
 package scenarios
 
-import "github.com/jordigilh/kubernaut/pkg/shared/uuid"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 
 // helmManagedConfig scripts the preferred-family E2E journey for #2478.
 // The target is a real Helm-labeled Pod seeded by the KA E2E infrastructure;

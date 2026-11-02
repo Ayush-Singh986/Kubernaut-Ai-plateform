@@ -20,16 +20,16 @@ import (
 	"fmt"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	weconditions "github.com/jordigilh/kubernaut/pkg/workflowexecution"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	weconditions "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 	"github.com/google/uuid"
 )

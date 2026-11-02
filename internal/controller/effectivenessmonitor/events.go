@@ -23,11 +23,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	emaudit "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/audit"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/hash"
-	emtypes "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	emaudit "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/hash"
+	emtypes "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
 )
 
 // emitValidityExtendedEvent emits a warning K8s event when the runtime guard

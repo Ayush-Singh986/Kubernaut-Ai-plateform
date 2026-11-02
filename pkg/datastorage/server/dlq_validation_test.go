@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
 )
 
 var _ = Describe("DLQ EventData Validation (#1048 Phase 4 / SC-5, SI-10)", func() {

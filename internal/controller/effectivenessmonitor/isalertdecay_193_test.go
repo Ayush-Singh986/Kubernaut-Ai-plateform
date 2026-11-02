@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // Ginkgo DSL convention
 	. "github.com/onsi/gomega"    //nolint:staticcheck // Gomega DSL convention
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	emtypes "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	emtypes "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // UT-EM-193-006 (Issue #193, DD-EM-005): isAlertDecay interaction with

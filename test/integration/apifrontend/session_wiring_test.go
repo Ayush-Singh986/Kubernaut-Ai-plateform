@@ -22,8 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/apifrontend"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/apifrontend"
 )
 
 // FedRAMP control mapping for this suite:

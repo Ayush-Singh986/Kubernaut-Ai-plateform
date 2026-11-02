@@ -28,13 +28,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

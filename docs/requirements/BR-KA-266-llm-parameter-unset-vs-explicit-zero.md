@@ -10,9 +10,9 @@
 
 > **Note**: This BR formalizes a requirement that was previously cited in code comments as
 > `BR-HAPI-199` — a shorthand reference with no corresponding formal requirement document.
-> Minted here as part of [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)
+> Minted here as part of [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)
 > (HAPI→KA terminology cleanup) to close that documentation gap. The underlying behavior was
-> implemented for [Issue #1749](https://github.com/jordigilh/kubernaut/issues/1749).
+> implemented for [Issue #1749](https://github.com/Ayush-Singh986/kubernaut/issues/1749).
 
 ---
 
@@ -38,7 +38,7 @@ cannot tell "unset" apart from "explicitly zero", it must pick one of two wrong 
    request, breaking providers/models that reject it.
 2. Treat explicit `0` as unset → silently drops the operator's deterministic-output request.
 
-[Issue #1749](https://github.com/jordigilh/kubernaut/issues/1749) tracked the discovery and fix
+[Issue #1749](https://github.com/Ayush-Singh986/kubernaut/issues/1749) tracked the discovery and fix
 of exactly this bug: `mergeLLMConfig` used a `if rt.Temperature != 0` guard that conflated the
 two states.
 
@@ -94,8 +94,8 @@ through, since there is no operator-facing "must be deterministic" expectation f
 
 ## Related Documents
 
-- [Issue #1749](https://github.com/jordigilh/kubernaut/issues/1749): Original bug report and fix (temperature unset vs. explicit-zero conflation)
-- [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806): HAPI→KA documentation cleanup that minted this formal BR from the informal `BR-HAPI-199` code citation
+- [Issue #1749](https://github.com/Ayush-Singh986/kubernaut/issues/1749): Original bug report and fix (temperature unset vs. explicit-zero conflation)
+- [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806): HAPI→KA documentation cleanup that minted this formal BR from the informal `BR-HAPI-199` code citation
 - `internal/kubernautagent/config/config_types.go`: `LLMRuntimeConfig.Temperature` definition
 - `cmd/kubernautagent/llm_builder.go`: `mergeLLMConfig` implementation
 - `pkg/kubernautagent/llm/swappable_client.go`: wire-request construction

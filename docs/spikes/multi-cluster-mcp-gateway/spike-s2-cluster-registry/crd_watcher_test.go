@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/docs/spikes/multi-cluster-mcp-gateway/spike-s2-cluster-registry"
+	"github.com/Ayush-Singh986/kubernaut/docs/spikes/multi-cluster-mcp-gateway/spike-s2-cluster-registry"
 )
 
 func TestCRDWatcher(t *testing.T) {

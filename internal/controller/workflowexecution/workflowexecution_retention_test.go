@@ -27,7 +27,7 @@ import (
 	"knative.dev/pkg/apis"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 var _ = Describe("UT-WE-2392-RET: failed execution retention lifecycle (BR-WE-019, AU-11)", func() {

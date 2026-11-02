@@ -22,8 +22,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/transport"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // llmClientTimeout is the maximum time an LLM HTTP request may take end-to-end.

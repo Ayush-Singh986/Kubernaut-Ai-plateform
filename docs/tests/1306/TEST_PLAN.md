@@ -1,6 +1,6 @@
 # Test Plan — #1306: Wire G2 KASessionPool for Persistent MCP Sessions
 
-**IEEE 829 Compliant** | **Issue**: [#1306](https://github.com/jordigilh/kubernaut/issues/1306)
+**IEEE 829 Compliant** | **Issue**: [#1306](https://github.com/Ayush-Singh986/kubernaut/issues/1306)
 
 ## 1. Test Plan Identifier
 

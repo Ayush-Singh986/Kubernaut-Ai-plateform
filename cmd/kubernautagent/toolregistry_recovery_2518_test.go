@@ -27,12 +27,12 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	fleetclient "github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	fleetclient "github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 type recoveryAuditStore2518 struct {

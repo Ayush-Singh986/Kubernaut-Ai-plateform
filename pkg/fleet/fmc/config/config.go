@@ -25,11 +25,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // DefaultConfigPath is the standard Kubernetes ConfigMap mount path for FMC.

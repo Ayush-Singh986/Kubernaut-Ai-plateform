@@ -24,10 +24,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // IT-FLEET-VALKEY-001 through IT-FLEET-VALKEY-007

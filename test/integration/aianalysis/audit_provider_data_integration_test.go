@@ -53,11 +53,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	aianalysisaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	"github.com/jordigilh/kubernaut/test/shared/validators"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	aianalysisaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 )
 
 // ========================================

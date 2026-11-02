@@ -26,8 +26,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	gatewayMetrics "github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	gatewayMiddleware "github.com/jordigilh/kubernaut/pkg/gateway/middleware"
+	gatewayMetrics "github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	gatewayMiddleware "github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware"
 )
 
 var _ = Describe("HTTPMetrics Middleware", func() {

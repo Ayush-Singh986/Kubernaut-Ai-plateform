@@ -29,10 +29,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	kaaudit "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // E2E-AA-2527-001 exercises the real KA AgentSession dispatch boundary across

@@ -5,7 +5,7 @@
 **Status**: 🗄️ **SUPERSEDED** — see note below
 **Module**: AI Context Orchestration (`pkg/ai/holmesgpt/`, `pkg/api/context/`)
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This Jan
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This Jan
 > 2025 spec describes a standalone **Context API service** (`pkg/api/context/`) and a Python
 > **HolmesGPT** with pluggable toolsets, providing "historical intelligence" as a distinct service from
 > real-time investigation. That standalone service was deprecated and removed; its capabilities were

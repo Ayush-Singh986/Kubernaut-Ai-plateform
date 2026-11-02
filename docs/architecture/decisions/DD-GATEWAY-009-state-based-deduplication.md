@@ -329,7 +329,7 @@ import (
     "sync"
     "time"
 
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
     "k8s.io/apimachinery/pkg/fields"
     "k8s.io/client-go/tools/cache"
     "go.uber.org/zap"

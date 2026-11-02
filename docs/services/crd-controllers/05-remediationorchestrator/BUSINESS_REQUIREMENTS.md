@@ -422,7 +422,7 @@ The **RemediationOrchestrator** is the central coordinator for the Kubernaut rem
 
 #### BR-ORCH-046: Policy-Driven Operational Awareness Notification ⚠️ DEPRECATED (2026-03)
 
-**Status**: ⚠️ **DEPRECATED** — Operators receive notifications through the existing notification pipeline (approval notifications, completion/failure notifications, skip notifications). A dedicated "remediation underway" notification adds marginal value given existing coverage. [GitHub #93](https://github.com/jordigilh/kubernaut/issues/93) closed.
+**Status**: ⚠️ **DEPRECATED** — Operators receive notifications through the existing notification pipeline (approval notifications, completion/failure notifications, skip notifications). A dedicated "remediation underway" notification adds marginal value given existing coverage. [GitHub #93](https://github.com/Ayush-Singh986/kubernaut/issues/93) closed.
 
 **Original Description**: ~~RemediationOrchestrator MUST evaluate a configurable Rego policy after SignalProcessing completes (at the `processing → analyzing` transition) to determine whether operators should be proactively notified that a remediation is underway, using normalized signal data and remediation history.~~
 
@@ -463,7 +463,7 @@ The **RemediationOrchestrator** is the central coordinator for the Kubernaut rem
 **Priority**: P0 (Critical - Required for AI investigation to receive signal context)
 **Status**: Pending
 **Implementation**: `pkg/remediationorchestrator/creator/aianalysis.go` (`buildSignalContext()`)
-**GitHub Issue**: [#462](https://github.com/jordigilh/kubernaut/issues/462)
+**GitHub Issue**: [#462](https://github.com/Ayush-Singh986/kubernaut/issues/462)
 **Dependencies**: BR-GATEWAY-185 (provides SignalDescription on RR), #454-#459 (CRD refactors)
 
 **Acceptance Criteria**:

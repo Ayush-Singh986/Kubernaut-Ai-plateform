@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,11 +33,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 var _ = Describe("Routing Engine - Blocking Logic", func() {
@@ -168,7 +168,7 @@ var _ = Describe("Routing Engine - Blocking Logic", func() {
 			// ROControllerNamespace, so failures from tenant-A's workloads incorrectly
 			// block tenant-B's workloads if they share a fingerprint.
 			//
-			// Reference: https://github.com/jordigilh/kubernaut/issues/222
+			// Reference: https://github.com/Ayush-Singh986/kubernaut/issues/222
 
 			sharedFingerprint := "shared-fp-multitenant"
 
@@ -275,7 +275,7 @@ var _ = Describe("Routing Engine - Blocking Logic", func() {
 			// always ROControllerNamespace, so an active/blocked RR targeting tenant-A
 			// incorrectly blocks a new RR targeting tenant-B with the same fingerprint.
 			//
-			// Reference: https://github.com/jordigilh/kubernaut/issues/222
+			// Reference: https://github.com/Ayush-Singh986/kubernaut/issues/222
 
 			sharedFingerprint := "dup-multitenant-fp"
 
@@ -330,7 +330,7 @@ var _ = Describe("Routing Engine - Blocking Logic", func() {
 			// non-terminal) and blocks RR-A → circular deadlock.
 			//
 			// Fix: Deterministic tiebreaker — the oldest RR is always the original.
-			// Reference: https://github.com/jordigilh/kubernaut/issues/209
+			// Reference: https://github.com/Ayush-Singh986/kubernaut/issues/209
 
 			sharedFP := "circular-deadlock-fp"
 

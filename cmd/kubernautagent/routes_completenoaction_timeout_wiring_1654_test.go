@@ -27,12 +27,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	mcpadapters "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/adapters"
-	mcptools "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	dsmodels "github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	mcpadapters "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/adapters"
+	mcptools "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	dsmodels "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // ============================================================================

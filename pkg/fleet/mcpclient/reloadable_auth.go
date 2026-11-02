@@ -30,7 +30,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 // ReloadableOAuth2Transport is an http.RoundTripper that supports live reloading

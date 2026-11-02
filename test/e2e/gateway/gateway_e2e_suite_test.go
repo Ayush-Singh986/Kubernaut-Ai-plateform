@@ -35,9 +35,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // Test suite for Gateway E2E tests

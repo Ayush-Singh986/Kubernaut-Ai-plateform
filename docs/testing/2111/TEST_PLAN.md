@@ -2,15 +2,15 @@
 
 ## 1. Purpose
 
-[#2110](https://github.com/jordigilh/kubernaut/issues/2110) (main clone
-[#2111](https://github.com/jordigilh/kubernaut/issues/2111)) was a
+[#2110](https://github.com/Ayush-Singh986/kubernaut/issues/2110) (main clone
+[#2111](https://github.com/Ayush-Singh986/kubernaut/issues/2111)) was a
 release-blocking regression: every `kubernaut_present_decision` call with
 grounded RCA content crashed the a2a task with `gob: type not registered for
 interface: tools.RCAData`, because `canonicalGroundedRCA` returned a raw
 `*tools.RCAData` struct pointer that reached `a2a-go@v0.3.15`'s gob-encoded
 task-manager deep-copy pipeline unregistered.
 
-[#2112](https://github.com/jordigilh/kubernaut/pull/2112)/[#2113](https://github.com/jordigilh/kubernaut/pull/2113)
+[#2112](https://github.com/Ayush-Singh986/kubernaut/pull/2112)/[#2113](https://github.com/Ayush-Singh986/kubernaut/pull/2113)
 fixed that specific call site (changed `canonicalGroundedRCA`'s return type
 to `map[string]any`, added `gob.Register(&RCAData{})` as defense-in-depth).
 That fix was correct but not sufficient: it left the underlying structural

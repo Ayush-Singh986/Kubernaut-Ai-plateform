@@ -31,9 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	gwpkg "github.com/jordigilh/kubernaut/pkg/gateway"
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	gwpkg "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 )
 
 // fakeProber1553 is a minimal readiness.Prober test double. Guarded by a

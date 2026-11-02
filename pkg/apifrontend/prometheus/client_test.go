@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 var _ = Describe("Prometheus Client", func() {

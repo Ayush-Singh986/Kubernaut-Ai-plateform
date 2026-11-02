@@ -88,7 +88,7 @@ helm uninstall signalprocessing --namespace kubernaut-system
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `image.repository` | string | `ghcr.io/jordigilh/kubernaut/signalprocessing` | Image repository |
+| `image.repository` | string | `ghcr.io/Ayush-Singh986/kubernaut/signalprocessing` | Image repository |
 | `image.tag` | string | `{{ .Chart.AppVersion }}` | Image tag (defaults to chart version) |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 
@@ -547,7 +547,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: ghcr.io/jordigilh/kubernaut/signalprocessing:latest
+          image: ghcr.io/Ayush-Singh986/kubernaut/signalprocessing:latest
           imagePullPolicy: IfNotPresent
           args:
             - --leader-elect=true
@@ -725,7 +725,7 @@ spec:
 # Update image
 kubectl set image deployment/signalprocessing-controller \
   -n kubernaut-system \
-  controller=ghcr.io/jordigilh/kubernaut/signalprocessing:v1.1.0
+  controller=ghcr.io/Ayush-Singh986/kubernaut/signalprocessing:v1.1.0
 
 # Monitor rollout
 kubectl rollout status deployment/signalprocessing-controller -n kubernaut-system

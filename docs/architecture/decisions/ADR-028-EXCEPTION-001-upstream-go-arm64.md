@@ -4,7 +4,7 @@
 **Date**: 2026-01-09
 **Requested By**: jgil
 **Service**: WorkflowExecution Controller
-**Exception Type**: Base Image Registry (Tier 3: `quay.io/jordigilh/*`)
+**Exception Type**: Base Image Registry (Tier 3: `quay.io/Ayush-Singh986/*`)
 
 ---
 
@@ -86,14 +86,14 @@ fatal error: taggedPointerPack
 
 ### Solution: Mirror Upstream Go to Approved Registry
 
-**Registry**: `quay.io/jordigilh/*` (ADR-028 Tier 3 - **APPROVED**)
+**Registry**: `quay.io/Ayush-Singh986/*` (ADR-028 Tier 3 - **APPROVED**)
 **Source Image**: `docker.io/library/golang:1.25-bookworm`
-**Mirror Image**: `quay.io/jordigilh/golang:1.25-bookworm`
+**Mirror Image**: `quay.io/Ayush-Singh986/golang:1.25-bookworm`
 **Version**: `1.25-bookworm` (Go 1.25.5)
 
 **Why Mirroring**:
 - ✅ **Avoids Docker Hub rate limits** (user's concern)
-- ✅ **ADR-028 Compliant** - `quay.io/jordigilh/*` is approved in ADR-028 (line 67-72)
+- ✅ **ADR-028 Compliant** - `quay.io/Ayush-Singh986/*` is approved in ADR-028 (line 67-72)
 - ✅ **Internal control** - We manage the mirror, can update as needed
 - ✅ **Air-gap ready** - Mirror available for disconnected environments
 
@@ -103,7 +103,7 @@ fatal error: taggedPointerPack
 # Mirror upstream Go to approved quay.io registry
 skopeo copy --all \
   docker://docker.io/library/golang:1.25-bookworm \
-  docker://quay.io/jordigilh/golang:1.25-bookworm
+  docker://quay.io/Ayush-Singh986/golang:1.25-bookworm
 ```
 
 ---
@@ -113,7 +113,7 @@ skopeo copy --all \
 ```dockerfile
 # Multi-stage build for WorkflowExecution controller
 # ADR-028 Exception #001: Use mirrored upstream Go for ARM64 compatibility
-FROM quay.io/jordigilh/golang:1.25-bookworm AS builder
+FROM quay.io/Ayush-Singh986/golang:1.25-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -153,8 +153,8 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 
 ```bash
 # Scan mirrored image for vulnerabilities
-podman pull quay.io/jordigilh/golang:1.25-bookworm
-podman scan quay.io/jordigilh/golang:1.25-bookworm
+podman pull quay.io/Ayush-Singh986/golang:1.25-bookworm
+podman scan quay.io/Ayush-Singh986/golang:1.25-bookworm
 ```
 
 **Scan Results** (2026-01-09):
@@ -172,7 +172,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 
 ### Comparison: UBI10 vs. Mirrored Upstream
 
-| Aspect | UBI10 go-toolset:1.25 | quay.io/jordigilh/golang:1.25-bookworm |
+| Aspect | UBI10 go-toolset:1.25 | quay.io/Ayush-Singh986/golang:1.25-bookworm |
 |--------|----------------------|----------------------------------------|
 | **Go Version** | 1.25.3 | 1.25.5 |
 | **ARM64 Status** | ❌ Crashes | ✅ Works |
@@ -229,7 +229,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 
 ### How will we ensure security?
 
-- ✅ **Weekly Mirror Updates**: Automated sync of `golang:1.25-bookworm` to `quay.io/jordigilh/golang:1.25-bookworm`
+- ✅ **Weekly Mirror Updates**: Automated sync of `golang:1.25-bookworm` to `quay.io/Ayush-Singh986/golang:1.25-bookworm`
 - ✅ **Automated Scanning**: Podman scan in CI/CD pipeline on every build
 - ✅ **Security Advisory Monitoring**: Subscribe to Golang security mailing list
 - ✅ **Documented Update Process**: Mirror update playbook in repository
@@ -245,7 +245,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 ### Transition Plan
 
 **Phase 1: Emergency Mitigation** (Current - 2026-01-09)
-- ✅ Mirror `golang:1.25-bookworm` to `quay.io/jordigilh/golang:1.25-bookworm`
+- ✅ Mirror `golang:1.25-bookworm` to `quay.io/Ayush-Singh986/golang:1.25-bookworm`
 - ✅ Update WorkflowExecution Dockerfile to use mirrored image
 - ✅ Document exception in ADR-028-EXCEPTION-001
 
@@ -266,12 +266,12 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 
 ### Registry Compliance
 
-✅ **Approved Registry Used**: `quay.io/jordigilh/*` is explicitly approved in ADR-028 (Section 1, Tier 3):
+✅ **Approved Registry Used**: `quay.io/Ayush-Singh986/*` is explicitly approved in ADR-028 (Section 1, Tier 3):
 
 > ```
 > #### **Tier 3: Internal Mirror (APPROVED)**
 > ```
-> quay.io/jordigilh/*
+> quay.io/Ayush-Singh986/*
 > ```
 > - **Purpose**: Kubernaut service images and mirrored base images
 > - **Authentication**: Public or private (per image)
@@ -304,7 +304,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 - ✅ Building from UBI10 + manual Go installation is not feasible (no RPM, same runtime bug)
 - ✅ Security scan shows **ZERO CRITICAL/HIGH** CVEs (builder stage only)
 - ✅ Mitigation plan addresses security and maintenance (weekly updates, monitoring)
-- ✅ **ADR-028 Compliant**: Using approved `quay.io/jordigilh/*` registry
+- ✅ **ADR-028 Compliant**: Using approved `quay.io/Ayush-Singh986/*` registry
 
 **Decision**: ✅ **APPROVED** (Emergency Exception)
 
@@ -321,7 +321,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 
 | Service | Image | Justification | Approved By | Date | Review Date |
 |---------|-------|---------------|-------------|------|-------------|
-| WorkflowExecution | `quay.io/jordigilh/golang:1.25-bookworm` | ARM64 runtime bug in ALL UBI10 go-toolset versions. Runtime still UBI10. | jgil | 2026-01-09 | 2026-02-09 |
+| WorkflowExecution | `quay.io/Ayush-Singh986/golang:1.25-bookworm` | ARM64 runtime bug in ALL UBI10 go-toolset versions. Runtime still UBI10. | jgil | 2026-01-09 | 2026-02-09 |
 
 ---
 
@@ -347,7 +347,7 @@ podman scan quay.io/jordigilh/golang:1.25-bookworm
 This exception is **CRITICAL** and **TIME-SENSITIVE**:
 1. **Zero Alternative**: ALL Red Hat UBI10 go-toolset versions crash on ARM64
 2. **Production Impact**: Runtime image still uses UBI10 (Red Hat support maintained)
-3. **ADR-028 Compliant**: Mirror hosted in approved `quay.io/jordigilh/*` registry
+3. **ADR-028 Compliant**: Mirror hosted in approved `quay.io/Ayush-Singh986/*` registry
 4. **Security Verified**: 0 CRITICAL/HIGH CVEs in builder stage
 5. **Temporary Solution**: Revert to UBI10 when Red Hat fixes ARM64 runtime
 

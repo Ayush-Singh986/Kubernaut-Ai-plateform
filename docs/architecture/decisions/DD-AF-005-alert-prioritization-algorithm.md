@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-12
-**Issue**: [#1412](https://github.com/jordigilh/kubernaut/issues/1412)
+**Issue**: [#1412](https://github.com/Ayush-Singh986/kubernaut/issues/1412)
 **Related**: ADR-066 (4-level severity model), BR-ALERT-001
 
 ## Context

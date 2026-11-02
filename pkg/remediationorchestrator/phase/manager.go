@@ -19,7 +19,7 @@ package phase
 import (
 	"fmt"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 // Manager implements phase state machine logic for RemediationRequest.

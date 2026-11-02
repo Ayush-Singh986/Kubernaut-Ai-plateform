@@ -6,7 +6,7 @@
 
 ---
 
-> **⚠️ SUPERSEDED (2026-08-02, [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **⚠️ SUPERSEDED (2026-08-02, [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > "V1.0/V1.1 Audit Data Requirements" section below (four separate per-service SQL tables —
 > `orchestration_audit`, `ai_analysis_audit`, `workflow_execution_audit`, `notification_audit` —
 > plus dedicated `POST /api/v1/audit/*` write endpoints) was never built. Six days after this

@@ -16,7 +16,7 @@
 
 ### 1.1 Purpose
 
-Issue [#1923](https://github.com/jordigilh/kubernaut/issues/1923) reports two audit-completeness gaps that both prevent SOC2 CC8.1/BR-AUDIT-005 full remediation-request reconstruction from audit traces alone:
+Issue [#1923](https://github.com/Ayush-Singh986/kubernaut/issues/1923) reports two audit-completeness gaps that both prevent SOC2 CC8.1/BR-AUDIT-005 full remediation-request reconstruction from audit traces alone:
 
 1. `is_actionable` is computed by KA (`InvestigationResult.IsActionable *bool`) but silently dropped by the mapping layer between KA's internal audit JSON and DataStorage's `IncidentResponseData` OpenAPI schema — the field never appears in the persisted schema at all.
 2. AF's `workflow.discovery` event (`EventWorkflowDiscovery`) is missing from `store_adapter.go`'s `typedPayloadEvents` map, so it is logged only and never reaches DataStorage; separately, its `correlation_id` is a random UUID rather than the RemediationRequest it belongs to, breaking the "reconstruct by `correlation_id`" contract even if it were persisted.
@@ -45,7 +45,7 @@ Both are scoped to schema/persistence only — no change to `phase_guard.go`'s t
 
 - BR-AUDIT-005 v2.0: complete RemediationRequest reconstruction from audit traces alone (SOC2 CC8.1)
 - FedRAMP AU-2 (audit events), AU-3 (structured content of audit records), AU-12 (audit generation — workflow discovery)
-- Issue [#1923](https://github.com/jordigilh/kubernaut/issues/1923): this plan's driving issue
+- Issue [#1923](https://github.com/Ayush-Singh986/kubernaut/issues/1923): this plan's driving issue
 
 ### 2.2 Cross-References
 

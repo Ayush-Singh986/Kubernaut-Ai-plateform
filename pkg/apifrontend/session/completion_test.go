@@ -4,7 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 var _ = Describe("Business-outcome completion policy (#2365)", func() {

@@ -27,8 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/circuitbreaker"
 )
 
 // P0 TESTS: Concurrent Deliveries + Circuit Breaker (6 tests)

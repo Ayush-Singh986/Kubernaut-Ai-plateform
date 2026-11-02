@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-09-05
-**Issue**: [#2365](https://github.com/jordigilh/kubernaut/issues/2365)
+**Issue**: [#2365](https://github.com/Ayush-Singh986/kubernaut/issues/2365)
 **Related**: [DD-AF-011](DD-AF-011-phase-transition-consent-guard.md), [DD-AF-007](DD-AF-007-escalation-routing.md), BR-INTERACTIVE-010, BR-SESS-013, BR-AUDIT-005
 
 ## Context

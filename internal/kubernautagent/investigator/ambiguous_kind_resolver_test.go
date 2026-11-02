@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
 )
 
 var _ = Describe("TP-1044: IsAmbiguousKind resolver for multi-group kind detection", func() {

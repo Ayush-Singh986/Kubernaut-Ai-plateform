@@ -1,8 +1,8 @@
 # Test Plan: AIAnalysis→KA `IncidentRequest` Wire Contract Carries No `apiVersion`
 
-**Issue**: [#2064](https://github.com/jordigilh/kubernaut/issues/2064) (`v1.5.6`, `release/v1.5`)
-**Clone**: [#2065](https://github.com/jordigilh/kubernaut/issues/2065) (`v1.6`, `main`)
-**Related**: [#2061](https://github.com/jordigilh/kubernaut/issues/2061) (Track 1, interactive-session analog), [#2066](https://github.com/jordigilh/kubernaut/issues/2066) (Track 3, the upstream Gateway-side gap that this fix depends on to be fully load-bearing)
+**Issue**: [#2064](https://github.com/Ayush-Singh986/kubernaut/issues/2064) (`v1.5.6`, `release/v1.5`)
+**Clone**: [#2065](https://github.com/Ayush-Singh986/kubernaut/issues/2065) (`v1.6`, `main`)
+**Related**: [#2061](https://github.com/Ayush-Singh986/kubernaut/issues/2061) (Track 1, interactive-session analog), [#2066](https://github.com/Ayush-Singh986/kubernaut/issues/2066) (Track 3, the upstream Gateway-side gap that this fix depends on to be fully load-bearing)
 **Branch**: `fix/2061-2064-ka-apiversion-propagation` (off `origin/release/v1.5`)
 **Created**: 2026-08-10
 **Status**: Implementation complete — build/vet/targeted UT+IT suites green
@@ -162,7 +162,7 @@ $ go test ./test/integration/kubernautagent/server/...              # PASS (envt
 - **Rolling-deploy wire-compatibility for the newly-required field**: explicitly not relitigated per
   direction; revisit only if a real regression surfaces.
 - **Backport/cherry-pick to `main`/`v1.6`**: tracked separately via the cloned issue
-  [#2065](https://github.com/jordigilh/kubernaut/issues/2065), not performed in this branch.
+  [#2065](https://github.com/Ayush-Singh986/kubernaut/issues/2065), not performed in this branch.
 
 ## 10. Sign-off
 

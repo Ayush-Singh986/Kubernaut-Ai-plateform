@@ -13,8 +13,8 @@
 **Author**: AI Assistant
 **Status**: Draft
 **Branch**: `feat/1220-sar-tool-authorization`
-**Parent Issue**: [#1220](https://github.com/jordigilh/kubernaut/issues/1220)
-**Tracking Issue**: [#1221](https://github.com/jordigilh/kubernaut/issues/1221)
+**Parent Issue**: [#1220](https://github.com/Ayush-Singh986/kubernaut/issues/1220)
+**Tracking Issue**: [#1221](https://github.com/Ayush-Singh986/kubernaut/issues/1221)
 
 ---
 
@@ -70,8 +70,8 @@ This change replaces all three with a single `ToolAuthorizer` interface backed b
 
 ### 2.1 Authoritative Documents
 
-- [Issue #1220](https://github.com/jordigilh/kubernaut/issues/1220) — JWT Persona-based RBAC for API Frontend
-- [Issue #1221](https://github.com/jordigilh/kubernaut/issues/1221) — Cross-team tracking issue
+- [Issue #1220](https://github.com/Ayush-Singh986/kubernaut/issues/1220) — JWT Persona-based RBAC for API Frontend
+- [Issue #1221](https://github.com/Ayush-Singh986/kubernaut/issues/1221) — Cross-team tracking issue
 - [DD-AUTH-014](docs/architecture/decisions/) — Middleware-Based SAR Authentication
 - [TESTING_GUIDELINES.md](docs/development/business-requirements/TESTING_GUIDELINES.md) — Per-tier coverage >=80%
 - [ANTI_PATTERN_DETECTION.md](docs/testing/ANTI_PATTERN_DETECTION.md) — Forbidden test patterns

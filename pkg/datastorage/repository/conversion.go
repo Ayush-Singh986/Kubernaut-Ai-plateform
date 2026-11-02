@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 
 // ConvertFromAuditEvent converts a shared audit.AuditEvent into a

@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
 )
 
 // IT-AUDIT-1985-006: cmd/remediationorchestrator must wire an independent,

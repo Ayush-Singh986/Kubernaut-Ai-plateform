@@ -22,8 +22,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	sharedauth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	sharedauth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 type statusRecorder struct {

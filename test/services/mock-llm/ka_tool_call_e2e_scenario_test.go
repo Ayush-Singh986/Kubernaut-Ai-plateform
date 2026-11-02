@@ -19,8 +19,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 // UT-MOCK-KA-017: E2E-FLEET-017 CI RCA (run 30723525089, job 91432164701).

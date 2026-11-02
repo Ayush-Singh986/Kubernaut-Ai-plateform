@@ -32,10 +32,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	weconditions "github.com/jordigilh/kubernaut/pkg/workflowexecution"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	weconditions "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 	"github.com/google/uuid"
 )
@@ -336,7 +336,7 @@ var _ = Describe("Ansible Engine E2E [BR-WE-015]", func() {
 							WorkflowName:    "test-workflow",
 							ActionType:      "RestartPod",
 							Version:         "v1.0.0",
-							ExecutionBundle: "https://github.com/jordigilh/kubernaut-test-playbooks.git",
+							ExecutionBundle: "https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git",
 							EngineConfig:    &apiextensionsv1.JSON{Raw: engineCfgJSON},
 							ExecutionEngine: "ansible",
 							Dependencies: &sharedtypes.WorkflowDependencies{
@@ -415,7 +415,7 @@ var _ = Describe("Ansible Engine E2E [BR-WE-015]", func() {
 							WorkflowName:    "test-workflow",
 							ActionType:      "RestartPod",
 							Version:         "v1.0.0",
-							ExecutionBundle: "https://github.com/jordigilh/kubernaut-test-playbooks.git",
+							ExecutionBundle: "https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git",
 							EngineConfig:    &apiextensionsv1.JSON{Raw: engineCfgJSON},
 							ExecutionEngine: "ansible",
 							Dependencies: &sharedtypes.WorkflowDependencies{
@@ -496,7 +496,7 @@ var _ = Describe("Ansible Engine E2E [BR-WE-015]", func() {
 							WorkflowName:    "test-workflow",
 							ActionType:      "RestartPod",
 							Version:         "v1.0.0",
-							ExecutionBundle: "https://github.com/jordigilh/kubernaut-test-playbooks.git",
+							ExecutionBundle: "https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git",
 							EngineConfig:    &apiextensionsv1.JSON{Raw: engineCfgJSON},
 							ExecutionEngine: "ansible",
 							Dependencies: &sharedtypes.WorkflowDependencies{
@@ -579,7 +579,7 @@ func createAnsibleWFE(name, targetResource, workflowID, playbookPath, templateNa
 					WorkflowName:    "test-workflow",
 					ActionType:      "RestartPod",
 					Version:         "v1.0.0",
-					ExecutionBundle: "https://github.com/jordigilh/kubernaut-test-playbooks.git",
+					ExecutionBundle: "https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git",
 					EngineConfig:    &apiextensionsv1.JSON{Raw: engineCfgJSON},
 					ExecutionEngine: "ansible",
 				},

@@ -29,10 +29,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/phase"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/phase"
 )
 
 // Phase 2 coverage: AWX HTTP client, metrics wiring, phase helpers, config load (BR-WE-008, BR-WE-015, BR-WE-005).

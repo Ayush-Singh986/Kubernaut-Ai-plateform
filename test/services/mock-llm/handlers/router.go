@@ -20,11 +20,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/fault"
-	mockmetrics "github.com/jordigilh/kubernaut/test/services/mock-llm/metrics"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/tracker"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/fault"
+	mockmetrics "github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/tracker"
 )
 
 const templatePrefix = "$from_tool:"

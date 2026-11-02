@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	atv1alpha1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
+	atv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )

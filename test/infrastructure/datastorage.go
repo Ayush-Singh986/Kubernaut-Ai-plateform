@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	"github.com/jordigilh/kubernaut/test/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/test/testutil"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
@@ -1004,7 +1004,7 @@ spec:
     spec:
       containers:
       - name: redis
-        image: quay.io/jordigilh/redis:7-alpine
+        image: quay.io/Ayush-Singh986/redis:7-alpine
         ports:
         - name: redis
           containerPort: 6379
@@ -1647,7 +1647,7 @@ func startRedis(infra *DataStorageInfrastructure, cfg *DataStorageConfig, writer
 	_ = exec.CommandContext(context.Background(), "podman", "rm", infra.RedisContainer).Run()
 
 	// Pull image with retry to handle transient registry failures (#914)
-	const redisImage = "quay.io/jordigilh/redis:7-alpine"
+	const redisImage = "quay.io/Ayush-Singh986/redis:7-alpine"
 	if err := PullImageWithRetry(context.Background(), redisImage, 3, writer); err != nil {
 		return fmt.Errorf("failed to pull Redis image: %w", err)
 	}

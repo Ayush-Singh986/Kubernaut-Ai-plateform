@@ -30,8 +30,8 @@ import (
 	. "github.com/onsi/gomega"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 var _ = Describe("MCP Server — #703", func() {

@@ -13,7 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/oauth2/google"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 const vertexAICloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"

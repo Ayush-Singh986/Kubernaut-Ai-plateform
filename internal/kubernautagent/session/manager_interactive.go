@@ -21,8 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // StartInteractiveSession creates a new session in StatusPending without

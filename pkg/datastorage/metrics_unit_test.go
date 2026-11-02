@@ -17,7 +17,7 @@ limitations under the License.
 package datastorage_test
 
 import (
-	"github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"

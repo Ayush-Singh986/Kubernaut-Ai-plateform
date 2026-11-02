@@ -35,7 +35,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
 )
 
 // generateSelfSignedCertPair writes a self-signed cert/key pair usable as

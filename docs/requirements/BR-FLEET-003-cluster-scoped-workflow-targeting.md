@@ -6,7 +6,7 @@
 **Category**: Fleet Management / Workflow Discovery
 **Priority**: P1 (High)
 **Service**: SignalProcessing, RemediationOrchestrator, AIAnalysis, KubernautAgent, DataStorage
-**GitHub Issue**: [#1511](https://github.com/jordigilh/kubernaut/issues/1511)
+**GitHub Issue**: [#1511](https://github.com/Ayush-Singh986/kubernaut/issues/1511)
 **Related**: DD-FLEET-002, DD-FLEET-001, ADR-068, BR-FLEET-002, BR-FLEET-054, BR-WORKFLOW-001, BR-WORKFLOW-006
 
 ---
@@ -214,5 +214,5 @@ Given/When/Then detail: [docs/tests/1511/TEST_PLAN.md](../tests/1511/TEST_PLAN.m
 - [DD-FLEET-002: Cluster-Scoped Workflow Targeting via Rego Policy Classification](../architecture/decisions/DD-FLEET-002-cluster-scoped-workflow-targeting.md)
 - [DD-FLEET-001: Fleet Hierarchical Scope Checking](../architecture/decisions/)
 - [ADR-068: Fleet Federation Architecture](../architecture/decisions/ADR-068-fleet-federation-architecture.md)
-- [Issue #1511](https://github.com/jordigilh/kubernaut/issues/1511)
-- [Issue #54: Fleet Management](https://github.com/jordigilh/kubernaut/issues/54)
+- [Issue #1511](https://github.com/Ayush-Singh986/kubernaut/issues/1511)
+- [Issue #54: Fleet Management](https://github.com/Ayush-Singh986/kubernaut/issues/54)

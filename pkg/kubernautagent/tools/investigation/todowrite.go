@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 var todoWriteParams = json.RawMessage(`{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed","cancelled"]}},"required":["id","content","status"]}}},"required":["todos"]}`)

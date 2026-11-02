@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // BR-KA-016 / DD-KA-2511; FedRAMP SI-10/AC-4; SOC 2 CC7.2.

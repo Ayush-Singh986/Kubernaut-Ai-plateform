@@ -19,7 +19,7 @@ Kubernetes watch on `Status`.
 The retired HTTP submit/poll API (`POST /api/v1/incident/analyze`,
 `GET /api/v1/incident/session/{id}`, etc.) and its generated client (`pkg/agentclient`,
 `ogen`-based OpenAPI) are **fully deleted**
-([issue #2190](https://github.com/jordigilh/kubernaut/issues/2190)). The authoritative source of
+([issue #2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190)). The authoritative source of
 truth for the schema below is
 [`api/agentsession/v1alpha1/agentsession_types.go`](../../../api/agentsession/v1alpha1/agentsession_types.go);
 this document is a hand-written summary of it, kept for discoverability.

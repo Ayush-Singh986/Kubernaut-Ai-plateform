@@ -17,7 +17,7 @@ limitations under the License.
 package authwebhook
 
 import (
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // Ogen enum type converters for audit payloads.

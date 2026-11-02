@@ -23,10 +23,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	afka "github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	aftools "github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	afka "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	aftools "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // IT-AF-2090-030 (main port of #2086 Fix 5, FedRAMP SI-4: status text must

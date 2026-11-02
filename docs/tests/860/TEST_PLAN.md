@@ -348,7 +348,7 @@ go test ./test/unit/kubernautagent/config/... --ginkgo.focus="860"
 go test ./test/integration/kubernautagent/investigator/... --ginkgo.focus="860"
 
 # Coverage
-go test ./test/unit/kubernautagent/investigator/... -coverprofile=coverage.out -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/investigator
+go test ./test/unit/kubernautagent/investigator/... -coverprofile=coverage.out -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator
 go tool cover -func=coverage.out | grep -E "isPaginationCall|CheckToolCall"
 ```
 

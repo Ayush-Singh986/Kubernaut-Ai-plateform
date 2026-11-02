@@ -658,12 +658,12 @@ go test ./test/unit/datastorage/... -ginkgo.focus="UT-DS-040"
 
 # Coverage (unit tier)
 go test ./test/unit/datastorage/... -coverprofile=coverage_ut.out \
-  --coverpkg=github.com/jordigilh/kubernaut/pkg/datastorage/repository/txretry/...,github.com/jordigilh/kubernaut/pkg/datastorage/config/...
+  --coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/txretry/...,github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config/...
 go tool cover -func=coverage_ut.out
 
 # Coverage (integration tier)
 go test ./test/integration/datastorage/... -coverprofile=coverage_it.out \
-  --coverpkg=github.com/jordigilh/kubernaut/pkg/datastorage/repository/...,github.com/jordigilh/kubernaut/pkg/datastorage/server/...,github.com/jordigilh/kubernaut/pkg/datastorage/adapter/...
+  --coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/...,github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/...,github.com/Ayush-Singh986/kubernaut/pkg/datastorage/adapter/...
 go tool cover -func=coverage_it.out
 ```
 

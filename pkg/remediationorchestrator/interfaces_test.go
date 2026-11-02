@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ro "github.com/jordigilh/kubernaut/pkg/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+	ro "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
 )
 
 var _ = Describe("Interfaces", func() {

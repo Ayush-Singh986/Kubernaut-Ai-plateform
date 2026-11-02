@@ -26,10 +26,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/creator"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/creator"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Unit Tests: AgentSessionCreator

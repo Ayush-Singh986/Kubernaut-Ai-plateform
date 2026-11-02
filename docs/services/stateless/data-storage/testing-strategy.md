@@ -76,7 +76,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
 )
 
 var _ = Describe("Audit Trail Persistence (BR-STORAGE-001)", func() {
@@ -266,7 +266,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
 )
 
 var _ = Describe("Audit Validation", func() {
@@ -331,7 +331,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage/embedding"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage/embedding"
 )
 
 var _ = Describe("Embedding Generation", func() {
@@ -396,7 +396,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage/schema"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage/schema"
 )
 
 var _ = Describe("Schema Validation", func() {
@@ -464,8 +464,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("PostgreSQL Integration", func() {
@@ -539,7 +539,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
 )
 
 var _ = Describe("Vector DB Integration", func() {
@@ -609,7 +609,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
 )
 
 var _ = Describe("Cross-Service Audit Trail Integration", func() {
@@ -742,8 +742,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
-    "github.com/jordigilh/kubernaut/test/e2e/helpers"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/test/e2e/helpers"
 )
 
 var _ = Describe("E2E: Complete Audit Persistence Flow", func() {

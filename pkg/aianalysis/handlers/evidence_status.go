@@ -17,8 +17,8 @@ limitations under the License.
 package handlers
 
 import (
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
 )
 
 func mapEvidenceStatusToAIAnalysis(status *agentsessionv1.EvidenceStatus) *aianalysisv1.EvidenceStatus {

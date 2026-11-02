@@ -31,15 +31,15 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

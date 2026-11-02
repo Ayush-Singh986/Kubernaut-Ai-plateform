@@ -4,7 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/config"
 )
 
 var _ = Describe("TelemetryConfig", func() {

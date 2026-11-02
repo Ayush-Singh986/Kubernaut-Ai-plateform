@@ -24,8 +24,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	emtiming "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/timing"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/validity"
+	emtiming "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/timing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/validity"
 )
 
 // ========================================

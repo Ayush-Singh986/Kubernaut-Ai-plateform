@@ -44,8 +44,8 @@ import (
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
 )
 
 func fastGatewayResilience() fleet.FleetResilienceConfig {

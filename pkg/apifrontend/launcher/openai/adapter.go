@@ -19,7 +19,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/llm/openaicompat"
 )
 
 // Model implements model.LLM for OpenAI-compatible endpoints.

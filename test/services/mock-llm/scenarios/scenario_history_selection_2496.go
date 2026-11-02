@@ -20,9 +20,9 @@ import (
 	"regexp"
 	"strings"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 )
 
 const selectionHighSeverity2496 = "high"

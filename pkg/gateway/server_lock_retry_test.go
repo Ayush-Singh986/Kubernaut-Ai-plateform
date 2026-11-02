@@ -35,7 +35,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 // Mock implementations for lock retry testing (per TESTING_GUIDELINES.md: minimal mocks for unit tests)

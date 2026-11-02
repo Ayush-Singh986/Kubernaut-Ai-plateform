@@ -28,7 +28,7 @@ Issue #2459 is partially addressed on `origin/main`: detected-label filters are 
 
 ## 2. References and authority
 
-- [Issue #2459](https://github.com/jordigilh/kubernaut/issues/2459)
+- [Issue #2459](https://github.com/Ayush-Singh986/kubernaut/issues/2459)
 - [BR-AUDIT-005](../../requirements/11_SECURITY_ACCESS_CONTROL.md) — complete, queryable audit trails; SOC 2 reconstruction objective
 - [BR-AUDIT-021-030](../../requirements/BR-AUDIT-021-030-WORKFLOW-SELECTION-AUDIT-TRAIL.md): BR-AUDIT-023 event generation, BR-AUDIT-025 context/action capture, BR-AUDIT-026 per-result score, BR-AUDIT-027 workflow metadata, BR-AUDIT-030 correlation query
 - [DD-AUDIT-004](../../architecture/decisions/DD-AUDIT-004-structured-types-for-audit-event-payloads.md) — typed payload requirement

@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
 )
 
 // #1637 / DD-AF-015: EventRouter fans one pooled session's event stream out to

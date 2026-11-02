@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server/response"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/response"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // ========================================

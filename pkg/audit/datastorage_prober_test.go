@@ -22,8 +22,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	fleetreadiness "github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	fleetreadiness "github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

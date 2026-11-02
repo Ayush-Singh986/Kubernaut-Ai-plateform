@@ -25,10 +25,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
 )
 
 // handleSpecDrift implements Step 6.5: Spec Drift Guard (DD-EM-002 v1.1).

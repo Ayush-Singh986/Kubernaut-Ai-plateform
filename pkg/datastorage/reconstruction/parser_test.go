@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	reconstructionpkg "github.com/jordigilh/kubernaut/pkg/datastorage/reconstruction"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	reconstructionpkg "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/reconstruction"
 )
 
 // BR-AUDIT-006: RemediationRequest Reconstruction from Audit Traces

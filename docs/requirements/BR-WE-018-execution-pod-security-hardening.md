@@ -8,7 +8,7 @@
 **Date**: June 30, 2026
 **Related ADRs**: None
 **Related BRs**: BR-WE-014 (Kubernetes Job Execution Backend)
-**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-03)
+**GitHub Issues**: [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505) (GAP-03)
 
 ---
 

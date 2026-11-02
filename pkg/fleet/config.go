@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 // Supported backend types for federated scope checking.

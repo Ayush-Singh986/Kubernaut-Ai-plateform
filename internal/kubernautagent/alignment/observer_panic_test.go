@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment"
 )
 
 var _ = Describe("Panic recovery in SubmitAsync — SEC-6", func() {

@@ -200,7 +200,7 @@ kubectl scale statefulset/redis --replicas=3 -n kubernaut-system
 ---
 
 ### **Context API Service** — HISTORICAL
-> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Context API
+> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Context API
 > was deprecated and its functionality folded into Data Storage per
 > [DD-CONTEXT-006](decisions/DD-CONTEXT-006-CONTEXT-API-DEPRECATION.md); it does not exist as a standalone running
 > service today. Table/index names below (`incident_embeddings`, etc.) are illustrative and not verified against

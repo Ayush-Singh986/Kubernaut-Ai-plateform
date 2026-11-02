@@ -28,8 +28,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

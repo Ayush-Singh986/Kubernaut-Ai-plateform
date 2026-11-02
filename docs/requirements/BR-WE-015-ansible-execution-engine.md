@@ -8,7 +8,7 @@
 **Date**: March 2, 2026
 **Related ADRs**: ADR-043 (Execution Engine Schema), ADR-044 (Engine Portability)
 **Related BRs**: BR-WE-014 (K8s Job Backend), BR-WE-016 (EngineConfig Discriminator), BR-WORKFLOW-004 (Schema Format)
-**GitHub Issue**: [#45](https://github.com/jordigilh/kubernaut/issues/45)
+**GitHub Issue**: [#45](https://github.com/Ayush-Singh986/kubernaut/issues/45)
 
 ---
 

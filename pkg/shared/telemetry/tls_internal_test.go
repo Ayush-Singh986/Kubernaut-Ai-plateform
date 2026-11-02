@@ -38,8 +38,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // No TestXxx/RunSpecs here: this file's package (telemetry, internal --

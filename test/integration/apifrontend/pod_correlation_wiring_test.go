@@ -14,9 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 type podCorrelationPromClient struct {

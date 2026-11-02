@@ -28,7 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
 )
 
 // LeaseNamePrefix is the prefix KA uses for interactive session leases.

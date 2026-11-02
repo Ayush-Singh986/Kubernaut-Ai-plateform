@@ -9,8 +9,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 func newTypedDetailedRAR(namespace, name string) *remediationv1.RemediationApprovalRequest {

@@ -19,7 +19,7 @@ package authwebhook
 import (
 	"context"
 
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 

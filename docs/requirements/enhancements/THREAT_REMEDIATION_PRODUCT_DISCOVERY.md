@@ -297,7 +297,7 @@ Before implementation begins, the feature proposal should:
 - [ADR-075: Multi-Pillar Data Contract Extensibility](../../architecture/decisions/ADR-075-multi-pillar-data-contract-extensibility.md)
 - [Multi-Pillar Contract DDs](../../architecture/DESIGN_DECISIONS.md#quick-reference)
 - Private source artifacts: adjacent `../kubernaut-blueprints/` repository; intentionally not linked or copied here.
-- [Issue #554: Threat Remediation enhancement proposal](https://github.com/jordigilh/kubernaut/issues/554)
+- [Issue #554: Threat Remediation enhancement proposal](https://github.com/Ayush-Singh986/kubernaut/issues/554)
 
 ## Change Log
 

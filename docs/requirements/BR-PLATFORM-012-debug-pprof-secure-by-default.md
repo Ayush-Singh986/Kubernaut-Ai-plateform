@@ -37,7 +37,7 @@ privilege). An operator should have to make an explicit, informed choice to turn
 given environment, and that choice should be named consistently across every service so it can be
 reasoned about, documented, and audited in one place instead of 13 different ways.
 
-Tracked in [Issue #2275](https://github.com/jordigilh/kubernaut/issues/2275).
+Tracked in [Issue #2275](https://github.com/Ayush-Singh986/kubernaut/issues/2275).
 
 ---
 
@@ -130,7 +130,7 @@ Rename the existing double-negative toggle to a single, positively-worded, share
 - Does not extend this toggle to the `console` service (Node.js/React; no `net/http/pprof`
   surface) or to the Kubernaut Operator's own Helm chart (out of scope; the operator's downstream
   adoption of this same rename is tracked separately — see the comment left on
-  [Issue #2275](https://github.com/jordigilh/kubernaut/issues/2275) for the operator team).
+  [Issue #2275](https://github.com/Ayush-Singh986/kubernaut/issues/2275) for the operator team).
 - Does not change the pprof port away from `6060` for the 7 `controller-runtime` services, or
   attempt to multiplex it onto an existing listener — `controller-runtime`'s
   `HealthProbeBindAddress` mux is not exposed for custom handler registration, so a dedicated
@@ -151,7 +151,7 @@ Rename the existing double-negative toggle to a single, positively-worded, share
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #2275](https://github.com/jordigilh/kubernaut/issues/2275).
+- **Tracked in**: [Issue #2275](https://github.com/Ayush-Singh986/kubernaut/issues/2275).
 - **Depends on**: `controller-runtime` v0.24.1+ for native `ctrl.Options.PprofBindAddress` support
   (FR-4).
 - **Complements**: [BR-PLATFORM-011](BR-PLATFORM-011-helm-chart-config-knob-test-coverage.md) —

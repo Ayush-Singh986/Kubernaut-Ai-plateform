@@ -15,7 +15,7 @@ limitations under the License.
 */
 package scenarios
 
-import openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+import openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 
 func injectionConfigmapReadConfig() MockScenarioConfig {
 	forceText := false

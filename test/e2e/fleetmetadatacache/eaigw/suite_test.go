@@ -74,9 +74,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

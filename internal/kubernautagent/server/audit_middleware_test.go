@@ -26,8 +26,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
 )
 
 var _ = Describe("AuditAuthMiddleware — SSE Flusher support", func() {

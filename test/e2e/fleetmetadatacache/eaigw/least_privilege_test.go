@@ -16,7 +16,7 @@ limitations under the License.
 
 package eaigw
 
-import "github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
+import "github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
 
 // E2E-FMC-EAIGW-054-011. See shared.LeastPrivilege for the scenario body
 // (shared verbatim with the Kuadrant lane) and variant.go for what's

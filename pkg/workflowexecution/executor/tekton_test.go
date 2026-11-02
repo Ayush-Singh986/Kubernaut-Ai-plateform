@@ -30,9 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
 )
 
 func newTektonScheme() *runtime.Scheme {

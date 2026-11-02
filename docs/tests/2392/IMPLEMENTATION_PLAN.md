@@ -8,7 +8,7 @@
 **Author**: Kubernaut maintainers
 **Status**: Implementation complete for the current code scope; CI integration/E2E validation pending
 **Branch**: `feat/2392-failed-execution-retention`
-**Issue**: [#2392](https://github.com/jordigilh/kubernaut/issues/2392)
+**Issue**: [#2392](https://github.com/Ayush-Singh986/kubernaut/issues/2392)
 
 ## 1. Business Requirements and Controls
 

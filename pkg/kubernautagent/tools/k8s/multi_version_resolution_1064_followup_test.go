@@ -33,7 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/k8s"
 )
 
 // failResourcesForMapper wraps a RESTMapper and forces ResourcesFor to return an error,

@@ -24,10 +24,10 @@ import (
 
 	"strconv"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server/response"
-	"github.com/jordigilh/kubernaut/pkg/pii"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/response"
+	"github.com/Ayush-Singh986/kubernaut/pkg/pii"
 )
 
 // ========================================

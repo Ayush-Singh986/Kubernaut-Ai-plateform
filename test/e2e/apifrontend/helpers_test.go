@@ -25,9 +25,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // persona holds credentials for a DEX E2E user with a specific RBAC role.
@@ -790,7 +790,7 @@ func buildRAR(namespace, rarName, rrName string) *remediationv1alpha1.Remediatio
 			RecommendedWorkflow: remediationv1alpha1.RecommendedWorkflowSummary{
 				WorkflowID:      "wf-restart-pod-v1",
 				Version:         "1.0.0",
-				ExecutionBundle: "ghcr.io/jordigilh/kubernaut/bundles/restart-pod@sha256:e2e",
+				ExecutionBundle: "ghcr.io/Ayush-Singh986/kubernaut/bundles/restart-pod@sha256:e2e",
 				Rationale:       "E2E workflow",
 			},
 		},

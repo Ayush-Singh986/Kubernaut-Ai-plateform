@@ -29,7 +29,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
 )
 
 // writeTLSServerCACert extracts the TLS server's CA certificate and writes it

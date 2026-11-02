@@ -27,7 +27,7 @@ During V1.x development, the **Kubernaut Agent (KA) service architecture** is un
 
 **Dynamic Toolset Service Business Requirements** (BR-HOLMES-XXX IDs kept as-is; no formal BR-KA-XXX
 renumbering exists for these deferred/unimplemented requirements — tracked separately under
-[Issue #1829](https://github.com/jordigilh/kubernaut/issues/1829)):
+[Issue #1829](https://github.com/Ayush-Singh986/kubernaut/issues/1829)):
 - **BR-HOLMES-016**: Dynamic service discovery in Kubernetes cluster
 - **BR-HOLMES-017**: Automatic detection of well-known services
 - **BR-HOLMES-020**: Real-time toolset configuration updates

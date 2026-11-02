@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 var _ = Describe("Vertex AI + Claude Regression — #684", func() {

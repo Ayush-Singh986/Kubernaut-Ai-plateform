@@ -38,8 +38,8 @@ This test plan validates the config hot-reload feature introduced by Issue #835.
 
 ### 2.1 Authoritative Documents
 
-- [Issue #835](https://github.com/jordigilh/kubernaut/issues/835) — Enable hot-reload for RO service configuration
-- [Issue #875](https://github.com/jordigilh/kubernaut/issues/875) — Configurable log level (KA)
+- [Issue #835](https://github.com/Ayush-Singh986/kubernaut/issues/835) — Enable hot-reload for RO service configuration
+- [Issue #875](https://github.com/Ayush-Singh986/kubernaut/issues/875) — Configurable log level (KA)
 - BR-PLATFORM-875 — Log level hot-reload
 - DD-INFRA-001 — ConfigMap hot-reload pattern
 - `docs/architecture/LOGGING_STANDARD.md`

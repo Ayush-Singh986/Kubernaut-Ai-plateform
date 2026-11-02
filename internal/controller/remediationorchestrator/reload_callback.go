@@ -22,8 +22,8 @@ import (
 	"github.com/go-logr/logr"
 	"gopkg.in/yaml.v3"
 
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 // NewReloadCallback creates a hotreload.ReloadCallback that applies validated

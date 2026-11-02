@@ -29,8 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sretry "k8s.io/client-go/util/retry"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ========================================

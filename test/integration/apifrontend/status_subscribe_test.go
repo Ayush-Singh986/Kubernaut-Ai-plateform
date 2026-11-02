@@ -22,9 +22,9 @@ import (
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
 )
 
 func newWatchClient() crclient.WithWatch {

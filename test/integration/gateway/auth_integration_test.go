@@ -35,10 +35,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwpkg "github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	gwpkg "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 var _ = Describe("Gateway Authentication & Authorization (BR-GATEWAY-036, BR-GATEWAY-037)", Ordered, ContinueOnFailure, func() {

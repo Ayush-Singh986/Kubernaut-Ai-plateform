@@ -7,8 +7,8 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 // BR-NOT-069: Routing Rule Visibility via Kubernetes Conditions

@@ -255,8 +255,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/remediationprocessing"
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediationprocessing"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 )
 
 func TestRemediationProcessing(t *testing.T) {

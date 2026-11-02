@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // Ginkgo DSL dot-import convention
 	. "github.com/onsi/gomega"    //nolint:staticcheck // Ginkgo/Gomega DSL dot-import convention
 
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // Target describes everything the #1985 DataStorage-resilience journey

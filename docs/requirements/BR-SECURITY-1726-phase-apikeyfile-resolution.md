@@ -6,9 +6,9 @@
 **Target Version**: **V1.6**
 **Status**: ✅ Implemented; sibling partial-override contract superseded by BR-AI-090 / #2515
 **Date**: July 24, 2026
-**GitHub Issues**: [#1726](https://github.com/jordigilh/kubernaut/issues/1726)
+**GitHub Issues**: [#1726](https://github.com/Ayush-Singh986/kubernaut/issues/1726)
 **Related**: [BR-AI-1470](../tests/1470/TEST_PLAN.md) (per-phase LLM model routing — the feature whose
-implicit contract this closes a gap in), [kubernaut-operator#233](https://github.com/jordigilh/kubernaut-operator/issues/233) (blocked by this BR)
+implicit contract this closes a gap in), [kubernaut-operator#233](https://github.com/Ayush-Singh986/kubernaut-operator/issues/233) (blocked by this BR)
 
 > **2026-10-15 amendment**: BR-AI-090/#2515 retires `LLMOverrideConfig` partial
 > inheritance. Distinct phase and alignment profiles now provide complete
@@ -47,7 +47,7 @@ silently authenticates with the **base profile's** credentials, regardless of wh
   file would silently authenticate against that provider using the *base profile's* key — not a
   clean auth failure, just wrong/undefined behavior, with zero observability.
 - This blocks `kubernaut-operator`'s planned enhancement
-  ([kubernaut-operator#233](https://github.com/jordigilh/kubernaut-operator/issues/233)) to lift its
+  ([kubernaut-operator#233](https://github.com/Ayush-Singh986/kubernaut-operator/issues/233)) to lift its
   operator-side same-`credentialsSecretName` guardrail on `phaseModels` — that guardrail exists
   specifically to prevent this class of silent misbehavior, and removing it before this fix lands
   would reintroduce the exact failure mode it was designed to catch.

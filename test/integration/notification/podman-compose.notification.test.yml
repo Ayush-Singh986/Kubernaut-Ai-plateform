@@ -27,7 +27,7 @@ services:
   # Redis for NT integration tests
   # Port: 16399 (NT-specific, +20 from DS baseline 16379)
   redis:
-    image: quay.io/jordigilh/redis:7-alpine
+    image: quay.io/Ayush-Singh986/redis:7-alpine
     container_name: notification_redis_1
     ports:
       - "16399:6379"

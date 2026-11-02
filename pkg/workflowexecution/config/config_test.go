@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
 )
 
 var _ = Describe("UT-WE-054-CFG-001 [IA-5]: WE FleetOAuth2 config parses, validates, and defaults correctly at startup (BR-INTEGRATION-054)", func() {

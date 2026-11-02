@@ -35,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // controllerNamespace is where all RemediationRequests are created (ADR-057)

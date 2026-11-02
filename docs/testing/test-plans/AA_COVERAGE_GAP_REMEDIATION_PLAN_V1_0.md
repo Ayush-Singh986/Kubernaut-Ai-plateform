@@ -551,7 +551,7 @@ func (ec *ErrorClassifier) GetRetryDelay(attemptCount int) time.Duration {
 **File**: `pkg/aianalysis/handlers/error_classifier.go:94-103`
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/shared/backoff"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 
 // ErrorClassifier handles error classification and retry strategies
 type ErrorClassifier struct {
@@ -647,7 +647,7 @@ const (
 
 **Implementation**:
 ```go
-import "github.com/jordigilh/kubernaut/pkg/shared/backoff"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 
 // DD-SHARED-001: Shared Exponential Backoff Library
 func NewErrorClassifier(logger logr.Logger) *ErrorClassifier {
@@ -1022,7 +1022,7 @@ make test-e2e-aianalysis
 
 # Step 2: If coverage not automatically captured, run manually
 ginkgo --cover --coverprofile=coverage-e2e-aianalysis.out \
-    --coverpkg=github.com/jordigilh/kubernaut/pkg/aianalysis/... \
+    --coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/... \
     ./test/e2e/aianalysis/
 
 # Step 3: Analyze E2E coverage

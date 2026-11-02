@@ -1,6 +1,6 @@
 # Implementation Plan — #1472: Validate RR Existence Before Session Reactivation
 
-**Issue**: [#1472](https://github.com/jordigilh/kubernaut/issues/1472) | **Test Plan**: [TP-1472](./TEST_PLAN.md)
+**Issue**: [#1472](https://github.com/Ayush-Singh986/kubernaut/issues/1472) | **Test Plan**: [TP-1472](./TEST_PLAN.md)
 
 ## 1. Summary
 

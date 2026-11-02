@@ -84,7 +84,7 @@ This provisions:
 v1.5 adds `/debug/pprof/*` profiling support across all 12 Go services (DataStorage,
 Kubernaut Agent, Gateway, API Frontend, and the 8 services added in a later v1.5
 fast-follow — see [BR-PLATFORM-012](../../requirements/BR-PLATFORM-012-debug-pprof-secure-by-default.md),
-[Issue #2275](https://github.com/jordigilh/kubernaut/issues/2275)). Profiling is
+[Issue #2275](https://github.com/Ayush-Singh986/kubernaut/issues/2275)). Profiling is
 **disabled by default** (AC-6, least privilege) and has zero overhead when disabled.
 
 **Note:** an earlier v1.5 iteration of this feature (4 services only) shipped with
@@ -153,7 +153,7 @@ and WorkflowExecution resources are forward-compatible.
 > and is not a supported upgrade path.
 
 Current installations must follow the
-[Kubernaut Operator upgrade guidance](https://github.com/jordigilh/kubernaut-operator)
+[Kubernaut Operator upgrade guidance](https://github.com/Ayush-Singh986/kubernaut-operator)
 and keep application configuration in the user-owned `kubernaut.ai/v1alpha2`
 `Kubernaut` resource.
 

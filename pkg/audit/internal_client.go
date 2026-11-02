@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/eventdata"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/eventdata"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // ========================================

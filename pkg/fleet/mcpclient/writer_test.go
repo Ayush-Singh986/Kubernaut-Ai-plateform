@@ -33,8 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

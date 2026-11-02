@@ -6,7 +6,7 @@
 **Worker**: GPT-5.6 Luna, `ses_edf594445ffeG2pVwf6kIrXS5g`; stopped before GREEN<br>
 **Related plan**: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
-**Incorporated issue**: [#2498](https://github.com/jordigilh/kubernaut/issues/2498) — the phase-isolation findings below are part of the combined #2496 implementation scope. The current contract makes RCA context-tool calls optional and limits Phase 3 to workflow-discovery/result-submission tooling.
+**Incorporated issue**: [#2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498) — the phase-isolation findings below are part of the combined #2496 implementation scope. The current contract makes RCA context-tool calls optional and limits Phase 3 to workflow-discovery/result-submission tooling.
 
 **Subsequent compatibility scope**: The user permits a v1.6 break from v1.5 deployments for this enhancement. Legacy AA recovery/backfill is not required. This does not change the historical RED findings below: current-version producer wiring, captured/frozen evidence, conditional repeat validation and real status/audit persistence still need their own proof.
 
@@ -86,7 +86,7 @@ No field contracts were approved by these prototype fixtures. In particular, a p
 - Two earlier checkpoints were rejected; their original tests/logs remain preserved in the isolated worktree. The fresh third checkpoint also requires changes; this review does not authorize another automatic correction loop or GREEN.
 - The user explicitly approved including the phase-dispatch guard after the finding was escalated.
 - The fresh Luna worker returned its checkpoint and stopped. No prototype production source edits were made. The main checkout contains only uncommitted planning/review documents under `docs/tests/2496/`; its unrelated branch remains untouched.
-- No runtime reviewing agent is part of this spike; that future improvement is [#2497](https://github.com/jordigilh/kubernaut/issues/2497).
+- No runtime reviewing agent is part of this spike; that future improvement is [#2497](https://github.com/Ayush-Singh986/kubernaut/issues/2497).
 - No commit, push, live-cluster use, shared-infrastructure cleanup or production implementation is approved.
 
 **Confidence: 95% in this RED review.** The rejection follows direct source inspection and independent investigator, mapping and admission runs. Database migrations were worker-verified, not independently rerun, and authenticated DS/production-mapper persistence and model reasoning quality remain unproved. Harness readiness improved, but **upstream handoff and persistence are not ready for prototype GREEN or implementation approval**.

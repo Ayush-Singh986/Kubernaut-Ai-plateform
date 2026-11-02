@@ -158,7 +158,7 @@ m.ExecutionTotal = prometheus.NewCounterVec(
 )
 
 // Test code
-import wemetrics "github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
+import wemetrics "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/metrics"
 
 count := extractMetricValue(body, wemetrics.MetricNameExecutionTotal, wemetrics.LabelOutcomeCompleted)
 ```
@@ -229,7 +229,7 @@ func NewMetrics() *Metrics {
 **Test Usage** (`*_test.go`):
 ```go
 import (
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 func TestMetricsIncrement(t *testing.T) {
@@ -306,7 +306,7 @@ import "strings"
 if !strings.Contains(body, "service_component_metric_total") { ... }
 
 // After
-import svcmetrics "github.com/jordigilh/kubernaut/pkg/{service}/metrics"
+import svcmetrics "github.com/Ayush-Singh986/kubernaut/pkg/{service}/metrics"
 if !strings.Contains(body, svcmetrics.MetricNameYourMetric) { ... }
 ```
 

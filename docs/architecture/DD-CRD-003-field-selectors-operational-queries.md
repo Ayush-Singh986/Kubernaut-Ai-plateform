@@ -417,7 +417,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/manager"
 
-    workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 // RegisterFieldIndexers registers custom field selectors for WorkflowExecution.
@@ -494,7 +494,7 @@ func RegisterFieldIndexers(ctx context.Context, mgr manager.Manager) error {
 ```go
 // cmd/workflowexecution/main.go
 import (
-    weindexers "github.com/jordigilh/kubernaut/internal/controller/workflowexecution"
+    weindexers "github.com/Ayush-Singh986/kubernaut/internal/controller/workflowexecution"
 )
 
 func main() {

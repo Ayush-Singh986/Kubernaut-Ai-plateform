@@ -38,7 +38,7 @@ spec:
     spec:
       containers:
       - name: redis
-        image: quay.io/jordigilh/redis:7-alpine
+        image: quay.io/Ayush-Singh986/redis:7-alpine
         ports:
         - containerPort: 6379
           name: redis

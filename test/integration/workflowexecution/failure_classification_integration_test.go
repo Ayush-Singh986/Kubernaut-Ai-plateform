@@ -22,7 +22,7 @@ import (
 	"math/rand"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,7 +33,7 @@ import (
 	"knative.dev/pkg/apis"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 // ========================================
@@ -221,7 +221,7 @@ func createMinimalWorkflowExecution(name, namespace string) *workflowexecutionv1
 					WorkflowName:    "test-workflow",
 					ActionType:      "RestartPod",
 					Version:         "v1.0.0",
-					ExecutionBundle: "quay.io/jordigilh/test-workflows/test:v1.0.0",
+					ExecutionBundle: "quay.io/Ayush-Singh986/test-workflows/test:v1.0.0",
 					ExecutionEngine: "tekton",
 				},
 			},

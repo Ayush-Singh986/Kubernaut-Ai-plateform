@@ -25,10 +25,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	notificationcontroller "github.com/jordigilh/kubernaut/internal/controller/notification"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	notificationaudit "github.com/jordigilh/kubernaut/pkg/notification/audit"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	notificationcontroller "github.com/Ayush-Singh986/kubernaut/internal/controller/notification"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	notificationaudit "github.com/Ayush-Singh986/kubernaut/pkg/notification/audit"
 )
 
 // ========================================

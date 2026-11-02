@@ -2,7 +2,7 @@
 
 **Version**: v3.0
 **Last Updated**: 2026-08-02
-**Status**: ✅ Design Complete (V1.0 scope) — Corrected for [#1806](https://github.com/jordigilh/kubernaut/issues/1806)
+**Status**: ✅ Design Complete (V1.0 scope) — Corrected for [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)
 
 ---
 

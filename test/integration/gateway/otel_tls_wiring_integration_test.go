@@ -52,10 +52,10 @@ import (
 	"go.opentelemetry.io/otel"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	sharedtelemetry "github.com/jordigilh/kubernaut/pkg/shared/telemetry"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	sharedtelemetry "github.com/Ayush-Singh986/kubernaut/pkg/shared/telemetry"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 var _ = Describe("Gateway production wiring: OTel export over TLS (GAP-14 / Issue #1519)", func() {

@@ -29,11 +29,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	dsconfig "github.com/jordigilh/kubernaut/pkg/datastorage/config"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/query"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	dsconfig "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/query"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // Issue #1199: Bidirectional correlation query integration tests.

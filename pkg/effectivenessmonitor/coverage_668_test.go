@@ -26,11 +26,11 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	pkgaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/audit"
-	emtypes "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	pkgaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/audit"
+	emtypes "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // EM audit manager paths (BR-EM-009.4, DD-AUDIT-003) — RecordComponentAssessed, RecordHashComputed, RecordAssessmentScheduled.

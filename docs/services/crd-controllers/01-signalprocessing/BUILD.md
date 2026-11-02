@@ -39,7 +39,7 @@ This document describes how to build, test, and develop the SignalProcessing CRD
 
 ```bash
 # Clone the repository
-git clone https://github.com/jordigilh/kubernaut.git
+git clone https://github.com/Ayush-Singh986/kubernaut.git
 cd kubernaut
 
 # Install dependencies

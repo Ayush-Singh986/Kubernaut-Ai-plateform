@@ -12,7 +12,7 @@
 
 This document captures the **future feature** for reconstructing **complete child CRDs** (SignalProcessing, AIAnalysis, WorkflowExecution, NotificationRequest, RemediationApprovalRequest) from audit traces, similar to the existing RR reconstruction capability.
 
-> **Confirmed scope (2026-08-03, [#1882](https://github.com/jordigilh/kubernaut/issues/1882))**: AI
+> **Confirmed scope (2026-08-03, [#1882](https://github.com/Ayush-Singh986/kubernaut/issues/1882))**: AI
 > decision data (provider, model, confidence, reasoning, recommendations) does **not** belong to
 > `RemediationRequest` reconstruction — see
 > [DD-AUDIT-004, Field #4](./DD-AUDIT-004-RR-RECONSTRUCTION-FIELD-MAPPING.md#field-4-providerdata--removed-2026-08-03),

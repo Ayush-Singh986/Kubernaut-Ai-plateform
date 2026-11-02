@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/rest"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	auth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	auth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // buildMCPHandler's three required-dependency guard clauses — characterization

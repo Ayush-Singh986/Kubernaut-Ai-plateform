@@ -41,7 +41,7 @@ This package provides a unified logging interface for all Kubernaut services usi
 
 | Scenario | What to Import | Example |
 |----------|----------------|---------|
-| **main.go** (create logger) | `kubelog "github.com/jordigilh/kubernaut/pkg/log"` | `logger := kubelog.NewLogger(opts)` |
+| **main.go** (create logger) | `kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"` | `logger := kubelog.NewLogger(opts)` |
 | **Struct fields** | `"github.com/go-logr/logr"` | `logger logr.Logger` |
 | **Function parameters** | `"github.com/go-logr/logr"` | `func New(logger logr.Logger)` |
 | **Business code** | `"github.com/go-logr/logr"` | `logger.Info("message")` |
@@ -66,7 +66,7 @@ The `zap` backend is hidden inside `pkg/log`. Your code only sees `logr.Logger`.
 ### Stateless HTTP Services (Gateway, Data Storage, Context API)
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/log"
+import "github.com/Ayush-Singh986/kubernaut/pkg/log"
 
 func main() {
     // Create logger with production defaults
@@ -157,7 +157,7 @@ Environment variables:
 Use the constants in `fields.go` for consistent field names:
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/log"
+import "github.com/Ayush-Singh986/kubernaut/pkg/log"
 
 logger.Info("Request processed",
     log.KeyRequestID, requestID,

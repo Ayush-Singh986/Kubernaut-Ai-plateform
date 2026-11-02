@@ -28,10 +28,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	prodaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	"github.com/jordigilh/kubernaut/test/shared/validators"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	prodaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 )
 
 func TestAuditManager(t *testing.T) {

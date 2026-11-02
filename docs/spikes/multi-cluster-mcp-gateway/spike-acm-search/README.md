@@ -207,7 +207,7 @@ The validation above (S1-S6, and the "Production RBAC Validation" section) used
 raw `curl` against the ACM Search GraphQL API. It never exercised Kubernaut's
 own Go client, because `pkg/fleet/acm.Client` had a pre-existing bug: it never
 sent the `Authorization: Bearer <token>` header at all (tracked as
-[#1556](https://github.com/jordigilh/kubernaut/issues/1556)). This meant every
+[#1556](https://github.com/Ayush-Singh986/kubernaut/issues/1556)). This meant every
 prior "validation" of the adapter was actually validating the wrong thing — the
 real Go client would have 401'd on every request.
 

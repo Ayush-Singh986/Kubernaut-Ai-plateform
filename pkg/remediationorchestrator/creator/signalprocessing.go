@@ -32,10 +32,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	rrconditions "github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	rrconditions "github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 // SignalProcessingCreator creates SignalProcessing CRDs from RemediationRequests.

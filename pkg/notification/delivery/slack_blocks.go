@@ -3,8 +3,8 @@ package delivery
 import (
 	"fmt"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/formatting"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/formatting"
 	"github.com/slack-go/slack"
 )
 

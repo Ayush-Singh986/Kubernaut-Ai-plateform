@@ -14,7 +14,7 @@
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
-- [Issue #387](https://github.com/jordigilh/kubernaut/issues/387)
+- [Issue #387](https://github.com/Ayush-Singh986/kubernaut/issues/387)
 
 ---
 

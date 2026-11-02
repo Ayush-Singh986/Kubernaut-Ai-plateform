@@ -31,9 +31,9 @@ Validate behavioral acceptance criteria for all AF integration-testable (I/O-dep
 
 ### 1.3 References
 
-- Issue: [#1195](https://github.com/jordigilh/kubernaut/issues/1195)
-- Related: [#1156](https://github.com/jordigilh/kubernaut/issues/1156) (AF SOC2 Audit Normalization)
-- Related: [#1196](https://github.com/jordigilh/kubernaut/issues/1196) (AF E2E coverage instrumentation)
+- Issue: [#1195](https://github.com/Ayush-Singh986/kubernaut/issues/1195)
+- Related: [#1156](https://github.com/Ayush-Singh986/kubernaut/issues/1156) (AF SOC2 Audit Normalization)
+- Related: [#1196](https://github.com/Ayush-Singh986/kubernaut/issues/1196) (AF E2E coverage instrumentation)
 - Testing Strategy: `.cursor/rules/03-testing-strategy.mdc`
 - No-Mocks Policy: `docs/testing/INTEGRATION_E2E_NO_MOCKS_POLICY.md`
 - Testing Guidelines: `docs/development/business-requirements/TESTING_GUIDELINES.md` v2.8.0

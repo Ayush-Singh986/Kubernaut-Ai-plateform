@@ -16,7 +16,7 @@ limitations under the License.
 
 package investigator
 
-import "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+import "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 
 // TokenAccumulator tracks cumulative token usage across multiple LLM turns.
 // Tokens are audit-only (not surfaced in the API response per #435).

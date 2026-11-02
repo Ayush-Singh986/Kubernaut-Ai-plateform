@@ -37,10 +37,10 @@ import (
 	adksession "google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // statefulToolContext extends fakeToolContext with a working session.State

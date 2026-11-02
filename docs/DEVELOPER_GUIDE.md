@@ -92,7 +92,7 @@ kubernaut/
 ## Setup
 
 ```bash
-git clone https://github.com/jordigilh/kubernaut.git
+git clone https://github.com/Ayush-Singh986/kubernaut.git
 cd kubernaut
 
 make install        # Install CRDs into current cluster context
@@ -248,7 +248,7 @@ All `pkg/` business logic must always use real implementations — never mock in
 ### Supported deployment — Kubernaut Operator
 
 Kubernaut is deployed through the external
-[Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+[Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 The operator's Helm bootstrap chart installs the operator, CRD, webhook, and bootstrap
 prerequisites. It does not create the application resource or application workloads.
 
@@ -366,7 +366,7 @@ For features that fit within a service's bounded context and do not require a ne
 
 ## Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/jordigilh/kubernaut/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jordigilh/kubernaut/discussions)
-- **Documentation site**: [jordigilh.github.io/kubernaut-docs](https://jordigilh.github.io/kubernaut-docs/)
-- **Demo scenarios**: [kubernaut-demo-scenarios](https://github.com/jordigilh/kubernaut-demo-scenarios)
+- **Issues**: [GitHub Issues](https://github.com/Ayush-Singh986/kubernaut/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Ayush-Singh986/kubernaut/discussions)
+- **Documentation site**: [Ayush-Singh986.github.io/kubernaut-docs](https://Ayush-Singh986.github.io/kubernaut-docs/)
+- **Demo scenarios**: [kubernaut-demo-scenarios](https://github.com/Ayush-Singh986/kubernaut-demo-scenarios)

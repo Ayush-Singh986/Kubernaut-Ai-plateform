@@ -23,10 +23,10 @@ import (
 
 	"github.com/go-logr/logr"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	pkgaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	emtypes "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	pkgaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	emtypes "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // ServiceName is the canonical service identifier for audit events.

@@ -25,11 +25,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // P1.3 Refactoring: RegoEvaluatorInterface and AnalyzingAuditClientInterface moved to interfaces.go

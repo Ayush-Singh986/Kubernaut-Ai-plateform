@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 var _ = Describe("SOC2 Gap #8: Legal Hold & Retention Integration Tests", func() {

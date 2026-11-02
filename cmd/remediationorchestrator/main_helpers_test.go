@@ -19,7 +19,7 @@ package main
 import (
 	"testing"
 
-	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
 )
 
 // TestBuildAuditStore_ValidConfig is a characterization test for

@@ -31,7 +31,7 @@
 
 **Usage**:
 ```bash
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut/cmd/must-gather
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut/cmd/must-gather
 
 # Run all tests (recommended)
 make test

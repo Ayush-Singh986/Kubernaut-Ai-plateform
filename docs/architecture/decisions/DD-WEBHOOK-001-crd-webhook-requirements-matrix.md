@@ -438,7 +438,7 @@ kubectl delete notificationrequest <nr-name> -n <namespace>
 
 ### **Use Case 5: AgentSession → RemediationRequest Existence Gate** (v1.5)
 
-**Business Requirement**: `BR-AA-KA-065.13` (Issue [#2244](https://github.com/jordigilh/kubernaut/issues/2244))
+**Business Requirement**: `BR-AA-KA-065.13` (Issue [#2244](https://github.com/Ayush-Singh986/kubernaut/issues/2244))
 
 **Scenario**: `AgentSession` is created with `Spec.RemediationRequestRef` pointing at the `RemediationRequest` that triggered the investigation. Nothing at the CRD-schema level (CEL/`x-kubernetes-validations`) can verify a *different* object exists — only the object's own fields are evaluated. Without an admission-time check, a dangling reference (typo, stale fixture, race between RR deletion and AS creation) would reach KA's dispatcher undetected.
 

@@ -29,13 +29,13 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/config"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/enricher"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/enricher"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // IT-FLEET-READY-SP-001: cmd/signalprocessing must wire a readiness.Gate

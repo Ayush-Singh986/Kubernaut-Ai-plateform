@@ -181,7 +181,7 @@ via NetworkPolicy.
   actual current behavior (not assumed identical to this chart) before
   deciding whether it needs the DD-PLATFORM-010 pattern applied, a
   from-scratch #1985-equivalent implementation, or neither -- tracked as
-  [jordigilh/kubernaut-operator#360](https://github.com/jordigilh/kubernaut-operator/issues/360)
+  [Ayush-Singh986/kubernaut-operator#360](https://github.com/Ayush-Singh986/kubernaut-operator/issues/360)
   (v1.6 milestone), not actioned in this DD since that repository is not
   checked out in this workspace.
 

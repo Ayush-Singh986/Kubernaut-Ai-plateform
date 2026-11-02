@@ -3,7 +3,7 @@ package tools
 import (
 	"fmt"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 // Step status constants per issue #1427 Console contract.

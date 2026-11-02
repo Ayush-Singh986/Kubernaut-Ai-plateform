@@ -28,12 +28,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 func (inv *Investigator) runLLMLoop(ctx context.Context, messages []llm.Message, phase katypes.Phase, llmCtx LLMInvocationContext) (LoopResult, error) {

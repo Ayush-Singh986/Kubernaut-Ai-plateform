@@ -14,7 +14,7 @@ AF needs kubernaut's CRD types (RemediationRequest, AIAnalysis, SignalProcessing
 Direct `go.mod` dependency on the kubernaut monorepo:
 
 ```
-require github.com/jordigilh/kubernaut v1.5.0-alpha.X
+require github.com/Ayush-Singh986/kubernaut v1.5.0-alpha.X
 ```
 
 Import specific packages:

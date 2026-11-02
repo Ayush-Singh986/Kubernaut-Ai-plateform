@@ -53,9 +53,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
 )
 
 var _ = Describe("Status Update Invariant (UT-EM-254-003, #254)", func() {

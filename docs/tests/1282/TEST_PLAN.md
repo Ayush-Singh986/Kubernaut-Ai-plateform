@@ -13,7 +13,7 @@ TP-AF-1282-v1.0
 
 ## 2. References
 
-- Issue: https://github.com/jordigilh/kubernaut/issues/1282
+- Issue: https://github.com/Ayush-Singh986/kubernaut/issues/1282
 - BR: BR-AF-1282 — AF agent quality: realistic RRs, output suppression, prompt hardening
 - FedRAMP Controls: AU-2 (Audit Events), SC-7 (Boundary Protection), SI-10 (Information Input Validation)
 - Related: #1276 (prompt personalization), DD-SEVERITY-001 (severity determination)

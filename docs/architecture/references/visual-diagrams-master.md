@@ -111,9 +111,9 @@ stateDiagram-v2
 
 ## 02-aianalysis/ Diagrams
 
-> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This entire
+> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This entire
 > section predates the Go rewrite of HolmesGPT into **Kubernaut Agent (KA)** (v1.3, issue
-> [#433](https://github.com/jordigilh/kubernaut/issues/433)) and describes an API/CRD shape that was never built as
+> [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433)) and describes an API/CRD shape that was never built as
 > shown: a synchronous `POST /api/v1/investigate` call (the real KA API is async/session-based:
 > `POST /api/v1/incident/analyze` → poll `GET .../session/{id}` → `GET .../session/{id}/result`), and a standalone
 > `AIApprovalRequest` CRD (no such CRD was ever built — approval is signaled via `RemediationApprovalRequest`).

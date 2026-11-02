@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/k8serrors"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/k8serrors"
 )
 
 func TestK8sErrors(t *testing.T) {

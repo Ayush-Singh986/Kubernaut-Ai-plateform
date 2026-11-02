@@ -10,9 +10,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 // hangingPoolSession is a ka.PoolSession fake whose CallTool blocks until

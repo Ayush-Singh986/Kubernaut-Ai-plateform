@@ -258,8 +258,8 @@ package notification
 import (
     "context"
 
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/notification/routing"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
 )

@@ -191,7 +191,7 @@ spec:
 
 **Business KPIs:**
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The metric
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The metric
 > names in this subsection (KPIs below) are illustrative examples and do not match actual emitted Prometheus
 > metric names — none of `kubernaut_alerts_processed_total`, `kubernaut_investigation_confidence_score`, etc. exist
 > in source. Real Kubernaut Agent (KA) metrics use the `aiagent_` prefix (e.g. `aiagent_http_rate_limited_total`;

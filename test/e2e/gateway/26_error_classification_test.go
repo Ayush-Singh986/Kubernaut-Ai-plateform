@@ -28,8 +28,8 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Test Plan Reference: docs/development/testing/GATEWAY_COVERAGE_GAP_TEST_PLAN.md

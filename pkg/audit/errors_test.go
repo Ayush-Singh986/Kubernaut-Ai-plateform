@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

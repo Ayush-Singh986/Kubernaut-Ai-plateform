@@ -19,8 +19,8 @@ package delivery
 import (
 	"context"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/circuitbreaker"
 )
 
 // CircuitBreakerService wraps any delivery.Service with circuit breaker protection.

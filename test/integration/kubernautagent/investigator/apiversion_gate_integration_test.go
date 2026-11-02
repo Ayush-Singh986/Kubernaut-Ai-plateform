@@ -28,14 +28,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 func newITAmbiguousMapper() *meta.DefaultRESTMapper {

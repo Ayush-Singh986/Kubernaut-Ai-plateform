@@ -10,8 +10,8 @@ import (
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 // AuditableInput is an opt-in interface that tool argument types can implement

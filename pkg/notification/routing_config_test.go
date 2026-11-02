@@ -17,7 +17,7 @@ limitations under the License.
 package notification_test
 
 import (
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

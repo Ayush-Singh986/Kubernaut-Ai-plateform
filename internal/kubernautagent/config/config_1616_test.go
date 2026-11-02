@@ -21,8 +21,8 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/utils/ptr"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 var _ = Describe("complete profile reasoning configuration — #1616", func() {

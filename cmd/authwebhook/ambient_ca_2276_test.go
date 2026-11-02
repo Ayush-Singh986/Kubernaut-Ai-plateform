@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	awconfig "github.com/jordigilh/kubernaut/pkg/authwebhook/config"
+	awconfig "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook/config"
 )
 
 func generateAmbientCATestCert(t *testing.T) string {

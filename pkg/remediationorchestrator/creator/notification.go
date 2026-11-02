@@ -32,13 +32,13 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	emconditions "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	emconditions "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 // formatTargetResource formats a ResourceIdentifier for notification bodies.

@@ -41,7 +41,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/myservice"
+	"github.com/Ayush-Singh986/kubernaut/pkg/myservice"
 )
 
 func TestMyServiceIntegration(t *testing.T) {

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 type observerContextKey struct{}

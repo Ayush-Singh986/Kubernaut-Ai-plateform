@@ -26,7 +26,7 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // phaseGuardAfter AfterToolCallback contract (#1997, ported to main as #1998).

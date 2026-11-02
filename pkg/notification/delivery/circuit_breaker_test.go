@@ -8,9 +8,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/circuitbreaker"
 )
 
 type stubService struct {

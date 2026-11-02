@@ -40,13 +40,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	inthelpers "github.com/jordigilh/kubernaut/test/integration/gateway/helpers"
-	"github.com/jordigilh/kubernaut/test/shared/integration"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	inthelpers "github.com/Ayush-Singh986/kubernaut/test/integration/gateway/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/integration"
 )
 
 // ========================================

@@ -18,8 +18,8 @@ package scenarios
 import (
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // MockAlternativeWorkflow mirrors real Claude behavior where the LLM returns

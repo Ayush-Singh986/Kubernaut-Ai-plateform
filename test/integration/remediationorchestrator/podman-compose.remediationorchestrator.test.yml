@@ -72,7 +72,7 @@ services:
   # Redis for RO integration tests
   # Port: 16381 (RO-specific, from DD-TEST-001 range 16379-16388)
   redis:
-    image: quay.io/jordigilh/redis:7-alpine
+    image: quay.io/Ayush-Singh986/redis:7-alpine
     container_name: ro-redis-integration
     ports:
       - "16381:6379"

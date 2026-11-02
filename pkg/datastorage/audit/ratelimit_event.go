@@ -19,8 +19,8 @@ package audit
 import (
 	"github.com/google/uuid"
 
-	pkgaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	pkgaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // BR-STORAGE-1505 (GAP-09, Issue #1505): Data Storage HTTP API self-audited

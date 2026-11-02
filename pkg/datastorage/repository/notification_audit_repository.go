@@ -25,9 +25,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/jackc/pgx/v5/pgconn" // DD-010: Migrated from lib/pq
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository/sqlutil"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/validation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/sqlutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/validation"
 )
 
 // ========================================

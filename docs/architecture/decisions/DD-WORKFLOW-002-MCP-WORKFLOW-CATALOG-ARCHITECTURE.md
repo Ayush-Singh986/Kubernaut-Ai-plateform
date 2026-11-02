@@ -1,6 +1,6 @@
 # DD-WORKFLOW-002: MCP Workflow Catalog Architecture
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Nov 2025 proposal describes a **Python** HolmesGPT API calling a standalone **Embedding Service (MCP
 > Server)** that generates 384-dim sentence-transformer embeddings and posts a single
 > `search_workflow_catalog` semantic-search tool call to a Data Storage `POST /api/v1/workflows/search`

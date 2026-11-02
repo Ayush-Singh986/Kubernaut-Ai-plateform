@@ -29,9 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
 )
 
 // Business Requirement: BR-ORCH-029, BR-ORCH-030, BR-ORCH-031, BR-ORCH-034

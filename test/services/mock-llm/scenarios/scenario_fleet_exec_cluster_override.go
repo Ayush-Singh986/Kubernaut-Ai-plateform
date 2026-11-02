@@ -15,7 +15,7 @@ limitations under the License.
 */
 package scenarios
 
-import "github.com/jordigilh/kubernaut/pkg/shared/uuid"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 
 // fleetExecClusterOverrideConfig backs E2E-FLEET-2326-001 (DD-FLEET-008,
 // BR-FLEET-004, Issue #2326): a dedicated, fully-isolated workflow name so

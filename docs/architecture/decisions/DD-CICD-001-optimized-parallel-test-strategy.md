@@ -5,7 +5,7 @@
 **Priority**: **HIGH** - CI/CD Optimization
 **Impact**: Reduces total CI/CD time from ~120 minutes to ~35 minutes (71% improvement)
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Dec 2025 proposal targeted an 8-service CI matrix (including a Python `holmesgpt`/HAPI service with a
 > separate `unit-python-service` job). The real `.github/workflows/ci-pipeline.yml` has since grown to a
 > 12-service Go matrix (`signalprocessing, aianalysis, authwebhook, workflowexecution,
@@ -100,7 +100,7 @@ Total Time: ~120 minutes (worst case)
 
 ### **Tier 1: Unit Tests** (Parallel, <2 minutes)
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This proposal treats the Kubernaut Agent (KA) as a Python service (`setup-python`, `pip install`); KA has since been rewritten as a native Go service, so this job structure no longer reflects reality.
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This proposal treats the Kubernaut Agent (KA) as a Python service (`setup-python`, `pip install`); KA has since been rewritten as a native Go service, so this job structure no longer reflects reality.
 
 **Strategy**: FAST FAIL - Run all unit tests in parallel
 

@@ -29,8 +29,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 // recordingClient captures Chat calls and tracks Close for assertions.

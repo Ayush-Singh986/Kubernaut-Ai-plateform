@@ -24,11 +24,11 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // InvestigatorWrapper wraps an InvestigationRunner. On each Investigate call

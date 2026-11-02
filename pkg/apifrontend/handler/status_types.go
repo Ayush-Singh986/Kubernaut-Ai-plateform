@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 // StatusSubscribeRequest represents a JSON-RPC 2.0 status/subscribe request.

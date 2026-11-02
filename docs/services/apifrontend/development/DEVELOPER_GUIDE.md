@@ -17,7 +17,7 @@ Optional:
 
 ```bash
 # Clone the monorepo
-git clone https://github.com/jordigilh/kubernaut.git
+git clone https://github.com/Ayush-Singh986/kubernaut.git
 cd kubernaut
 
 # Build the apifrontend binary
@@ -102,7 +102,7 @@ hack/                         — Utility scripts
 ## Local Development with Kind
 
 The API Frontend is deployed as part of the operator-backed Kubernaut installation.
-Follow the [operator quickstart](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+Follow the [operator quickstart](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 and the repository's [Interactive mode guide](../../../operations/deployment/INTERACTIVE_MODE_SETUP_GUIDE.md).
 
 The files under `test/fixtures/kubernetes/apifrontend/e2e/` are test fixtures only;

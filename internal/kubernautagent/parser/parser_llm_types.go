@@ -23,7 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // llmResponse is the nested JSON structure that LLMs typically produce.

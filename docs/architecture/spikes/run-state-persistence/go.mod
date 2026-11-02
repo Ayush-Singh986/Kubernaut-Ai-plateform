@@ -1,4 +1,4 @@
-module github.com/jordigilh/kubernaut/spikes/run-state-persistence
+module github.com/Ayush-Singh986/kubernaut/spikes/run-state-persistence
 
 go 1.23.0
 

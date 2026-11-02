@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/partition"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/partition"
 )
 
 // BR-AUDIT-029: Automatic partition management for audit storage

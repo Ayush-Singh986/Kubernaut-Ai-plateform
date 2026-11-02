@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
 )
 
 var _ = Describe("SSE Middleware — #823 PR4", func() {

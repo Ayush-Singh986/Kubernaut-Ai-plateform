@@ -280,6 +280,6 @@ Feature: Defense-in-Depth Parameter Validation
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-08-01 | Terminology cleanup only ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)): `BR-HAPI-191` → `BR-KA-191`, `HolmesGPT-API`/`HAPI` → `Kubernaut Agent (KA)`/`KA`. This requirement remains cancelled/archived; no content changes. |
+| 1.1 | 2026-08-01 | Terminology cleanup only ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): `BR-HAPI-191` → `BR-KA-191`, `HolmesGPT-API`/`HAPI` → `Kubernaut Agent (KA)`/`KA`. This requirement remains cancelled/archived; no content changes. |
 | 1.0 | 2025-12-01 | Initial requirement |
 

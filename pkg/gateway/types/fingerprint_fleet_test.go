@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 var _ = Describe("Cluster-Aware Fingerprint (BR-INTEGRATION-065)", func() {

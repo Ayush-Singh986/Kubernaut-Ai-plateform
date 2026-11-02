@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/k8s"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )

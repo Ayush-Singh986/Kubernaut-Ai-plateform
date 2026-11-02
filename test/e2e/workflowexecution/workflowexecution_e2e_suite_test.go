@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
@@ -41,9 +41,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // WorkflowExecution E2E Test Suite

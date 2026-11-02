@@ -6,7 +6,7 @@
 **Status**: 🗄️ **HISTORICAL PROPOSAL — Core principle implemented, specific mechanisms superseded** (see note below)
 **Purpose**: Document the comprehensive enhancements made to properly separate KA investigation from infrastructure execution
 
-> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > January 2025 document proposed separating "HolmesGPT" investigation from infrastructure execution
 > for the pre-CRD-rewrite architecture. **The underlying principle — AI investigation must not directly
 > execute infrastructure changes — was implemented, and remains true in the current architecture**, but

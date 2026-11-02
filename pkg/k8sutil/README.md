@@ -1,6 +1,6 @@
 # Kubernetes Client Utilities
 
-**Package**: `github.com/jordigilh/kubernaut/pkg/k8sutil`
+**Package**: `github.com/Ayush-Singh986/kubernaut/pkg/k8sutil`
 **Design Decision**: [DD-013: Kubernetes Client Initialization Standard](../../docs/architecture/decisions/DD-013-kubernetes-client-initialization-standard.md)
 
 ---
@@ -44,7 +44,7 @@ Returns a Kubernetes REST config, trying KUBECONFIG first, then in-cluster.
 
 **Example**:
 ```go
-import "github.com/jordigilh/kubernaut/pkg/k8sutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
 
 config, err := k8sutil.GetConfig()
 if err != nil {
@@ -63,7 +63,7 @@ This is a convenience wrapper around `GetConfig()` + `kubernetes.NewForConfig()`
 
 **Example**:
 ```go
-import "github.com/jordigilh/kubernaut/pkg/k8sutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
 
 clientset, err := k8sutil.NewClientset()
 if err != nil {
@@ -87,7 +87,7 @@ if err != nil {
 package main
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/k8sutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
     "go.uber.org/zap"
 )
 

@@ -9,9 +9,9 @@
 > **📋 Changelog**
 > | Version | Date | Changes | Reference |
 > |---------|------|---------|-----------|
-> | v1.11 | 2026-03-04 | **NEW BR-GATEWAY-185**: Normalized Signal Description Capture. Gateway MUST extract and normalize human-readable signal context (summary, description, runbook URL, dashboard URL) from all adapters into a structured `SignalDescription`. Replaces `SignalAnnotations map[string]string`. Cross-emitter design validated against 8 signal sources. | [Issue #462](https://github.com/jordigilh/kubernaut/issues/462), [DD-GATEWAY-017](../../../architecture/decisions/DD-GATEWAY-017-normalized-signal-description.md) |
-> | v1.10 | 2026-03-06 | **UPDATED BR-GATEWAY-004**: Three-tier owner resolution strategy. Tier 2 (#282): direct API fallback on cache miss. Tier 3 (#284): trust-but-verify when cache returns stale metadata without ownerReferences. Signals are only dropped when the resource is truly deleted; standalone resources (e.g., debug Pods) are accepted with resource-level fingerprints. | [Issue #282](https://github.com/jordigilh/kubernaut/issues/282), [Issue #284](https://github.com/jordigilh/kubernaut/issues/284) |
-> | v1.8 | 2026-02-23 | **NEW BR-GATEWAY-184**: Target Resource Extraction Priority. Gateway MUST check specific Kubernetes resource labels (HPA, PDB, PVC, Deployment, StatefulSet, etc.) before `pod` when extracting target resource from Prometheus alerts. Fixes kube-state-metrics misidentification. | [Issue #178](https://github.com/jordigilh/kubernaut/issues/178), [BR-GATEWAY-184](../../../../requirements/BR-GATEWAY-184-target-resource-extraction-priority.md) |
+> | v1.11 | 2026-03-04 | **NEW BR-GATEWAY-185**: Normalized Signal Description Capture. Gateway MUST extract and normalize human-readable signal context (summary, description, runbook URL, dashboard URL) from all adapters into a structured `SignalDescription`. Replaces `SignalAnnotations map[string]string`. Cross-emitter design validated against 8 signal sources. | [Issue #462](https://github.com/Ayush-Singh986/kubernaut/issues/462), [DD-GATEWAY-017](../../../architecture/decisions/DD-GATEWAY-017-normalized-signal-description.md) |
+> | v1.10 | 2026-03-06 | **UPDATED BR-GATEWAY-004**: Three-tier owner resolution strategy. Tier 2 (#282): direct API fallback on cache miss. Tier 3 (#284): trust-but-verify when cache returns stale metadata without ownerReferences. Signals are only dropped when the resource is truly deleted; standalone resources (e.g., debug Pods) are accepted with resource-level fingerprints. | [Issue #282](https://github.com/Ayush-Singh986/kubernaut/issues/282), [Issue #284](https://github.com/Ayush-Singh986/kubernaut/issues/284) |
+> | v1.8 | 2026-02-23 | **NEW BR-GATEWAY-184**: Target Resource Extraction Priority. Gateway MUST check specific Kubernetes resource labels (HPA, PDB, PVC, Deployment, StatefulSet, etc.) before `pod` when extracting target resource from Prometheus alerts. Fixes kube-state-metrics misidentification. | [Issue #178](https://github.com/Ayush-Singh986/kubernaut/issues/178), [BR-GATEWAY-184](../../../../requirements/BR-GATEWAY-184-target-resource-extraction-priority.md) |
 > | v1.7 | 2026-01-29 | **NEW BR-GATEWAY-182, BR-GATEWAY-183**: ServiceAccount Authentication and SAR Authorization. Gateway MUST authenticate webhook requests using Kubernetes TokenReview and authorize using SubjectAccessReview for defense-in-depth security and SOC2 compliance. Supersedes DD-GATEWAY-006 (network-only security). | [DD-AUTH-014 V2.0](../../../architecture/decisions/DD-AUTH-014-middleware-based-sar-authentication.md) |
 > | v1.6 | 2026-01-09 | **NEW BR-GATEWAY-181**: Signal Pass-Through Architecture. Gateway MUST preserve external severity/environment/priority values WITHOUT transformation. Removes hardcoded severity mappings. Enables customer extensibility (Sev1-4, P0-P4 schemes). | [DD-SEVERITY-001](../../../architecture/decisions/DD-SEVERITY-001-severity-determination-refactoring.md), [TRIAGE-SEVERITY-EXTENSIBILITY](../../../architecture/decisions/TRIAGE-SEVERITY-EXTENSIBILITY.md) |
 > | v1.5 | 2025-12-07 | BR-GATEWAY-038: Rate limiting code REMOVED (middleware + tests). Proxy delegation complete. | [ADR-048](../../../architecture/decisions/ADR-048-rate-limiting-proxy-delegation.md) |
@@ -330,7 +330,7 @@ This document provides a comprehensive list of all business requirements for the
 **Description**: Gateway must authenticate API requests using Kubernetes TokenReviewer
 **Priority**: P0 (Critical)
 **Status**: 🔴 **NOT IMPLEMENTED — SECURITY GAP**. `pkg/gateway/middleware/auth.go` does not exist. No TokenReview logic in the codebase. Superseded by BR-GATEWAY-182 (ServiceAccount Authentication via TokenReview), which is also pending.
-**Tracking**: [GitHub #291](https://github.com/jordigilh/kubernaut/issues/291)
+**Tracking**: [GitHub #291](https://github.com/Ayush-Singh986/kubernaut/issues/291)
 **Test Coverage**: ❌ Missing
 **Implementation**: None — `pkg/gateway/middleware/auth.go` does not exist
 **Tests**: None
@@ -339,7 +339,7 @@ This document provides a comprehensive list of all business requirements for the
 **Description**: Gateway must validate ServiceAccount has required RBAC permissions
 **Priority**: P0 (Critical)
 **Status**: 🔴 **NOT IMPLEMENTED — SECURITY GAP**. No SubjectAccessReview logic in the codebase. Superseded by BR-GATEWAY-183 (SubjectAccessReview Authorization), which is also pending. Gateway currently relies on Network Policies only (DD-GATEWAY-006, now considered insufficient for defense-in-depth).
-**Tracking**: [GitHub #291](https://github.com/jordigilh/kubernaut/issues/291)
+**Tracking**: [GitHub #291](https://github.com/Ayush-Singh986/kubernaut/issues/291)
 **Test Coverage**: ❌ Missing
 **Implementation**: None — `pkg/gateway/middleware/auth.go` does not exist
 **Tests**: None
@@ -424,7 +424,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-050: Network Policy Enforcement**
 **Description**: Gateway must enforce Kubernetes Network Policies for ingress/egress
 **Priority**: P1 (High)
-**Status**: ⏳ Tracked — [GitHub #285](https://github.com/jordigilh/kubernaut/issues/285)
+**Status**: ⏳ Tracked — [GitHub #285](https://github.com/Ayush-Singh986/kubernaut/issues/285)
 **Test Coverage**: ❌ Missing
 **Implementation**: Kubernetes manifests (not yet added)
 **Tests**: None
@@ -653,7 +653,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-106: Resource Limits**
 **Description**: Gateway must enforce resource limits (CPU, memory, connections)
 **Priority**: P1 (High)
-**Status**: ⏳ Tracked — [GitHub #286](https://github.com/jordigilh/kubernaut/issues/286)
+**Status**: ⏳ Tracked — [GitHub #286](https://github.com/Ayush-Singh986/kubernaut/issues/286)
 **Test Coverage**: ❌ Missing
 **Implementation**: Kubernetes manifests
 **Tests**: None
@@ -661,7 +661,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-107: Memory Management**
 **Description**: Gateway must prevent memory leaks and OOM errors
 **Priority**: P0 (Critical)
-**Status**: ⏳ Tracked — [GitHub #286](https://github.com/jordigilh/kubernaut/issues/286)
+**Status**: ⏳ Tracked — [GitHub #286](https://github.com/Ayush-Singh986/kubernaut/issues/286)
 **Test Coverage**: ❌ Missing
 **Implementation**: All code
 **Tests**: None
@@ -669,7 +669,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-108: Goroutine Management**
 **Description**: Gateway must prevent goroutine leaks
 **Priority**: P0 (Critical)
-**Status**: ⏳ Tracked — [GitHub #286](https://github.com/jordigilh/kubernaut/issues/286)
+**Status**: ⏳ Tracked — [GitHub #286](https://github.com/Ayush-Singh986/kubernaut/issues/286)
 **Test Coverage**: ❌ Missing
 **Implementation**: All code
 **Tests**: None
@@ -720,7 +720,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-115: K8s API Async Retry Queue** ⏳ DEFERRED (V1.1+)
 **Description**: Gateway must support async retry queue for K8s API errors
 **Priority**: P2 (Medium)
-**Status**: ⏳ **DEFERRED to V1.1+** — Tracked in [GitHub #287](https://github.com/jordigilh/kubernaut/issues/287). Synchronous retries (BR-GATEWAY-111 through BR-GATEWAY-114) cover V1.0 needs.
+**Status**: ⏳ **DEFERRED to V1.1+** — Tracked in [GitHub #287](https://github.com/Ayush-Singh986/kubernaut/issues/287). Synchronous retries (BR-GATEWAY-111 through BR-GATEWAY-114) cover V1.0 needs.
 **Test Coverage**: ⏳ Planned
 **Implementation**: None (planned)
 **Tests**: None (planned)
@@ -732,7 +732,7 @@ This document provides a comprehensive list of all business requirements for the
 ### **BR-GATEWAY-180: OpenTelemetry Integration** ⏳ DEFERRED (Post-V1.0)
 **Description**: Gateway must support full OpenTelemetry integration (traces, metrics, logs)
 **Priority**: P3 (Low)
-**Status**: ⏳ **DEFERRED** — Tracked in [GitHub #95](https://github.com/jordigilh/kubernaut/issues/95) ("Enhancement: Implement OpenTelemetry as a Gateway signal adapter")
+**Status**: ⏳ **DEFERRED** — Tracked in [GitHub #95](https://github.com/Ayush-Singh986/kubernaut/issues/95) ("Enhancement: Implement OpenTelemetry as a Gateway signal adapter")
 **Test Coverage**: ❌ Missing
 **Implementation**: None
 **Tests**: None
@@ -885,7 +885,7 @@ roleRef:
 **Implementation**: `pkg/gateway/adapters/prometheus_adapter.go` (`extractResourceKind`, `extractResourceName`)
 **Tests**: `test/unit/gateway/adapters/prometheus_adapter_test.go`
 **Full Specification**: [BR-GATEWAY-184](../../../../requirements/BR-GATEWAY-184-target-resource-extraction-priority.md)
-**GitHub Issue**: [#178](https://github.com/jordigilh/kubernaut/issues/178)
+**GitHub Issue**: [#178](https://github.com/Ayush-Singh986/kubernaut/issues/178)
 
 ---
 
@@ -899,7 +899,7 @@ roleRef:
 **Test Coverage**: Pending (see [TEST_PLAN_PART_A](../../tests/462/TEST_PLAN_PART_A.md))
 **Implementation**: `pkg/gateway/types/types.go` (`SignalDescription` struct), `pkg/gateway/adapters/prometheus_adapter.go`, `pkg/gateway/adapters/kubernetes_event_adapter.go`, `pkg/gateway/processing/crd_creator.go`, `api/remediation/v1alpha1/remediationrequest_types.go`
 **Design Authority**: [DD-GATEWAY-017](../../../architecture/decisions/DD-GATEWAY-017-normalized-signal-description.md) (cross-emitter analysis)
-**GitHub Issue**: [#462](https://github.com/jordigilh/kubernaut/issues/462)
+**GitHub Issue**: [#462](https://github.com/Ayush-Singh986/kubernaut/issues/462)
 **Dependencies**: #454, #455, #456, #457, #458, #459 (all v1.2 CRD refactors must merge first)
 
 **SignalDescription struct** (5 fields validated against 8 signal sources):

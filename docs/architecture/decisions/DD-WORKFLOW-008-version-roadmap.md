@@ -1,10 +1,10 @@
 # DD-WORKFLOW-008: Workflow Feature Roadmap
 
 **Date**: 2025-11-15
-**Status**: Planning (historical — see [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) note below)
+**Status**: Planning (historical — see [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) note below)
 **Related**: DD-WORKFLOW-012 (Workflow Immutability)
 
-> **PARTIAL CORRECTION (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **PARTIAL CORRECTION (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > This is a Nov-2025 forward-looking roadmap; treat version-by-version claims accordingly. The v1.0
 > baseline's "semantic search REST API (`GET /api/v1/playbooks/search`)" and pgvector architecture were
 > later built as described here, then fully retired by [DD-WORKFLOW-018](DD-WORKFLOW-018-etcd-single-source-of-truth.md)/[DD-WORKFLOW-019](DD-WORKFLOW-019-ka-owned-workflow-discovery.md)
@@ -138,7 +138,7 @@
 
 #### Strategic Evaluations Required
 
-**1. HolmesGPT Replacement Evaluation** 🔍 **REQUIRES DETAILED ANALYSIS** — ✅ **RESOLVED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**
+**1. HolmesGPT Replacement Evaluation** 🔍 **REQUIRES DETAILED ANALYSIS** — ✅ **RESOLVED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**
 > **Resolution**: This "build vs. continue with HolmesGPT" question was decided and implemented. See
 > [DD-KA-019](DD-KA-019-go-rewrite-design/DD-KA-019-go-rewrite-design.md) (approved 2026-03-04): HolmesGPT
 > was replaced with a Kubernaut-owned Go rewrite, **Kubernaut Agent (KA)**, isolating the LLM framework

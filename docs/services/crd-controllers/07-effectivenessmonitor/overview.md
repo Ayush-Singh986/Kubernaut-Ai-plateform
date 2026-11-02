@@ -2,7 +2,7 @@
 
 **Version**: v2.0
 **Last Updated**: 2026-08-02
-**Status**: ✅ Implemented (V1.0 Level 1 scope) — Corrected for [#1806](https://github.com/jordigilh/kubernaut/issues/1806)
+**Status**: ✅ Implemented (V1.0 Level 1 scope) — Corrected for [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Version | Date | Changes | Reference |
 |---------|------|---------|-----------|
-| v2.0 | 2026-08-02 | **#1806 CORRECTION**: Full rewrite. Replaced the fictional "stateless HTTP API service with selective HolmesGPT post-execution analysis" architecture with the real Kubernetes CRD controller: EM watches `EffectivenessAssessment` (EA) CRDs created by the Remediation Orchestrator, runs 4 deterministic component scorers (health, alert, metrics, hash — zero AI/LLM calls in V1.0), and emits raw per-component audit events. DataStorage — not EM — computes the final weighted score on demand. Removed all references to a "Context API Service" client (deprecated, DD-CONTEXT-006), `pkg/monitor/`, direct PostgreSQL persistence, `shouldCallAI()`, and fictional `effectiveness_ai_*`/`effectiveness_data_availability_weeks` metrics. The `POST /api/v1/postexec/analyze` endpoint does not exist anywhere in the codebase today — it is a genuinely planned V1.1 (Level 2) feature, tracked in [DD-017](../../../architecture/decisions/DD-017-effectiveness-monitor-v1.1-deferral.md). | [#1806](https://github.com/jordigilh/kubernaut/issues/1806), [ADR-EM-001](../../../architecture/decisions/ADR-EM-001-effectiveness-monitor-service-integration.md), [DD-017](../../../architecture/decisions/DD-017-effectiveness-monitor-v1.1-deferral.md) |
+| v2.0 | 2026-08-02 | **#1806 CORRECTION**: Full rewrite. Replaced the fictional "stateless HTTP API service with selective HolmesGPT post-execution analysis" architecture with the real Kubernetes CRD controller: EM watches `EffectivenessAssessment` (EA) CRDs created by the Remediation Orchestrator, runs 4 deterministic component scorers (health, alert, metrics, hash — zero AI/LLM calls in V1.0), and emits raw per-component audit events. DataStorage — not EM — computes the final weighted score on demand. Removed all references to a "Context API Service" client (deprecated, DD-CONTEXT-006), `pkg/monitor/`, direct PostgreSQL persistence, `shouldCallAI()`, and fictional `effectiveness_ai_*`/`effectiveness_data_availability_weeks` metrics. The `POST /api/v1/postexec/analyze` endpoint does not exist anywhere in the codebase today — it is a genuinely planned V1.1 (Level 2) feature, tracked in [DD-017](../../../architecture/decisions/DD-017-effectiveness-monitor-v1.1-deferral.md). | [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), [ADR-EM-001](../../../architecture/decisions/ADR-EM-001-effectiveness-monitor-service-integration.md), [DD-017](../../../architecture/decisions/DD-017-effectiveness-monitor-v1.1-deferral.md) |
 | v1.1 | 2025-10-16 | ⚠️ **STALE (superseded by v2.0)** — Described a "Self-Documenting JSON" HolmesGPT prompt format and a Week 5/Week 13+ graceful-degradation timeline. Neither exists in the current implementation. | — |
 | v1.0 | 2025-10-06 | Initial design specification (pre-implementation; described a fictional stateless HTTP architecture, never built as such) | — |
 

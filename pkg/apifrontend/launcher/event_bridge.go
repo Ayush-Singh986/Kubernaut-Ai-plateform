@@ -30,8 +30,8 @@ import (
 	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // #2110/#2111: a2a-go@v0.3.15's own internal/taskstore/store.go registers

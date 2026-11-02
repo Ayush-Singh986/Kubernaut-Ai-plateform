@@ -32,12 +32,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/sanitization"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // This additional operator policy actually rejects a restricted evidence label.

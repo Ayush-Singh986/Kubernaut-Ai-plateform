@@ -32,8 +32,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 var _ = Describe("BR-INTEGRATION-750: authwebhook DSClientAdapter inter-service TLS trust (#750)", func() {

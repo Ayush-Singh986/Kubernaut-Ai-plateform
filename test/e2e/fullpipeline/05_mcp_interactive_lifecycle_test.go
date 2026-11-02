@@ -29,12 +29,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // E2E-FP-MCP: Interactive MCP lifecycle through the full remediation pipeline.

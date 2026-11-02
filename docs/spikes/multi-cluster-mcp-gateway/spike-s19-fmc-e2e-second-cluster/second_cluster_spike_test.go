@@ -44,7 +44,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 const (

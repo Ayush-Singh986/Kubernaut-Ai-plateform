@@ -34,7 +34,7 @@ package audit
 import (
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // EventData contains the common fields for all EM audit events.

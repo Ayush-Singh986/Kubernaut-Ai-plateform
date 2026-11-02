@@ -56,7 +56,7 @@ This pattern affects **all 11+ Kubernaut services** and will impact every develo
 
 #### **For Python Services** (e.g., HolmesGPT API)
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > "HolmesGPT API" was the pre-rewrite name of what is now Kubernaut Agent (KA), rewritten to native
 > Go per issue #433 (see `docker/kubernautagent.Dockerfile`). No Python-based production service
 > remains in Kubernaut today; this pattern is retained for reference should a future Python-based
@@ -103,12 +103,12 @@ This pattern affects **all 11+ Kubernaut services** and will impact every develo
 ```bash
 # Multi-architecture build with Red Hat UBI10 (default)
 podman build --platform linux/amd64,linux/arm64 \
-  -t quay.io/jordigilh/notification:v1.0.1 \
+  -t quay.io/Ayush-Singh986/notification:v1.0.1 \
   -f docker/notification-controller.Dockerfile .
 
 # Creates manifest list with both architectures
-podman manifest push quay.io/jordigilh/notification:v1.0.1 \
-  docker://quay.io/jordigilh/notification:v1.0.1
+podman manifest push quay.io/Ayush-Singh986/notification:v1.0.1 \
+  docker://quay.io/Ayush-Singh986/notification:v1.0.1
 ```
 
 ### Red Hat UBI10 Dockerfile Pattern (Go Services)
@@ -504,11 +504,11 @@ build-image:
    ```bash
    # Build with UBI10 base
    podman build --platform linux/amd64,linux/arm64 \
-     -t quay.io/jordigilh/notification:v1.1.0-ubi10 \
+     -t quay.io/Ayush-Singh986/notification:v1.1.0-ubi10 \
      -f docker/notification-controller.Dockerfile .
 
    # Test locally
-   podman run -d --rm -p 8080:8080 quay.io/jordigilh/notification:v1.1.0-ubi10
+   podman run -d --rm -p 8080:8080 quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 
    # Deploy to dev OCP cluster
    oc apply -f deploy/notification/

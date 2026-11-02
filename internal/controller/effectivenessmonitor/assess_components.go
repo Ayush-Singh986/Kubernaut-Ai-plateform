@@ -26,13 +26,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/alert"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/hash"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/health"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
-	emtypes "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/alert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/hash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/health"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
+	emtypes "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // healthAssessResult contains both the component result and the structured TargetStatus

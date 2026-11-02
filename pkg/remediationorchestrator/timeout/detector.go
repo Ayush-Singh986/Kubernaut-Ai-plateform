@@ -21,8 +21,8 @@ package timeout
 import (
 	"time"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator"
 )
 
 // TimeoutResult contains information about a detected timeout.

@@ -5,8 +5,8 @@
 **Priority**: P1  
 **Target Version**: V1.6  
 **Status**: Implemented (scoped validation complete)  
-**Related Issue**: [kubernaut#2515](https://github.com/jordigilh/kubernaut/issues/2515)  
-**Related Operator Issue**: [kubernaut-operator#419](https://github.com/jordigilh/kubernaut-operator/issues/419)
+**Related Issue**: [kubernaut#2515](https://github.com/Ayush-Singh986/kubernaut/issues/2515)  
+**Related Operator Issue**: [kubernaut-operator#419](https://github.com/Ayush-Singh986/kubernaut-operator/issues/419)
 
 ## Business Need
 

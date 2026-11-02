@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
 )
 
 // IT-AUDIT-1985-009: cmd/apifrontend must wire an independent, always-on

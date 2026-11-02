@@ -21,11 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/fault"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/handlers"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
-	mockllmutil "github.com/jordigilh/kubernaut/test/testutil/mockllm"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/fault"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/handlers"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
+	mockllmutil "github.com/Ayush-Singh986/kubernaut/test/testutil/mockllm"
 )
 
 var _ = Describe("Testutil Mock LLM Client", func() {

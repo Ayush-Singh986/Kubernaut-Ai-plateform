@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

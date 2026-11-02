@@ -15,8 +15,8 @@
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 - [Test Case Specification Template](../TEST_CASE_SPECIFICATION_TEMPLATE.md)
-- [GitHub Issue #292](https://github.com/jordigilh/kubernaut/issues/292)
-- [GitHub Issue #299](https://github.com/jordigilh/kubernaut/issues/299)
+- [GitHub Issue #292](https://github.com/Ayush-Singh986/kubernaut/issues/292)
+- [GitHub Issue #299](https://github.com/Ayush-Singh986/kubernaut/issues/299)
 
 ---
 

@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
 )
 
 // gatherCounter returns the counter value for a metric with the given label values.

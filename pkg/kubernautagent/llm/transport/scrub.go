@@ -16,7 +16,7 @@ limitations under the License.
 
 package transport
 
-import "github.com/jordigilh/kubernaut/pkg/shared/types"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 // IsSensitiveSource returns true if the header value comes from a secret-backed
 // source (secretKeyRef or filePath). Value-sourced headers are considered

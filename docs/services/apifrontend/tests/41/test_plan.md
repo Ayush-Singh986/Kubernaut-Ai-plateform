@@ -1,7 +1,7 @@
 # Test Plan: SLO Definitions, Alerting Rules, and Histogram Bucket Alignment
 
 **Test Plan Identifier:** TP-AF-041
-**Issue:** [#41](https://github.com/jordigilh/kubernaut-apifrontend/issues/41)
+**Issue:** [#41](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/41)
 **Version:** 1.0
 **Date:** 2026-05-06
 **Status:** Historical — superseded by the operator-managed deployment model

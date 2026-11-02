@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/validity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/validity"
 )
 
 var _ = Describe("Validity Window (BR-EM-006, BR-EM-007)", func() {

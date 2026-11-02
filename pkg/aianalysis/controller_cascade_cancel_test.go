@@ -34,17 +34,17 @@ import (
 
 	"github.com/go-logr/logr"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/controller/aianalysis"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/creator"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
-	aistatus "github.com/jordigilh/kubernaut/pkg/aianalysis/status"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/controller/aianalysis"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
+	aistatus "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/status"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 // ============================================================================

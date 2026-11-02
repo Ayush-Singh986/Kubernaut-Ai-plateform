@@ -24,7 +24,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // Compile-time interface compliance.

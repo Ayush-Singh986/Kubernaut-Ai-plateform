@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	sharedauth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	sharedauth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 	"golang.org/x/time/rate"
 )
 

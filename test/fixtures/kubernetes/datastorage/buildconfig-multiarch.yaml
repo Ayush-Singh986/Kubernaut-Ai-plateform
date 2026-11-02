@@ -36,7 +36,7 @@ spec:
   source:
     type: Git
     git:
-      uri: https://github.com/jordigilh/kubernaut.git
+      uri: https://github.com/Ayush-Singh986/kubernaut.git
       ref: feature/phase2_services
     contextDir: .
   strategy:
@@ -74,7 +74,7 @@ spec:
   source:
     type: Git
     git:
-      uri: https://github.com/jordigilh/kubernaut.git
+      uri: https://github.com/Ayush-Singh986/kubernaut.git
       ref: feature/phase2_services
     contextDir: .
   strategy:

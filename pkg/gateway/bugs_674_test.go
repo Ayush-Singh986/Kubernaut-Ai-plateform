@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwconfig "github.com/jordigilh/kubernaut/pkg/gateway/config"
+	gwconfig "github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
 )
 
 // Issue #674 Bug 4: Gateway LoadFromFile swallows all errors silently.

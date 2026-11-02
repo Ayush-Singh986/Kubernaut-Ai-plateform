@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/alertmanager"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/alertmanager"
 )
 
 var _ = Describe("Alertmanager Client Unit — #1507", func() {

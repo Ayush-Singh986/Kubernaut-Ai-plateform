@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/itchyny/gojq"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 var (

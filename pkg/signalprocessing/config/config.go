@@ -32,9 +32,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 // DefaultConfigPath is the standard Kubernetes ConfigMap mount path for this service.

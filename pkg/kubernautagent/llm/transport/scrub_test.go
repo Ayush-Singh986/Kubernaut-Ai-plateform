@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/transport"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 var _ = Describe("Credential Scrubbing — #417", func() {

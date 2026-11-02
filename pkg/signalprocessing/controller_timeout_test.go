@@ -38,12 +38,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/signalprocessing"
-	spconditions "github.com/jordigilh/kubernaut/pkg/signalprocessing"
-	spaudit "github.com/jordigilh/kubernaut/pkg/signalprocessing/audit"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
-	spstatus "github.com/jordigilh/kubernaut/pkg/signalprocessing/status"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/signalprocessing"
+	spconditions "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing"
+	spaudit "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/audit"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
+	spstatus "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/status"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

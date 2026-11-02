@@ -30,11 +30,11 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	gateway "github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	gateway "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // =============================================================================

@@ -52,13 +52,13 @@ import (
 	"go.opentelemetry.io/otel"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	dsconfig "github.com/jordigilh/kubernaut/pkg/datastorage/config"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	sharedtelemetry "github.com/jordigilh/kubernaut/pkg/shared/telemetry"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	dsconfig "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	sharedtelemetry "github.com/Ayush-Singh986/kubernaut/pkg/shared/telemetry"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 var _ = Describe("Data Storage production wiring: OTel export over TLS (GAP-14 / Issue #1519)", func() {

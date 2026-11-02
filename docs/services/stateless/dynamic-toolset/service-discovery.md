@@ -388,7 +388,7 @@ import (
     "sync"
     "time"
     
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 type ServiceCache struct {
@@ -412,7 +412,7 @@ import (
     "context"
     "sync"
     
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 var wg sync.WaitGroup

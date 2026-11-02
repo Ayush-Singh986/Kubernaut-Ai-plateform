@@ -30,7 +30,7 @@
 ### **Step 1: Backup Current RBAC** (2 min)
 
 ```bash
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut
 
 mkdir -p backup
 

@@ -35,12 +35,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	"github.com/jordigilh/kubernaut/test/shared/integration"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/integration"
 )
 
 // seedNamespace is the namespace RemediationWorkflow CRDs are seeded into

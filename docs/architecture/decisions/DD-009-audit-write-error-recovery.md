@@ -193,8 +193,8 @@ import (
     "time"
 
     "github.com/go-logr/logr"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // DLQRetryWorker processes DLQ messages and retries writes to PostgreSQL
@@ -415,8 +415,8 @@ import (
     "time"
 
     "github.com/redis/go-redis/v9"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/client"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
 )
 
 type RetryWorker struct {
@@ -858,8 +858,8 @@ spec:
 package controller
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
 )
 
 type AIAnalysisReconciler struct {

@@ -26,7 +26,7 @@ import (
 
 	"github.com/go-logr/logr"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

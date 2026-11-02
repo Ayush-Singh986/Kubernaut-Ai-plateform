@@ -25,9 +25,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 type mockAuditQuerier struct {

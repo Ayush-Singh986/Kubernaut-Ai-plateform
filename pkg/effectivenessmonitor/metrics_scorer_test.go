@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 var _ = Describe("Metric Comparison Scorer (BR-EM-003)", func() {

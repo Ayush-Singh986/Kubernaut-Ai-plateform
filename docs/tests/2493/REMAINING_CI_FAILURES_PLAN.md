@@ -15,9 +15,9 @@ the verified source/fixture/wrapper changes in focused commits and one normal
 push; use the exact new-SHA CI cycle to assess the outstanding image/journey
 gates. Stop only the owned verification runner and restore the temporary quota
 before publication. Unfinished image checks are not claimed GREEN.
-**PR:** [#2493](https://github.com/jordigilh/kubernaut/pull/2493)
+**PR:** [#2493](https://github.com/Ayush-Singh986/kubernaut/pull/2493)
 **Baseline:** `c659819f3f3d402c560583bf2779b678292c3060`
-**Failed run:** [38134600484](https://github.com/jordigilh/kubernaut/actions/runs/38134600484)
+**Failed run:** [38134600484](https://github.com/Ayush-Singh986/kubernaut/actions/runs/38134600484)
 **Format:** IEEE 829 hybrid; AGENTS.md is authoritative
 **Parent plan:** [TP-2493-SEC-v1.1](SECURITY_REMEDIATION_PLAN.md)
 

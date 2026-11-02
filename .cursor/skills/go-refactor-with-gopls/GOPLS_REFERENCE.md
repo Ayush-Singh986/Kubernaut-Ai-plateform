@@ -515,7 +515,7 @@ gopls settings can be configured in `gopls.yaml` or editor settings:
 gofumpt: true
 
 # Local import prefixes
-local: "github.com/jordigilh/kubernaut"
+local: "github.com/Ayush-Singh986/kubernaut"
 
 # Allow package moves to include subpackages
 renameMovesSubpackages: false

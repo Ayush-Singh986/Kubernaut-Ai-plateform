@@ -208,7 +208,7 @@ WaitForHTTPHealth(...)  // BLOCK until ready
 Reuse functions from `test/infrastructure/shared_integration_utils.go`:
 
 ```go
-import shared "github.com/jordigilh/kubernaut/test/infrastructure"
+import shared "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 // Available shared utilities:
 // - StartPostgreSQL(cfg, writer)
@@ -239,7 +239,7 @@ import (
     "path/filepath"
     "time"
 
-    shared "github.com/jordigilh/kubernaut/test/infrastructure"
+    shared "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // Port allocation per DD-TEST-001
@@ -389,7 +389,7 @@ func Stop{Service}IntegrationInfrastructure(writer io.Writer) error {
 
 ## 🐍 **Python Services (pytest Fixtures Pattern)**
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This section documents a pytest-fixtures pattern for the Kubernaut Agent (KA) from when it was implemented as a Python service; KA has since been rewritten as a native Go service and no longer uses this pattern.
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This section documents a pytest-fixtures pattern for the Kubernaut Agent (KA) from when it was implemented as a Python service; KA has since been rewritten as a native Go service and no longer uses this pattern.
 
 ### **Kubernaut Agent (KA) Integration Tests**
 

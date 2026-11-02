@@ -95,7 +95,7 @@ expected_actions: [drain_node, cordon_node, migrate_workload]
 ### **3. Kubernaut Agent (KA) Investigation Pipeline Under Load**
 **Priority**: 🔴 Critical | **Business Requirements**: BR-AI-011, BR-AI-012, BR-AI-013
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This use case's integration chain includes "Context API" as a live component, but Context API has since been deprecated (DD-CONTEXT-006).
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This use case's integration chain includes "Context API" as a live component, but Context API has since been deprecated (DD-CONTEXT-006).
 
 #### **Scenario Description**
 Complex alert storm overwhelms monitoring → KA conducts deep investigation → Context API enriches analysis → AI correlates evidence and provides root cause

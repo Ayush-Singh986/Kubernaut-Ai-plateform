@@ -1,7 +1,7 @@
 # BR-AF-STREAM-001: Priority Event Delivery — Alert Tool Output Sizing
 
 **Status**: Approved
-**Issue**: [#1434](https://github.com/jordigilh/kubernaut/issues/1434)
+**Issue**: [#1434](https://github.com/Ayush-Singh986/kubernaut/issues/1434)
 **Date**: 2026-06-15
 
 ## Business Need

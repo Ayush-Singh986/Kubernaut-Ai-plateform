@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
 )
 
 var _ = Describe("RenderWorkflowSelection confidence bands — BR-KA-213 / Issue #1826", func() {

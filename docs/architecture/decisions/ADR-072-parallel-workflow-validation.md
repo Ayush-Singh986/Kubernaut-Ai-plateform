@@ -5,7 +5,7 @@
 **Version**: 1.0
 **Authority**: AUTHORITATIVE for workflow registration validation concurrency patterns (historical — Pattern 2 remains active for `ValidateDependencies` callers outside registration)
 **Related**: DD-WE-006 (Schema-Declared Dependencies), DD-WORKFLOW-016 (Action Type Taxonomy), ADR-058 (Webhook-Driven Registration), BR-STORAGE-014 (Workflow Catalog Management)
-**GitHub Issue**: [#1070](https://github.com/jordigilh/kubernaut/issues/1070)
+**GitHub Issue**: [#1070](https://github.com/Ayush-Singh986/kubernaut/issues/1070)
 
 ---
 

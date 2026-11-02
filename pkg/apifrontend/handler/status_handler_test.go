@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
 )
 
 var _ = Describe("StatusHandler JSON-RPC parsing", func() {

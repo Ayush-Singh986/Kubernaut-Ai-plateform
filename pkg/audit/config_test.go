@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	audit "github.com/jordigilh/kubernaut/pkg/audit"
+	audit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 
 var _ = Describe("audit.Config", func() {

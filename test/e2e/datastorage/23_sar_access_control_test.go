@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

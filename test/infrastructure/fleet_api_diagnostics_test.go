@@ -16,7 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 var _ = Describe("BR-FLEET-054 / BR-INTEGRATION-065: Service VIP remains the readiness gate", func() {

@@ -31,9 +31,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/sizeutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sizeutil"
 )
 
 // AlertContext contains the information needed to check alert resolution.

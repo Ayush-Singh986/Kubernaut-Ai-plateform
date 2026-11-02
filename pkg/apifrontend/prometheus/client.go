@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
 )
 
 func redactErr(origErr error) error {

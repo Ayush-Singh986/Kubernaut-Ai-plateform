@@ -14,7 +14,7 @@
 
 **APPROVED**: Kubernaut uses **two Quay.io organizations** with distinct purposes:
 
-1. **`quay.io/jordigilh/`** - Development and testing
+1. **`quay.io/Ayush-Singh986/`** - Development and testing
 2. **`quay.io/kubernaut/`** - Staging and production
 
 ---
@@ -31,7 +31,7 @@
 
 **Current State**:
 - ADR-028 defines approved registries but doesn't specify development vs production strategy
-- Multiple documents reference `quay.io/jordigilh/` for images
+- Multiple documents reference `quay.io/Ayush-Singh986/` for images
 - No clear guidance on when to use which registry
 
 ---
@@ -42,14 +42,14 @@
 
 | Registry | Purpose | Image Lifecycle | Ownership | Immutability |
 |---|---|---|---|---|
-| **`quay.io/jordigilh/`** | **Development & Testing** | Ephemeral, frequent updates | Individual developer | ⚠️ Mutable (tags can be overwritten) |
+| **`quay.io/Ayush-Singh986/`** | **Development & Testing** | Ephemeral, frequent updates | Individual developer | ⚠️ Mutable (tags can be overwritten) |
 | **`quay.io/kubernaut/`** | **Staging & Production** | Stable, versioned releases | Kubernaut organization | ✅ Immutable (tags cannot be overwritten) |
 
 ---
 
 ## 📊 **Detailed Registry Specifications**
 
-### **Development Registry: `quay.io/jordigilh/`**
+### **Development Registry: `quay.io/Ayush-Singh986/`**
 
 **Purpose**: Development, testing, and CI/CD pipelines
 
@@ -70,10 +70,10 @@
 
 **Example Images**:
 ```
-quay.io/jordigilh/gateway:dev
-quay.io/jordigilh/datastorage:feature-audit-v2
-quay.io/jordigilh/kubernaut-agent:test-20251217
-quay.io/jordigilh/must-gather:latest
+quay.io/Ayush-Singh986/gateway:dev
+quay.io/Ayush-Singh986/datastorage:feature-audit-v2
+quay.io/Ayush-Singh986/kubernaut-agent:test-20251217
+quay.io/Ayush-Singh986/must-gather:latest
 ```
 
 ---
@@ -115,7 +115,7 @@ quay.io/kubernaut/must-gather:v1.0.0
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Development Build                                         │
 │    - Developer builds image locally or via CI/CD             │
-│    - Push to: quay.io/jordigilh/<service>:dev               │
+│    - Push to: quay.io/Ayush-Singh986/<service>:dev               │
 │    - Testing: Unit tests, integration tests                  │
 └───────────────────────┬─────────────────────────────────────┘
                         │
@@ -150,16 +150,16 @@ quay.io/kubernaut/must-gather:v1.0.0
 **Development Builds**:
 ```bash
 # Build image
-podman build -t quay.io/jordigilh/gateway:dev .
+podman build -t quay.io/Ayush-Singh986/gateway:dev .
 
 # Push to development registry
-podman push quay.io/jordigilh/gateway:dev
+podman push quay.io/Ayush-Singh986/gateway:dev
 ```
 
 **Staging Promotion** (requires team approval):
 ```bash
 # Tag for staging
-podman tag quay.io/jordigilh/gateway:dev quay.io/kubernaut/gateway:v1.0.0-rc1
+podman tag quay.io/Ayush-Singh986/gateway:dev quay.io/kubernaut/gateway:v1.0.0-rc1
 
 # Security scan (MANDATORY)
 podman scan quay.io/kubernaut/gateway:v1.0.0-rc1
@@ -189,8 +189,8 @@ podman push quay.io/kubernaut/gateway:v1.0.0
 # .github/workflows/dev-build.yaml
 - name: Build and push development image
   run: |
-    podman build -t quay.io/jordigilh/${{ matrix.service }}:dev .
-    podman push quay.io/jordigilh/${{ matrix.service }}:dev
+    podman build -t quay.io/Ayush-Singh986/${{ matrix.service }}:dev .
+    podman push quay.io/Ayush-Singh986/${{ matrix.service }}:dev
 ```
 
 **Staging Pipeline** (manual approval required):
@@ -198,7 +198,7 @@ podman push quay.io/kubernaut/gateway:v1.0.0
 # .github/workflows/staging-promote.yaml
 - name: Promote to staging
   run: |
-    podman tag quay.io/jordigilh/${{ matrix.service }}:dev \
+    podman tag quay.io/Ayush-Singh986/${{ matrix.service }}:dev \
                 quay.io/kubernaut/${{ matrix.service }}:${{ github.ref_name }}
     podman scan quay.io/kubernaut/${{ matrix.service }}:${{ github.ref_name }}
     podman push quay.io/kubernaut/${{ matrix.service }}:${{ github.ref_name }}
@@ -219,7 +219,7 @@ podman push quay.io/kubernaut/gateway:v1.0.0
 
 ## 🔒 **Security Requirements**
 
-### **Development Registry (`quay.io/jordigilh/`)**
+### **Development Registry (`quay.io/Ayush-Singh986/`)**
 
 - ⚠️ Security scanning: **Optional** (recommended but not enforced)
 - ⚠️ Image signing: **Not required**
@@ -240,11 +240,11 @@ podman push quay.io/kubernaut/gateway:v1.0.0
 
 | Tag Pattern | Purpose | Example |
 |---|---|---|
-| `latest` | Latest development build | `quay.io/jordigilh/gateway:latest` |
-| `dev` | Current development branch | `quay.io/jordigilh/gateway:dev` |
-| `feature-<name>` | Feature branch builds | `quay.io/jordigilh/gateway:feature-audit-v2` |
-| `test-<date>` | Test builds | `quay.io/jordigilh/gateway:test-20251217` |
-| `<commit-sha>` | Commit-specific builds | `quay.io/jordigilh/gateway:abc123` |
+| `latest` | Latest development build | `quay.io/Ayush-Singh986/gateway:latest` |
+| `dev` | Current development branch | `quay.io/Ayush-Singh986/gateway:dev` |
+| `feature-<name>` | Feature branch builds | `quay.io/Ayush-Singh986/gateway:feature-audit-v2` |
+| `test-<date>` | Test builds | `quay.io/Ayush-Singh986/gateway:test-20251217` |
+| `<commit-sha>` | Commit-specific builds | `quay.io/Ayush-Singh986/gateway:abc123` |
 
 ### **Production Registry**
 

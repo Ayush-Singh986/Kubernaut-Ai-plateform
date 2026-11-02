@@ -6,7 +6,7 @@
 **Category**: Fleet Management / Workflow Execution Routing
 **Priority**: P2 (Medium)
 **Service**: KubernautAgent, AIAnalysis, RemediationOrchestrator, AuthWebhook
-**GitHub Issue**: [#2326](https://github.com/jordigilh/kubernaut/issues/2326)
+**GitHub Issue**: [#2326](https://github.com/Ayush-Singh986/kubernaut/issues/2326)
 **Related**: DD-FLEET-008, DD-FLEET-002, DD-FLEET-007, DD-WORKFLOW-018, DD-WORKFLOW-019, ADR-068
 
 ---
@@ -174,4 +174,4 @@ for the full FedRAMP AC-4/AC-6 and OWASP ASVS V4.1.1/V4.1.3 control mapping.
 - [DD-FLEET-002: Cluster-Scoped Workflow Targeting](../architecture/decisions/DD-FLEET-002-cluster-scoped-workflow-targeting.md) / BR-FLEET-003
 - [DD-FLEET-007: Ansible Engine Not Supported for Remote Execution](../architecture/decisions/DD-FLEET-007-ansible-engine-not-supported-for-remote-execution.md)
 - [DD-WORKFLOW-019: KA-Owned Workflow Discovery](../architecture/decisions/DD-WORKFLOW-019-ka-owned-workflow-discovery.md)
-- [Issue #2326](https://github.com/jordigilh/kubernaut/issues/2326)
+- [Issue #2326](https://github.com/Ayush-Singh986/kubernaut/issues/2326)

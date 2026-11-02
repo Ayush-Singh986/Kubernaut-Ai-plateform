@@ -1,6 +1,6 @@
 # Test Plan: Message-Staleness Fix — Combined `main` Port (RCA + Workflow-Discovery + Alignment Rendering)
 
-**Issue**: [#1936](https://github.com/jordigilh/kubernaut/issues/1936) (`main`) — combined port of [#1935](https://github.com/jordigilh/kubernaut/issues/1935)/[#1939](https://github.com/jordigilh/kubernaut/pull/1939) (RCA phase, `release/v1.5`) and [#1945](https://github.com/jordigilh/kubernaut/issues/1945)/[#1947](https://github.com/jordigilh/kubernaut/pull/1947) (Workflow-Discovery phase, `release/v1.5`)
+**Issue**: [#1936](https://github.com/Ayush-Singh986/kubernaut/issues/1936) (`main`) — combined port of [#1935](https://github.com/Ayush-Singh986/kubernaut/issues/1935)/[#1939](https://github.com/Ayush-Singh986/kubernaut/pull/1939) (RCA phase, `release/v1.5`) and [#1945](https://github.com/Ayush-Singh986/kubernaut/issues/1945)/[#1947](https://github.com/Ayush-Singh986/kubernaut/pull/1947) (Workflow-Discovery phase, `release/v1.5`)
 **Authority**: BR-AUDIT-005 v2.0 (`docs/requirements/11_SECURITY_ACCESS_CONTROL.md`)
 **Branch**: `fix/1936-message-propagation-main-port` (off `main`)
 **Created**: 2026-08-05

@@ -397,7 +397,7 @@ package delivery
 import (
 	"context"
 	"github.com/go-logr/logr"
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // NewChannelService implements DeliveryService for NewChannel delivery.

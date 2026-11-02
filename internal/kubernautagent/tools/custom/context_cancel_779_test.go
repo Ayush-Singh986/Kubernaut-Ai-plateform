@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // BR-WORKFLOW-016 / #779: Tool Execute methods must not panic when the

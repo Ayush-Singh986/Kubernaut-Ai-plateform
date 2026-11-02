@@ -426,7 +426,7 @@ go test ./test/unit/kubernautagent/server/... -ginkgo.v
 
 # Coverage (handler.go)
 go test ./test/unit/kubernautagent/server/... -coverprofile=coverage.out \
-  -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/server
+  -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server
 go tool cover -func=coverage.out
 
 # Full regression

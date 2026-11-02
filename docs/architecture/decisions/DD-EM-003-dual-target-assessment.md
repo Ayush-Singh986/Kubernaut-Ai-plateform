@@ -201,9 +201,9 @@ No backward compatibility is needed. This is pre-release v1.0 with no production
 
 - [DD-EM-002: Canonical Spec Hash](./DD-EM-002-canonical-spec-hash.md) -- Spec hash algorithm, extended here with dual-target routing
 - [DD-WE-005: Workflow-Scoped RBAC](./DD-WE-005-workflow-scoped-rbac.md) -- RBAC rules also identify the modified resource
-- [Issue #183: EM spec hash empty for HPA](https://github.com/jordigilh/kubernaut/issues/183) -- Fixed empty hash, revealed dual-target gap
-- [Issue #184: Propagate full GVK through pipeline](https://github.com/jordigilh/kubernaut/issues/184) -- GVK propagation complements dual-target
-- [Issue #192: EA creation fails with 'Required value' for empty namespace](https://github.com/jordigilh/kubernaut/issues/192) -- TargetResource.Namespace changed to optional for cluster-scoped resources
+- [Issue #183: EM spec hash empty for HPA](https://github.com/Ayush-Singh986/kubernaut/issues/183) -- Fixed empty hash, revealed dual-target gap
+- [Issue #184: Propagate full GVK through pipeline](https://github.com/Ayush-Singh986/kubernaut/issues/184) -- GVK propagation complements dual-target
+- [Issue #192: EA creation fails with 'Required value' for empty namespace](https://github.com/Ayush-Singh986/kubernaut/issues/192) -- TargetResource.Namespace changed to optional for cluster-scoped resources
 
 ---
 

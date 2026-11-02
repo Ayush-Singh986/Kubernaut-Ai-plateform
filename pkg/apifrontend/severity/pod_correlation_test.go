@@ -16,8 +16,8 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clienttesting "k8s.io/client-go/testing"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
 )
 
 func newPodResolver(client *dynamicfake.FakeDynamicClient) *severity.K8sPodResolver {

@@ -793,8 +793,8 @@ package gateway
 import (
     "context"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
 )
 
 type Gateway struct {
@@ -891,8 +891,8 @@ import (
     "context"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
 )
 
 type Server struct {
@@ -1003,7 +1003,7 @@ import (
     "testing"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 )
@@ -1172,8 +1172,8 @@ import (
     "context"
     "testing"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 )
@@ -1234,7 +1234,7 @@ import (
     "testing"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 )
@@ -1290,7 +1290,7 @@ type Gateway struct {
 }
 
 // After (shared library)
-import "github.com/jordigilh/kubernaut/pkg/audit"
+import "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 
 type Gateway struct {
     auditStore audit.AuditStore
@@ -1468,7 +1468,7 @@ import (
     "context"
     "database/sql"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 
 // InternalAuditClient writes audit events directly to PostgreSQL

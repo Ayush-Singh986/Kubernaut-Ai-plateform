@@ -425,7 +425,7 @@ All tests implemented in a single pass. No inter-test dependencies.
 make test-unit-shared-packages
 
 # Integration tests (shared TLS)
-go test ./test/integration/shared/... -ginkgo.v -timeout=120s --coverpkg=github.com/jordigilh/kubernaut/pkg/shared/...
+go test ./test/integration/shared/... -ginkgo.v -timeout=120s --coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/shared/...
 
 # Focused run by test ID
 go test ./test/unit/shared/tls/... -ginkgo.focus="493"

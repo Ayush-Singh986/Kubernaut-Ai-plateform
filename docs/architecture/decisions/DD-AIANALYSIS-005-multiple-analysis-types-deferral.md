@@ -104,7 +104,7 @@ AnalysisTypes: []string{"investigation"},  // ✅ Single type
 Expect(eventTypeCounts[aiaudit.EventTypeAIAgentCall]).To(Equal(1))  // ✅ Passes
 ```
 
-> **✅ CORRECTED** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): the constant referenced
+> **✅ CORRECTED** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): the constant referenced
 > above is `aiaudit.EventTypeAIAgentCall` (value `"aianalysis.aiagent.call"`), not
 > `EventTypeHolmesGPTCall` — verified against `pkg/aianalysis/audit/audit.go`; `EventTypeHolmesGPTCall` does
 > not exist anywhere in the current codebase (repo-wide search).

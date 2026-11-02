@@ -127,9 +127,9 @@ cp test/e2e/gateway/10_crd_creation_lifecycle_test.go \
 
 **ADD**:
 ```go
-"github.com/jordigilh/kubernaut/pkg/gateway"
-"github.com/jordigilh/kubernaut/pkg/gateway/config"
-"github.com/jordigilh/kubernaut/pkg/gateway/types"
+"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 ```
 
 ### **Step 3: Update Test Variables**

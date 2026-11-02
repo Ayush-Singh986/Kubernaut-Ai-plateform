@@ -22,7 +22,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // AuthHeadersTransport implements http.RoundTripper to inject custom

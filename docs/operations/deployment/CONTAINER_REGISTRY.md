@@ -3,13 +3,13 @@
 ## 📦 **Registry Configuration**
 
 ### Base Registry
-**Primary Registry**: `quay.io/jordigilh/`
+**Primary Registry**: `quay.io/Ayush-Singh986/`
 
-All Kubernaut container images are hosted on Quay.io under the `jordigilh` organization.
+All Kubernaut container images are hosted on Quay.io under the `Ayush-Singh986` organization.
 
 ### Image Naming Convention
 ```
-quay.io/jordigilh/{service-name}:{version}
+quay.io/Ayush-Singh986/{service-name}:{version}
 ```
 
 ## 🏗️ **Base Images Strategy**
@@ -27,29 +27,29 @@ All services use official upstream base images for building:
 ### Service Images - Approved Microservices Architecture
 | Service | Image | Latest Version | Single Responsibility |
 |---------|-------|----------------|----------------------|
-| **Gateway Service** | `quay.io/jordigilh/gateway-service` | `v1.0.0` | HTTP Gateway & Security Only |
-| **Alert Processor Service** | `quay.io/jordigilh/alert-service` | `v1.0.0` | Alert Processing Only |
-| **AI Analysis Service** | `quay.io/jordigilh/ai-service` | `v1.0.0` | AI Analysis & Decision Making Only |
-| **Workflow Orchestrator Service** | `quay.io/jordigilh/workflow-service` | `v1.0.0` | Workflow Execution Only |
-| **Kubernetes Executor Service** | `quay.io/jordigilh/executor-service` | `v1.0.0` | K8s Operations Only |
-| **Data Storage Service** | `quay.io/jordigilh/storage-service` | `v1.0.0` | Data Persistence Only |
-| **Intelligence Service** | `quay.io/jordigilh/intelligence-service` | `v1.0.0` | Pattern Discovery Only |
-| **Effectiveness Monitor Service** | `quay.io/jordigilh/monitor-service` | `v1.0.0` | Effectiveness Assessment Only |
-| **Context API Service** | `quay.io/jordigilh/context-service` | `v1.0.0` | Context Orchestration Only |
-| **Notification Service** | `quay.io/jordigilh/notification-service` | `v1.0.0` | Notifications Only |
+| **Gateway Service** | `quay.io/Ayush-Singh986/gateway-service` | `v1.0.0` | HTTP Gateway & Security Only |
+| **Alert Processor Service** | `quay.io/Ayush-Singh986/alert-service` | `v1.0.0` | Alert Processing Only |
+| **AI Analysis Service** | `quay.io/Ayush-Singh986/ai-service` | `v1.0.0` | AI Analysis & Decision Making Only |
+| **Workflow Orchestrator Service** | `quay.io/Ayush-Singh986/workflow-service` | `v1.0.0` | Workflow Execution Only |
+| **Kubernetes Executor Service** | `quay.io/Ayush-Singh986/executor-service` | `v1.0.0` | K8s Operations Only |
+| **Data Storage Service** | `quay.io/Ayush-Singh986/storage-service` | `v1.0.0` | Data Persistence Only |
+| **Intelligence Service** | `quay.io/Ayush-Singh986/intelligence-service` | `v1.0.0` | Pattern Discovery Only |
+| **Effectiveness Monitor Service** | `quay.io/Ayush-Singh986/monitor-service` | `v1.0.0` | Effectiveness Assessment Only |
+| **Context API Service** | `quay.io/Ayush-Singh986/context-service` | `v1.0.0` | Context Orchestration Only |
+| **Notification Service** | `quay.io/Ayush-Singh986/notification-service` | `v1.0.0` | Notifications Only |
 
 ## 🚀 **Build and Deployment**
 
 ### Building Images
 ```bash
 # Build service image
-podman build -t quay.io/jordigilh/{service-name}:v1.0.0 .
+podman build -t quay.io/Ayush-Singh986/{service-name}:v1.0.0 .
 
 # Build with specific Dockerfile
-podman build -t quay.io/jordigilh/webhook-service:v1.0.0 -f podman/webhook-service.Dockerfile .
+podman build -t quay.io/Ayush-Singh986/webhook-service:v1.0.0 -f podman/webhook-service.Dockerfile .
 
 # Development build
-podman build -t quay.io/jordigilh/{service-name}:dev .
+podman build -t quay.io/Ayush-Singh986/{service-name}:dev .
 ```
 
 ### Pushing Images
@@ -58,19 +58,19 @@ podman build -t quay.io/jordigilh/{service-name}:dev .
 podman login quay.io
 
 # Push versioned image
-podman push quay.io/jordigilh/{service-name}:v1.0.0
+podman push quay.io/Ayush-Singh986/{service-name}:v1.0.0
 
 # Push development image
-podman push quay.io/jordigilh/{service-name}:dev
+podman push quay.io/Ayush-Singh986/{service-name}:dev
 ```
 
 ### Pulling Images
 ```bash
 # Pull specific version
-podman pull quay.io/jordigilh/{service-name}:v1.0.0
+podman pull quay.io/Ayush-Singh986/{service-name}:v1.0.0
 
 # Pull latest
-podman pull quay.io/jordigilh/{service-name}:latest
+podman pull quay.io/Ayush-Singh986/{service-name}:latest
 ```
 
 ## 📋 **Version Management**
@@ -83,19 +83,19 @@ podman pull quay.io/jordigilh/{service-name}:latest
 ### Tag Examples
 ```bash
 # Production releases
-quay.io/jordigilh/webhook-service:v1.2.3
-quay.io/jordigilh/webhook-service:v1.2
-quay.io/jordigilh/webhook-service:v1
-quay.io/jordigilh/webhook-service:latest
+quay.io/Ayush-Singh986/webhook-service:v1.2.3
+quay.io/Ayush-Singh986/webhook-service:v1.2
+quay.io/Ayush-Singh986/webhook-service:v1
+quay.io/Ayush-Singh986/webhook-service:latest
 
 # Development builds
-quay.io/jordigilh/webhook-service:dev
-quay.io/jordigilh/webhook-service:main-abc123f
-quay.io/jordigilh/webhook-service:pr-456
+quay.io/Ayush-Singh986/webhook-service:dev
+quay.io/Ayush-Singh986/webhook-service:main-abc123f
+quay.io/Ayush-Singh986/webhook-service:pr-456
 
 # Environment-specific
-quay.io/jordigilh/webhook-service:staging-v1.2.3
-quay.io/jordigilh/webhook-service:prod-v1.2.3
+quay.io/Ayush-Singh986/webhook-service:staging-v1.2.3
+quay.io/Ayush-Singh986/webhook-service:prod-v1.2.3
 ```
 
 ## 🔒 **Security and Access**
@@ -104,10 +104,10 @@ quay.io/jordigilh/webhook-service:prod-v1.2.3
 All images are automatically scanned for vulnerabilities:
 ```bash
 # Manual security scan
-podman scan quay.io/jordigilh/{service-name}:v1.0.0
+podman scan quay.io/Ayush-Singh986/{service-name}:v1.0.0
 
 # Trivy scan
-trivy image quay.io/jordigilh/{service-name}:v1.0.0
+trivy image quay.io/Ayush-Singh986/{service-name}:v1.0.0
 ```
 
 ### Access Control
@@ -126,10 +126,10 @@ trivy image quay.io/jordigilh/{service-name}:v1.0.0
 ### Local Development
 ```bash
 # Build local image
-podman build -t quay.io/jordigilh/{service-name}:dev .
+podman build -t quay.io/Ayush-Singh986/{service-name}:dev .
 
 # Run locally
-podman run -p 8080:8080 quay.io/jordigilh/{service-name}:dev
+podman run -p 8080:8080 quay.io/Ayush-Singh986/{service-name}:dev
 
 # Test with podman-compose
 podman-compose up --build
@@ -140,7 +140,7 @@ podman-compose up --build
 # GitHub Actions example
 - name: Build and push image
   run: |
-    IMAGE_TAG="quay.io/jordigilh/${SERVICE_NAME}:${VERSION}"
+    IMAGE_TAG="quay.io/Ayush-Singh986/${SERVICE_NAME}:${VERSION}"
     podman build -t ${IMAGE_TAG} .
     podman push ${IMAGE_TAG}
 ```
@@ -168,7 +168,7 @@ Track the following metrics for all images:
 **Image Pull Errors**
 ```bash
 # Check image exists
-podman manifest inspect quay.io/jordigilh/{service-name}:v1.0.0
+podman manifest inspect quay.io/Ayush-Singh986/{service-name}:v1.0.0
 
 # Verify authentication
 podman login quay.io
@@ -177,7 +177,7 @@ podman login quay.io
 **Build Failures**
 ```bash
 # Check base image availability
-podman pull quay.io/jordigilh/kubernaut-go-builder:1.24
+podman pull quay.io/Ayush-Singh986/kubernaut-go-builder:1.24
 
 # Verify Dockerfile syntax
 podman build --no-cache -t test .
@@ -186,10 +186,10 @@ podman build --no-cache -t test .
 **Size Optimization**
 ```bash
 # Analyze image layers
-podman history quay.io/jordigilh/{service-name}:v1.0.0
+podman history quay.io/Ayush-Singh986/{service-name}:v1.0.0
 
 # Use dive for detailed analysis
-dive quay.io/jordigilh/{service-name}:v1.0.0
+dive quay.io/Ayush-Singh986/{service-name}:v1.0.0
 ```
 
 ## 📚 **References**
@@ -204,7 +204,7 @@ dive quay.io/jordigilh/{service-name}:v1.0.0
 ### Migrating from Other Registries
 If migrating from other registries (podman.io, gcr.io, etc.):
 
-1. **Update Dockerfiles**: Change FROM statements to use `quay.io/jordigilh/` base images
+1. **Update Dockerfiles**: Change FROM statements to use `quay.io/Ayush-Singh986/` base images
 2. **Update Deployments**: Change image references in Kubernetes manifests
 3. **Update CI/CD**: Update build and push commands to use new registry
 4. **Test Thoroughly**: Verify all services work with new images
@@ -221,4 +221,4 @@ In case of issues with new images:
 
 **Last Updated**: September 27, 2025
 **Maintained By**: Kubernaut Team
-**Registry**: quay.io/jordigilh/
+**Registry**: quay.io/Ayush-Singh986/

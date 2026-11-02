@@ -16,7 +16,7 @@
 ### 1.1 Purpose
 
 This is the `main`/v1.6 port of the fix originally designed, TDD'd, and CI-validated on
-`release/v1.5` in [PR #1895](https://github.com/jordigilh/kubernaut/pull/1895) (branch
+`release/v1.5` in [PR #1895](https://github.com/Ayush-Singh986/kubernaut/pull/1895) (branch
 `fix/1889-1892-tool-budget-isolation`). Per project policy, `release/v1.5` is fixed first (it
 ships to customers); this document tracks the follow-up port to `main` once `main`'s
 independently-refactored codebase structure was re-verified against the same design.
@@ -69,7 +69,7 @@ read of each file before editing (CHECKPOINT A).
 
 ## 2. References
 
-- [PR #1895](https://github.com/jordigilh/kubernaut/pull/1895) — original `release/v1.5` implementation (design authority)
+- [PR #1895](https://github.com/Ayush-Singh986/kubernaut/pull/1895) — original `release/v1.5` implementation (design authority)
 - `docs/tests/1889/TEST_PLAN.md` on `release/v1.5` — full design rationale, alternatives, and per-test-case detail
 - Issue #1889, Issue #1892
 

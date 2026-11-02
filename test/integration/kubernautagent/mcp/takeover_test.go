@@ -30,12 +30,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // delayedMockRunner simulates an LLM that takes time to respond.

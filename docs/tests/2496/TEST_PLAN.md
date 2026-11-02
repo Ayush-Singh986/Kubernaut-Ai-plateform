@@ -28,7 +28,7 @@ Prove that a subsequent AIAnalysis receives the identity and actual selection co
 
 **Scope clarification (2026-10-09)**: The user's intent is improved context and auditability, not a separate semantic retry judge. This revision removes the former J-A review/capture-acknowledgement and actual-completion reconstruction assumptions. The isolated spike supports test-local structural composition but found no inspected Phase 3 trusted citation-resolution contract; new evidence-reference gates are not approved or required by this test plan. Prototype results do not satisfy any production UT/IT/E2E release gate below.
 
-**Expanded scope under spike (2026-10-09)**: The user subsequently authorized a vertical spike covering recurrence-aware RCA, structured frozen evidence handoff/current-prior comparison, actual selection/correction dispatch and persisted status/audit. The eventual enhancement may include these in the same PR. Issue [#2498](https://github.com/jordigilh/kubernaut/issues/2498) is incorporated into this plan: Phase 1 resource-context/history tools are optional, while Phase 3 exposes only workflow-discovery and required result-submission tooling. A future runtime reviewer is tracked separately in [#2497](https://github.com/jordigilh/kubernaut/issues/2497), not included here. Kubernetes MCP access for discovery/selection remains prohibited by the user's constraint.
+**Expanded scope under spike (2026-10-09)**: The user subsequently authorized a vertical spike covering recurrence-aware RCA, structured frozen evidence handoff/current-prior comparison, actual selection/correction dispatch and persisted status/audit. The eventual enhancement may include these in the same PR. Issue [#2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498) is incorporated into this plan: Phase 1 resource-context/history tools are optional, while Phase 3 exposes only workflow-discovery and required result-submission tooling. A future runtime reviewer is tracked separately in [#2497](https://github.com/Ayush-Singh986/kubernaut/issues/2497), not included here. Kubernetes MCP access for discovery/selection remains prohibited by the user's constraint.
 
 **Incorporated #2498 phase-tool contract**: The expanded matrix must prove both sides of the boundary: Phase 1 resource-context/history tools are advertised as optional and RCA completes without calling them; Phase 3 exposes only workflow-discovery and required result-submission tooling, with no Kubernetes/context-history tools. A registered but off-phase tool must not execute if forced before dispatch. Preserve authorized RCA/fleet-overlay and catalog/submission paths, use a server-bound phase rather than model arguments, and make rejection observable. The forced-call spike found an existing dispatcher gap; implementation of the minimal guard is part of this combined #2496/#2498 slice. Rejected RED attempts and unmigrated/missing-asset harness failures do not count as production contract or persistence proof.
 
@@ -64,8 +64,8 @@ Prove that a subsequent AIAnalysis receives the identity and actual selection co
 
 ### 2.1 Governing documents
 
-- [Issue #2496](https://github.com/jordigilh/kubernaut/issues/2496).
-- [Issue #2498](https://github.com/jordigilh/kubernaut/issues/2498), incorporated into this implementation and PR scope.
+- [Issue #2496](https://github.com/Ayush-Singh986/kubernaut/issues/2496).
+- [Issue #2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498), incorporated into this implementation and PR scope.
 - [AGENTS.md](../../../AGENTS.md), especially preflight approval, TDD, pyramid invariant, checkpoints A/B/C/W/DD and audit-control corrections.
 - [DD-KA-016](../../architecture/decisions/DD-KA-016-remediation-history-context.md); BR-KA-016 extension must be formalized before RED.
 - [ADR-055](../../architecture/decisions/ADR-055-llm-driven-context-enrichment.md) for automatic Phase 2 enrichment and the optional Phase 1 resource-context role.

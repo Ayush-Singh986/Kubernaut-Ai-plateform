@@ -5,7 +5,7 @@
 **Status**: 🗄️ **SUPERSEDED** — see note below
 **Purpose**: Document existing execution infrastructure that handles all infrastructure changes
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Jan 2025 document describes a pre-CRD-rewrite execution model — a `pkg/workflow/engine/` "Workflow
 > Engine" with a registered `ActionExecutor` interface (`KubernetesActionExecutor`,
 > `MonitoringActionExecutor`, `CustomActionExecutor`) and a separate `pkg/platform/executor/`

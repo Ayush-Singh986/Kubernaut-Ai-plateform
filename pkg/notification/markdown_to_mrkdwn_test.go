@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/formatting"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/formatting"
 )
 
 // BR-NOT-083: Markdown to Slack mrkdwn conversion for notification body formatting

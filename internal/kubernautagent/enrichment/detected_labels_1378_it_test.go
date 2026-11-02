@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"

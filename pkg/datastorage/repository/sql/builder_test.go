@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	prodsql "github.com/jordigilh/kubernaut/pkg/datastorage/repository/sql"
+	prodsql "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/sql"
 )
 
 func TestSQLBuilder(t *testing.T) {

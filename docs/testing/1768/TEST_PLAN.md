@@ -1,6 +1,6 @@
 # Test Plan: Real AF-via-A2A Fleet Investigation E2E Coverage
 
-**Issue**: [#1768](https://github.com/jordigilh/kubernaut/issues/1768) (Track 1 — Gaps A + C)
+**Issue**: [#1768](https://github.com/Ayush-Singh986/kubernaut/issues/1768) (Track 1 — Gaps A + C)
 **Authority**: [DD-FLEET-005](../../architecture/decisions/DD-FLEET-005-cluster-transparent-tool-exposure.md), ADR-068
 **Business Requirements**: BR-INTEGRATION-054, BR-FLEET-054
 **Branch**: `test/1768-af-fleet-e2e-coverage`

@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 var _ = Describe("Fix #1384 Bug B — Integration Tests (AU-6, SI-10, CP-10)", func() {

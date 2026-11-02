@@ -26,10 +26,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/adapters"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/adapters"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 type stubSignalProvider struct {

@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 func main() {

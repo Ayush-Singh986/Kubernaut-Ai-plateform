@@ -24,9 +24,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"

@@ -99,7 +99,7 @@ need them.
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #1589](https://github.com/jordigilh/kubernaut/issues/1589) (Helm chart
+- **Tracked in**: [Issue #1589](https://github.com/Ayush-Singh986/kubernaut/issues/1589) (Helm chart
   Operator-parity gaps + OCP removal).
 - **Source of truth for ported content**: `kubernaut-operator/internal/resources/monitoring.go`,
   `kubernaut-operator/internal/resources/hpa.go`.

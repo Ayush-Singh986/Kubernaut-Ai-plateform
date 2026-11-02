@@ -316,7 +316,7 @@ func NewMetricsWithRegistry(registry prometheus.Registerer) *Metrics {
 package {service}
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/{service}/metrics"
+    "github.com/Ayush-Singh986/kubernaut/pkg/{service}/metrics"
     "k8s.io/apimachinery/pkg/runtime"
     "k8s.io/client-go/tools/record"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -343,8 +343,8 @@ package main
 import (
     "os"
 
-    {service}metrics "github.com/jordigilh/kubernaut/pkg/{service}/metrics"
-    {service}controller "github.com/jordigilh/kubernaut/internal/controller/{service}"
+    {service}metrics "github.com/Ayush-Singh986/kubernaut/pkg/{service}/metrics"
+    {service}controller "github.com/Ayush-Singh986/kubernaut/internal/controller/{service}"
     ctrl "sigs.k8s.io/controller-runtime"
 )
 

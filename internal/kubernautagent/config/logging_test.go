@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 var _ = Describe("Kubernaut Agent Logging Configuration — #875", func() {

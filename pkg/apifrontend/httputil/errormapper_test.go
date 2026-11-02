@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
 )
 
 var _ = Describe("ErrorMapper", func() {

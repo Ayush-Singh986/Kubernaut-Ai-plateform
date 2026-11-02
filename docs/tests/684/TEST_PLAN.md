@@ -520,8 +520,8 @@ go test ./test/integration/kubernautagent/llm/... -ginkgo.v -ginkgo.focus="684"
 go test ./test/unit/kubernautagent/config/... ./test/unit/kubernautagent/llm/... ./test/integration/kubernautagent/llm/... -ginkgo.v -ginkgo.focus="684"
 
 # Coverage
-go test ./test/unit/kubernautagent/config/... -coverprofile=coverage-config.out -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/config
-go test ./test/unit/kubernautagent/llm/... -coverprofile=coverage-llm.out -coverpkg=github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/langchaingo
+go test ./test/unit/kubernautagent/config/... -coverprofile=coverage-config.out -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config
+go test ./test/unit/kubernautagent/llm/... -coverprofile=coverage-llm.out -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/langchaingo
 ```
 
 ---

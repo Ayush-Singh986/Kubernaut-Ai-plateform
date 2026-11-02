@@ -24,10 +24,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 func rfc7807TypeSubstring(body []byte) string {

@@ -9,7 +9,7 @@
 **Status**: Implemented; E2E/integration environment follow-up remains
 **Branch**: `fix/demo-scenario-run-hint`
 **Business Requirements**: BR-INTERACTIVE-010, BR-SESS-013, BR-AUDIT-005
-**Issue**: [#2365](https://github.com/jordigilh/kubernaut/issues/2365)
+**Issue**: [#2365](https://github.com/Ayush-Singh986/kubernaut/issues/2365)
 **Authority**: [DD-AF-014](../../architecture/decisions/DD-AF-014-business-outcome-completion-coordinator.md)
 
 ## 1. Business Outcome

@@ -24,12 +24,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
 )
 
 // ========================================

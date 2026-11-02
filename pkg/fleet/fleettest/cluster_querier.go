@@ -17,7 +17,7 @@ limitations under the License.
 package fleettest
 
 import (
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 // StubClusterQuerier implements registry.ClusterQuerier for unit and

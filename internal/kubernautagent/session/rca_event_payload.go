@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // rcaEventPayload is the bounded subset of InvestigationResult that gets

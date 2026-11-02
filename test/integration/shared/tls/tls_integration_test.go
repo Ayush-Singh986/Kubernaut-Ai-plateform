@@ -39,7 +39,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 var _ = Describe("TLS Integration Tests (#493)", func() {

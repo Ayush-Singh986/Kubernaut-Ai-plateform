@@ -27,13 +27,13 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // IT-GW-FLEET-010/011/012: GW Fleet Scope Dispatch tests

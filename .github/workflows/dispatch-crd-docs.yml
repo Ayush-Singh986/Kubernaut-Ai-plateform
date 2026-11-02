@@ -24,7 +24,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
         run: |
-          gh api repos/jordigilh/kubernaut-docs/dispatches \
+          gh api repos/Ayush-Singh986/kubernaut-docs/dispatches \
             -f event_type=crd-docs-updated \
             -f "client_payload[sha]=${{ github.sha }}" \
             -f "client_payload[ref]=${{ github.ref_name }}"

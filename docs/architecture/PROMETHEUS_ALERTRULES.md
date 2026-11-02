@@ -2,7 +2,7 @@
 
 **Version**: 1.1
 **Last Updated**: August 2, 2026
-**Status**: ⚠️ Partially Verified Reference — see [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) note below
+**Status**: ⚠️ Partially Verified Reference — see [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) note below
 **Scope**: All 11 Kubernaut V1 Services + Infrastructure
 
 > **Note (2026-08-02)**: The Kubernaut Agent (formerly "HolmesGPT API") and AI Analysis alert
@@ -668,7 +668,7 @@ spec:
 
 ### AI Analysis Alerts
 
-> **Note (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **Note (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > `AIAnalysisHolmesGPTUnavailable` alert below was corrected to use a real metric (see inline comment).
 > The other three alerts in this group (`ai_analysis_investigation_errors_total`,
 > `ai_analysis_investigations_total`, `ai_analysis_investigation_duration_seconds_bucket`,
@@ -864,7 +864,7 @@ spec:
 
 ### Kubernaut Agent (KA) Alerts
 
-> **Corrected (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Renamed
+> **Corrected (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Renamed
 > from "HolmesGPT API"; metric names below corrected against the real, currently-shipped metrics in
 > `pkg/kubernautagent/llm/instrumented_client.go` (`aiagent_api_llm_requests_total{status}`,
 > `aiagent_api_llm_request_duration_seconds`, `aiagent_api_llm_tokens_total{type}`). These metrics carry
@@ -1298,7 +1298,7 @@ curl -X POST https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK \
 
 ## Changelog
 
-### v1.1 (2026-08-02) — HAPI→KA correction pass ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))
+### v1.1 (2026-08-02) — HAPI→KA correction pass ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 
 - Renamed "HolmesGPT API Alerts" section to "Kubernaut Agent (KA) Alerts"; renamed
   `HolmesGPTAPIDown`/`HolmesGPTAPIHighLLMLatency`/`HolmesGPTAPILLMProviderErrors`/`HolmesGPTAPIHighTokenUsage`

@@ -25,10 +25,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 	"k8s.io/client-go/kubernetes/fake"
 )
 

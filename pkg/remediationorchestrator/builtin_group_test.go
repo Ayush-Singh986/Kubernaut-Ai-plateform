@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
 )
 
 var _ = Describe("IsBuiltInGroup — sync vs async target classification (DD-EM-004, BR-RO-103.1)", func() {

@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	auditpkg "github.com/jordigilh/kubernaut/pkg/audit"
+	auditpkg "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 
 // ========================================

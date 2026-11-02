@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Integration Tests: Error Handling & Edge Cases

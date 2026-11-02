@@ -56,8 +56,8 @@ This test plan validates the NetworkPolicy Helm chart templates introduced by Is
 
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)
 - [Testing Guidelines](../../development/business-requirements/TESTING_GUIDELINES.md)
-- [Traffic Matrix — Issue #285](https://github.com/jordigilh/kubernaut/issues/285)
-- [Operator-side tracking — kubernaut-operator#1](https://github.com/jordigilh/kubernaut-operator/issues/1)
+- [Traffic Matrix — Issue #285](https://github.com/Ayush-Singh986/kubernaut/issues/285)
+- [Operator-side tracking — kubernaut-operator#1](https://github.com/Ayush-Singh986/kubernaut-operator/issues/1)
 
 ---
 

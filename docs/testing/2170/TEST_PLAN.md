@@ -19,12 +19,12 @@ removal and the 28-file E2E trigger redesign deferred to follow-up issue #2190)
 
 [BR-AA-KA-064](../../requirements/BR-AA-KA-064-session-based-pull-design.md)'s async HTTP
 submit/poll design was the confirmed root cause of
-[#2080](https://github.com/jordigilh/kubernaut/issues/2080)/
-[#2081](https://github.com/jordigilh/kubernaut/issues/2081) (KA's per-session ownership
+[#2080](https://github.com/Ayush-Singh986/kubernaut/issues/2080)/
+[#2081](https://github.com/Ayush-Singh986/kubernaut/issues/2081) (KA's per-session ownership
 authorization 404s AA's poll once AF has taken over/correlated a different session, driving the
 5-regeneration cap to a permanent `Failed` outcome) and shared its "re-derive a fact from a
 secondhand signal" shape with the interactive-detection dual-signal gap behind
-[#1713](https://github.com/jordigilh/kubernaut/issues/1713) (AA's `InvestigationSession`-existence
+[#1713](https://github.com/Ayush-Singh986/kubernaut/issues/1713) (AA's `InvestigationSession`-existence
 inference racing a concurrent HTTP submit). This test plan documents the finalized test coverage
 for [BR-AA-KA-065](../../requirements/BR-AA-KA-065-agentsession-watch-design.md) /
 [DD-AA-KA-001](../../architecture/decisions/DD-AA-KA-001-agentsession-crd-http-removal.md), which
@@ -57,7 +57,7 @@ control objective) for the compliance record, and an honest accounting of what r
 5. **Deferred scope is explicit**: `BR-AA-KA-065.8` (HTTP channel removal) is honestly reported as
    **not yet met** — `pkg/agentclient` and KA's HTTP server remain load-bearing for the
    still-HTTP-based 28-file E2E suite — tracked in
-   [#2190](https://github.com/jordigilh/kubernaut/issues/2190), not silently dropped from the record.
+   [#2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190), not silently dropped from the record.
 
 ### 1.3 Success Metrics
 
@@ -77,12 +77,12 @@ control objective) for the compliance record, and an honest accounting of what r
 
 - [BR-AA-KA-065](../../requirements/BR-AA-KA-065-agentsession-watch-design.md): AgentSession CRD Watch Design for AA-KA-AF Communication (supersedes BR-AA-KA-064)
 - [DD-AA-KA-001](../../architecture/decisions/DD-AA-KA-001-agentsession-crd-http-removal.md): Full design, alternatives considered, 2026-08-17 Amendment (3 implementation gaps)
-- Issue [#2170](https://github.com/jordigilh/kubernaut/issues/2170): AgentSession CRD + dispatcher (this plan's namesake)
-- Issue [#2171](https://github.com/jordigilh/kubernaut/issues/2171): AA-side `AgentSessionGetOrCreator`/handler migration
-- Issue [#2172](https://github.com/jordigilh/kubernaut/issues/2172): AF ack-wait migration to `AwaitAgentSessionInteractive`
-- Issue [#2080](https://github.com/jordigilh/kubernaut/issues/2080) / [#2081](https://github.com/jordigilh/kubernaut/issues/2081): regeneration-cap root cause this design eliminates
-- Issue [#1713](https://github.com/jordigilh/kubernaut/issues/1713): interactive-detection race this design eliminates
-- Issue [#2190](https://github.com/jordigilh/kubernaut/issues/2190): follow-up — `pkg/agentclient`/KA HTTP server removal + 28-file E2E trigger redesign (deferred scope from this plan)
+- Issue [#2170](https://github.com/Ayush-Singh986/kubernaut/issues/2170): AgentSession CRD + dispatcher (this plan's namesake)
+- Issue [#2171](https://github.com/Ayush-Singh986/kubernaut/issues/2171): AA-side `AgentSessionGetOrCreator`/handler migration
+- Issue [#2172](https://github.com/Ayush-Singh986/kubernaut/issues/2172): AF ack-wait migration to `AwaitAgentSessionInteractive`
+- Issue [#2080](https://github.com/Ayush-Singh986/kubernaut/issues/2080) / [#2081](https://github.com/Ayush-Singh986/kubernaut/issues/2081): regeneration-cap root cause this design eliminates
+- Issue [#1713](https://github.com/Ayush-Singh986/kubernaut/issues/1713): interactive-detection race this design eliminates
+- Issue [#2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190): follow-up — `pkg/agentclient`/KA HTTP server removal + 28-file E2E trigger redesign (deferred scope from this plan)
 
 ### 2.2 Cross-References
 
@@ -160,7 +160,7 @@ Not implemented in this pass — filed as a coverage gap, not silently closed.
 ### 4.2 Features Not to be Tested (this plan)
 
 - **`pkg/agentclient` removal / KA's HTTP server removal**: deferred to
-  [#2190](https://github.com/jordigilh/kubernaut/issues/2190) — still load-bearing for the 28-file
+  [#2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190) — still load-bearing for the 28-file
   `test/e2e/` suite, which needs its own trigger-mechanism redesign (submit via `AgentSession`
   Create instead of an HTTP POST), not just a delete. Production dead code reachable *only* through
   the retired HTTP path (`BuildIncidentRequest`, its test file, and the direct-HTTP

@@ -141,7 +141,7 @@ Logging sensitive data (passwords, tokens, API keys) creates security vulnerabil
 #### ✅ CORRECT Pattern
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 
 // Simple string sanitization
 sanitized := sanitization.SanitizeForLog(sensitiveData)
@@ -167,7 +167,7 @@ func sanitize(s string) string {
 }
 
 // ❌ WRONG: Service-specific sanitization package
-import "github.com/jordigilh/kubernaut/pkg/myservice/sanitization"  // Use shared!
+import "github.com/Ayush-Singh986/kubernaut/pkg/myservice/sanitization"  // Use shared!
 ```
 
 ### Patterns Covered
@@ -203,7 +203,7 @@ All services must emit audit events for compliance (DD-AUDIT-003, ADR-034).
 #### ✅ CORRECT Pattern
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/audit"
+import "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 
 // Initialize in main.go
 auditClient := audit.NewHTTPDataStorageClient(dataStorageURL, &http.Client{})

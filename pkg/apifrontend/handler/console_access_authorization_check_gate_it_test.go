@@ -13,9 +13,9 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
 )
 
 // denyAllSAR makes every SubjectAccessReview call return Allowed: false --

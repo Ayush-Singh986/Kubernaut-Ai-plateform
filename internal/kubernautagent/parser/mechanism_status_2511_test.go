@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
 )
 
 // BR-KA-016 / BR-AUDIT-005; DD-KA-2511; FedRAMP AU-3; SOC 2 CC7.2.

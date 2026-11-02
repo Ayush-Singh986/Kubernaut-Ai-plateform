@@ -10,8 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 func sessionCreateRequest(suffix, user string) *adksession.CreateRequest {

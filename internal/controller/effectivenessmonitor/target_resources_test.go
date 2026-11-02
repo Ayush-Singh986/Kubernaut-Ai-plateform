@@ -27,8 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
 )
 
 // Issue #1542 follow-up history: getTargetHealthStatus/listActivePodNames/

@@ -49,9 +49,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
 )
 
 // PermanentFailureMarker is the string stored in delivery attempt errors

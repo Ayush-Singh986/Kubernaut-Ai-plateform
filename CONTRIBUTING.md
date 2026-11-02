@@ -68,7 +68,7 @@ Every code change must map to a business requirement using the format `BR-[CATEG
 
 ## Reporting Issues
 
-Use the [GitHub issue tracker](https://github.com/jordigilh/kubernaut/issues) with the provided templates for bug reports and feature requests.
+Use the [GitHub issue tracker](https://github.com/Ayush-Singh986/kubernaut/issues) with the provided templates for bug reports and feature requests.
 
 ## License
 

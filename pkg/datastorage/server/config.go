@@ -19,7 +19,7 @@ package server
 import (
 	"time"
 
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // Config contains server configuration

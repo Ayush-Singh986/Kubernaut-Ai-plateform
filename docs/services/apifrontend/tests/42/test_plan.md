@@ -1,7 +1,7 @@
 # Test Plan: Protocol Conformance Tests — MCP, A2A, and Agent Card Schema
 
 **Test Plan Identifier:** TP-AF-042
-**Issue:** [#42](https://github.com/jordigilh/kubernaut-apifrontend/issues/42)
+**Issue:** [#42](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/42)
 **Version:** 1.0
 **Date:** 2026-05-06
 **Status:** Draft

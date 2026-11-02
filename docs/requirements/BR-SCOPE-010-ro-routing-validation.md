@@ -70,7 +70,7 @@ RO Routing Checks (Sequential):
 **Validation Logic** (RCA Target with Fallback):
 ```go
 // pkg/remediationorchestrator/routing/scope_validator.go
-import "github.com/jordigilh/kubernaut/pkg/shared/scope"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 
 func (r *Reconciler) CheckManagedResource(ctx context.Context, rr *remediationv1alpha1.RemediationRequest) (bool, error) {
     // Get AIAnalysis CRD to check for RCA-determined target resource (BR-AI-084)

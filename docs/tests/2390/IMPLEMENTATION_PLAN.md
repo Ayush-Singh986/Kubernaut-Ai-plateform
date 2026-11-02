@@ -8,7 +8,7 @@
 **Author**: Kubernaut maintainers
 **Status**: Complete; E2E execution deferred to CI/CD
 **Branch**: `fix/issue-2390-workflow-snapshot`
-**Issue**: [#2390](https://github.com/jordigilh/kubernaut/issues/2390)
+**Issue**: [#2390](https://github.com/Ayush-Singh986/kubernaut/issues/2390)
 
 **Business requirements**:
 

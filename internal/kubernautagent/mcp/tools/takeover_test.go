@@ -27,12 +27,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // recordingAuditStore captures audit events for assertion in regression tests.

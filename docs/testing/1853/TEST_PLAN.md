@@ -16,7 +16,7 @@
 
 ### 1.1 Purpose
 
-Issue [#1853](https://github.com/jordigilh/kubernaut/issues/1853) reports that a single chat
+Issue [#1853](https://github.com/Ayush-Singh986/kubernaut/issues/1853) reports that a single chat
 message combining "remediate + investigate" intent fails every time against the
 `fullpipeline` E2E cluster. The root cause is confirmed to live entirely in test
 infrastructure (`test/infrastructure/shared_e2e.go`, `test/services/mock-llm/`), not in AF
@@ -43,7 +43,7 @@ The issue as originally filed only reproduced mode 2's single-message chaining d
 (2 tool calls: `remediate` → `investigate`). Mode 3 hits the *same* root-cause defect at a
 worse depth (4 tool calls: `investigate` → `discover_workflows` → `select_workflow` → `watch`),
 and was previously **untested and undocumented** for kubernaut-console — see
-[#1855](https://github.com/jordigilh/kubernaut/issues/1855) (documentation gap, tracked
+[#1855](https://github.com/Ayush-Singh986/kubernaut/issues/1855) (documentation gap, tracked
 separately per user direction; this plan closes the *test coverage* gap for all 3 modes so the
 console team has a working example + expectations for each, while #1855 will close the
 *documentation* gap in a follow-up PR).
@@ -87,8 +87,8 @@ scenario per combined-intent mode that actually needs multi-turn-in-one-message 
 
 ### 2.1 Authority (governing documents)
 
-- Issue [#1853](https://github.com/jordigilh/kubernaut/issues/1853): fullpipeline E2E mock-llm fixture has no scenario for single-message combined remediate+investigate intent
-- Issue [#1855](https://github.com/jordigilh/kubernaut/issues/1855): documentation gap for the 3 AF modes (out of scope here — tracked separately per user direction; this plan only closes the *test* gap)
+- Issue [#1853](https://github.com/Ayush-Singh986/kubernaut/issues/1853): fullpipeline E2E mock-llm fixture has no scenario for single-message combined remediate+investigate intent
+- Issue [#1855](https://github.com/Ayush-Singh986/kubernaut/issues/1855): documentation gap for the 3 AF modes (out of scope here — tracked separately per user direction; this plan only closes the *test* gap)
 - Issue #1818 (referenced): the AF production fix this issue was validated against (unrelated code path, confirmed still correct)
 - `pkg/apifrontend/agent/prompt.txt`: **authoritative** production system prompt defining the 3 AF operational modes (autonomous / interactive / full-interactive-remediation) — the source of truth for §1.1's mode descriptions and for mode 3's auto-select-highest-confidence-workflow behavior
 
@@ -146,7 +146,7 @@ All scratch resources (2 temporary namespaces, their `memory-eater` fixtures, an
 - AF production code paths for `kubernaut_remediate`/`kubernaut_investigate`/`kubernaut_discover_workflows`/`kubernaut_select_workflow`/`kubernaut_watch` themselves — already proven working individually by existing E2E-FP-1189-003/-004/-005 and E2E-AF-1409-001 (this issue is purely a test-fixture gap in *chaining* them within one message, confirmed via `kubectl logs deploy/apifrontend` in the original issue report showing no `kubernaut_remediate` call was ever attempted).
 - **Mode 1 (autonomous)**: not affected by this issue at all — a single `kubernaut_remediate` call has no `NextToolCall` chain to break. Already covered by the existing `"autonomous remediation"` keyword scenario / E2E-FP-1189 coverage; no new test needed.
 - Console-side rendering of the resulting `investigation_summary` — out of scope for kubernaut (tracked in kubernaut-console#39).
-- Formal documentation of the 3-mode contract itself — tracked separately in [#1855](https://github.com/jordigilh/kubernaut/issues/1855) per user direction (this plan closes the test-coverage gap only, not the docs gap).
+- Formal documentation of the 3-mode contract itself — tracked separately in [#1855](https://github.com/Ayush-Singh986/kubernaut/issues/1855) per user direction (this plan closes the test-coverage gap only, not the docs gap).
 
 ### 4.3 Design Decisions
 

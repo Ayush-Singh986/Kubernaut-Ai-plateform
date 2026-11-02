@@ -25,9 +25,9 @@ import (
 	"strings"
 	"text/template"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 //go:embed templates/*.tmpl

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
 )
 
 // ReadyChecker is a function that reports whether the service is ready to

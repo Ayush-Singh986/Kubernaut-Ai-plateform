@@ -1,7 +1,7 @@
 # Test Plan: Load/Stress/Performance Test Plan (Investigation)
 
 **Test Plan Identifier:** TP-AF-043
-**Issue:** [#43](https://github.com/jordigilh/kubernaut-apifrontend/issues/43)
+**Issue:** [#43](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/43)
 **Version:** 1.0
 **Date:** 2026-05-06
 **Status:** Draft

@@ -31,9 +31,9 @@ import (
 	adksession "google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // reinvokingRunner wraps the real ADK runner to implement BR-SESS-013's

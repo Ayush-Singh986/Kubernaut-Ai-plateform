@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
 )
 
 var _ = Describe("Prometheus Reserved Label Denylist (#1045)", func() {

@@ -8,9 +8,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 const eventTypePrefix = "apifrontend."

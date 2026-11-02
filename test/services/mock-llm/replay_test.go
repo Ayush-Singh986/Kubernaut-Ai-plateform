@@ -24,9 +24,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/response"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/response"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 var _ = Describe("BR-TESTING-001: Golden Transcript Replay — Phase 5a", func() {

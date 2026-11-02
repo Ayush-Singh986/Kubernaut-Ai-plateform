@@ -29,16 +29,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // staticClusterRegistry implements registry.ClusterRegistry with a fixed set of clusters.

@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Fleet OAuth2/MCP Gateway test fixture values shared across the fleet

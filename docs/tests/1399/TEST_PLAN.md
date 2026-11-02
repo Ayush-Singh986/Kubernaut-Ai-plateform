@@ -52,7 +52,7 @@ This test plan validates the two-phase implementation of A2A streaming separatio
 - Issue #1396: AF: Emit structured RCA and extended workflow options in present_decision payload (existing infrastructure)
 - Issue #1395: EventBridge sanitizeBridgeText truncates structured JSON payloads at 512 runes
 - [A2A v1.0 Specification](https://a2a-protocol.org/dev/topics/key-concepts/) — TaskArtifactUpdateEvent, Part.data
-- Console team alignment: [#1399 comment thread](https://github.com/jordigilh/kubernaut/issues/1399)
+- Console team alignment: [#1399 comment thread](https://github.com/Ayush-Singh986/kubernaut/issues/1399)
 
 ### 2.2 Cross-References
 

@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
 )
 
 // Ginkgo test suite for metrics (external-facing per GitHub issue #294)

@@ -1,6 +1,6 @@
 # Implementation Plan: Per-WorkflowExecution Job Identity
 
-> Draft plan for [Kubernaut issue #2512](https://github.com/jordigilh/kubernaut/issues/2512).
+> Draft plan for [Kubernaut issue #2512](https://github.com/Ayush-Singh986/kubernaut/issues/2512).
 
 **Plan Identifier**: IP-2512-v1  
 **Feature**: Prevent Kubernetes Job reuse across sequential WorkflowExecution/RR cycles while preserving target locking, retention, provenance, and audit reconstruction.  

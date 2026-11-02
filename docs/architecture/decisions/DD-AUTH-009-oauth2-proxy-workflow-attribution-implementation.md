@@ -1,7 +1,7 @@
 # DD-AUTH-009: OpenShift OAuth-Proxy & Workflow Catalog User Attribution
 
 **Date**: January 26, 2026
-**Status**: ⚠️ **SUPERSEDED** by [DD-AUTH-014](DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806))
+**Status**: ⚠️ **SUPERSEDED** by [DD-AUTH-014](DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 **Version**: 2.0 (Updated January 26, 2026)
 **Authority**: AUTHORITATIVE Implementation Plan (historical — see superseded note)
 **Related**: DD-AUTH-007 (OAuth2-Proxy Migration), DD-AUTH-008 (Secret Management), DD-AUTH-004 (DataStorage OAuth), DD-AUTH-010 (E2E Real Auth), DD-AUTH-011 (Granular RBAC)
@@ -24,7 +24,7 @@
 **Critical Decision**: Reverted from CNCF `oauth2-proxy` to OpenShift `origin-oauth-proxy` due to SAR requirements.
 
 **Scope**:
-1. Use `quay.io/jordigilh/ose-oauth-proxy:latest` (custom arm64+amd64 build) for dev/E2E
+1. Use `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` (custom arm64+amd64 build) for dev/E2E
 2. Use `quay.io/openshift/origin-oauth-proxy:latest` (official amd64) for production Helm charts
 3. Enable Kubernetes SubjectAccessReview (SAR) with `--openshift-sar` flag
 4. Implement Kustomize-based secret management (DD-AUTH-008)
@@ -49,11 +49,11 @@
 **Solution - Multi-Architecture Strategy**:
 | Environment | Image | Architecture | SAR Support |
 |-------------|-------|--------------|-------------|
-| **Development** | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64 + amd64 | ✅ Yes |
-| **E2E Tests** | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64 + amd64 | ✅ Yes |
+| **Development** | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64 + amd64 | ✅ Yes |
+| **E2E Tests** | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64 + amd64 | ✅ Yes |
 | **Production** | `quay.io/openshift/origin-oauth-proxy:latest` | amd64 only | ✅ Yes |
 
-**Custom Build**: `quay.io/jordigilh/ose-oauth-proxy:latest`
+**Custom Build**: `quay.io/Ayush-Singh986/ose-oauth-proxy:latest`
 - Built from OpenShift `origin-oauth-proxy` source
 - Adds arm64 architecture support for local development on Apple Silicon
 - Maintains full OpenShift oauth-proxy feature parity (SAR, OIDC, etc.)
@@ -131,10 +131,10 @@ stringData:
 
 | Environment | Service | Image | Arch | OIDC Provider | User Header | SAR Support |
 |-------------|---------|-------|------|---------------|-------------|-------------|
-| **Development** | DataStorage | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
-| **Development** | KA | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
-| **E2E Tests** | DataStorage | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
-| **E2E Tests** | KA | `quay.io/jordigilh/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
+| **Development** | DataStorage | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
+| **Development** | KA | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
+| **E2E Tests** | DataStorage | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
+| **E2E Tests** | KA | `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` | arm64+amd64 | K8s OAuth | `X-Auth-Request-User` | ✅ Yes |
 | **Production** | DataStorage | `quay.io/openshift/origin-oauth-proxy:latest` | amd64 | OpenShift OAuth | `X-Auth-Request-User` | ✅ Yes |
 | **Production** | KA | `quay.io/openshift/origin-oauth-proxy:latest` | amd64 | OpenShift OAuth | `X-Auth-Request-User` | ✅ Yes |
 
@@ -250,9 +250,9 @@ kubectl get secrets -n kubernaut-system | grep oauth-proxy
 
 # NEW (Custom multi-arch build for dev/E2E + official for production)
 - name: oauth-proxy
-  # Development/E2E: quay.io/jordigilh/ose-oauth-proxy:latest (arm64+amd64)
+  # Development/E2E: quay.io/Ayush-Singh986/ose-oauth-proxy:latest (arm64+amd64)
   # Production: quay.io/openshift/origin-oauth-proxy:latest (amd64)
-  image: quay.io/jordigilh/ose-oauth-proxy:latest
+  image: quay.io/Ayush-Singh986/ose-oauth-proxy:latest
   imagePullPolicy: IfNotPresent
   args:
     - --http-address=0.0.0.0:8080
@@ -275,7 +275,7 @@ kubectl get secrets -n kubernaut-system | grep oauth-proxy
 ```
 
 **Key Changes**:
-1. ✅ Image: `quay.io/jordigilh/ose-oauth-proxy:latest` (custom multi-arch build)
+1. ✅ Image: `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` (custom multi-arch build)
 2. ✅ Provider: `oidc` (Kubernetes/OpenShift OAuth)
 3. ✅ SAR flag: `--openshift-sar` (**REQUIRES** OpenShift oauth-proxy, not supported by CNCF oauth2-proxy)
 4. ✅ SAR verb: `create` (DD-AUTH-011 strategy - all services need audit write access)

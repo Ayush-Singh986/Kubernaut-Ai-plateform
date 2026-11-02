@@ -1,7 +1,7 @@
 # DD-WORKFLOW-019: Relocating Workflow Discovery/Selection Ownership from Data Storage to KubernautAgent
 
 **Date**: July 17, 2026
-**Status**: ✅ **APPROVED — Implemented** (Issue [#1677](https://github.com/jordigilh/kubernaut/issues/1677), Phases 1-2g)
+**Status**: ✅ **APPROVED — Implemented** (Issue [#1677](https://github.com/Ayush-Singh986/kubernaut/issues/1677), Phases 1-2g)
 **Decision Maker**: Kubernaut Architecture Team
 **Version**: 2.0
 **Authority**: APPROVED — implementation complete

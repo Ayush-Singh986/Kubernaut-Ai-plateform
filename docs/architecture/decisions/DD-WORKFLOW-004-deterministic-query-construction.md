@@ -5,7 +5,7 @@
 **Confidence**: 98% (original assessment of the now-superseded design)
 **Purpose**: Define the query construction strategy for workflow catalog search - deterministic vs. LLM-based approach.
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Nov 2025 decision addressed how to build a free-text `query` string (e.g. `"OOMKilled critical memory
 > leak java heap"`) for a Data Storage `POST /api/v1/workflows/search` **pgvector semantic-search**
 > endpoint — deterministic string formatting (this doc's Option B) vs. a second LLM call (Option A). That
@@ -266,7 +266,7 @@ import (
     "fmt"
     "strings"
 
-    "github.com/jordigilh/kubernaut/pkg/datastorage/models"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // QueryBuilder constructs workflow search queries from RCA findings
@@ -592,7 +592,7 @@ else:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-08-02 | **[Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) correction**: Marked SUPERSEDED. The pgvector semantic-search `query`-string premise this doc addresses never shipped; the real discovery protocol (DD-WORKFLOW-016/017/019) uses structured filter parameters with no query construction step at all. No body content removed; retained as historical reference. |
+| 1.1 | 2026-08-02 | **[Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) correction**: Marked SUPERSEDED. The pgvector semantic-search `query`-string premise this doc addresses never shipped; the real discovery protocol (DD-WORKFLOW-016/017/019) uses structured filter parameters with no query construction step at all. No body content removed; retained as historical reference. |
 | 1.0 | 2025-11-22 | Initial version: Deterministic query construction decision |
 
 ---

@@ -12,11 +12,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/logging"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/requestid"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/logging"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/requestid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
 )
 
 // MaxBodySize is the maximum allowed request body size (1MB).

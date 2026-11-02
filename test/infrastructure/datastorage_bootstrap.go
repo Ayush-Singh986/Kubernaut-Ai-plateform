@@ -16,7 +16,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
 )
 
 // DSBootstrapConfig configures DataStorage infrastructure for integration tests
@@ -174,7 +174,7 @@ type DSBootstrapInfra struct {
 // instead of building locally, saving ~70% disk space and ~30% time.
 //
 // Environment Variables:
-//   - IMAGE_REGISTRY: Registry URL (e.g., "ghcr.io/jordigilh/kubernaut")
+//   - IMAGE_REGISTRY: Registry URL (e.g., "ghcr.io/Ayush-Singh986/kubernaut")
 //   - IMAGE_TAG: Image tag (e.g., "pr-123", "main-abc1234")
 //
 // Returns:

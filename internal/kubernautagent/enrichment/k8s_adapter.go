@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/shared/hash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

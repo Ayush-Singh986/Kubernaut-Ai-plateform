@@ -17,7 +17,7 @@ limitations under the License.
 package routing
 
 import (
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // RoutingAttributesFromSpec builds a routing attributes map from a NotificationRequest's

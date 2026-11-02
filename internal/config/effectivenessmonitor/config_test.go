@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
 )
 
 func TestEffectivenessMonitorConfig(t *testing.T) {

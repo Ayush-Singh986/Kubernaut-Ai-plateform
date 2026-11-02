@@ -7,7 +7,7 @@
 **Created**: 2026-09-26
 **Author**: Kubernaut Team
 **Status**: Implemented and verified. Focused projection/audit UTs, live etcd-Catalog IT, post-fix focused E2E, build, and branch-delta lint pass. The E2E also proves raw remediation-ID audit minimization. The latest all-services `make test` rerun failed only in two timing-sensitive SignalProcessing shutdown tests under 12-way parallel load; those tests pass when isolated.
-**Issue**: [#2466](https://github.com/jordigilh/kubernaut/issues/2466)
+**Issue**: [#2466](https://github.com/Ayush-Singh986/kubernaut/issues/2466)
 
 ## 1. Purpose and boundaries
 

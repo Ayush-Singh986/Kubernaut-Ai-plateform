@@ -311,7 +311,7 @@ helm uninstall {service-name} --namespace kubernaut-system
 ### Image Configuration
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `image.repository` | string | `ghcr.io/jordigilh/kubernaut/{service}` | Image repository |
+| `image.repository` | string | `ghcr.io/Ayush-Singh986/kubernaut/{service}` | Image repository |
 | `image.tag` | string | `latest` | Image tag |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 

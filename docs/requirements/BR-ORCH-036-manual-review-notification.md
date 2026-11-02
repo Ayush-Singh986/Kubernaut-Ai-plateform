@@ -8,7 +8,7 @@
 **Status**: ✅ Implemented (v5.1)
 **Related BRs**: BR-ORCH-032 (WE Skip Handling), BR-ORCH-001 (Approval Notification), BR-KA-197 (needs_human_review), BR-KA-200 (resolved/inconclusive), BR-ORCH-037 (Workflow Not Needed), BR-ORCH-042.5 (Notification on Block)
 **Related DDs**: DD-WE-004 (Exponential Backoff Cooldown), DD-AIANALYSIS-003 (Completion Substates), DD-RO-002 (Centralized Routing)
-**GitHub Issues**: [#550](https://github.com/jordigilh/kubernaut/issues/550), [#803](https://github.com/jordigilh/kubernaut/issues/803), [#805](https://github.com/jordigilh/kubernaut/issues/805), [#806](https://github.com/jordigilh/kubernaut/issues/806), [#807](https://github.com/jordigilh/kubernaut/issues/807), [#808](https://github.com/jordigilh/kubernaut/issues/808), [#809](https://github.com/jordigilh/kubernaut/issues/809), [#810](https://github.com/jordigilh/kubernaut/issues/810)
+**GitHub Issues**: [#550](https://github.com/Ayush-Singh986/kubernaut/issues/550), [#803](https://github.com/Ayush-Singh986/kubernaut/issues/803), [#805](https://github.com/Ayush-Singh986/kubernaut/issues/805), [#806](https://github.com/Ayush-Singh986/kubernaut/issues/806), [#807](https://github.com/Ayush-Singh986/kubernaut/issues/807), [#808](https://github.com/Ayush-Singh986/kubernaut/issues/808), [#809](https://github.com/Ayush-Singh986/kubernaut/issues/809), [#810](https://github.com/Ayush-Singh986/kubernaut/issues/810)
 
 ---
 
@@ -742,7 +742,7 @@ The routing split is at `handleHumanReviewRequired` in `pkg/remediationorchestra
 - **Branch**: `fix/v1.1.0-rc13`
 - **Files changed**: `pkg/remediationorchestrator/handler/aianalysis.go` (new `handleManualReviewCompleted`, modified `handleHumanReviewRequired` routing)
 - **Test plan**: [docs/tests/550/TEST_PLAN.md](../tests/550/TEST_PLAN.md)
-- **GitHub Issue**: [#550](https://github.com/jordigilh/kubernaut/issues/550)
+- **GitHub Issue**: [#550](https://github.com/Ayush-Singh986/kubernaut/issues/550)
 
 ---
 

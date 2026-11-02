@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-08-03
-**Issue**: [#1899](https://github.com/jordigilh/kubernaut/issues/1899) (`release/v1.5`), [#1901](https://github.com/jordigilh/kubernaut/issues/1901) (`main` port, tracking clone)
+**Issue**: [#1899](https://github.com/Ayush-Singh986/kubernaut/issues/1899) (`release/v1.5`), [#1901](https://github.com/Ayush-Singh986/kubernaut/issues/1901) (`main` port, tracking clone)
 **Related**: [DD-AF-006](DD-AF-006-approval-consent-guard.md) (approval consent guard — structural-rejection precedent this design generalizes)
 
 ## Context
@@ -144,7 +144,7 @@ The Decision above already specifies `full_remediation` as a fully legitimate mo
 
 **Test coverage**: UT-AF-1915-001..004 (`prompt_test.go`, proving the prompt content maps plain investigate to `full_remediation` and the opt-out phrases to omitted/`interactive`), IT-AF-1915-001 (`phase_guard_test.go`, BR/audit traceability cross-reference to the pre-existing IT-AF-1899-002b/003 mechanism coverage). No new E2E scenario was added for #1915 specifically: the `full_remediation` harness mechanism itself is already proven end to end by E2E-FP-1899-002, and the prompt-instruction-to-live-LLM-decision link is out of scope for the mock-LLM E2E infrastructure (consistent with every other `prompt.txt` directive in this test suite, which is verified via content assertions rather than live-LLM behavior).
 
-**Related**: [kubernaut-console#47](https://github.com/jordigilh/kubernaut-console/issues/47) (Console welcome-message keyword clarity for the three modes) was filed as a related follow-up, out of scope for this fix. [kubernaut#1918](https://github.com/jordigilh/kubernaut/issues/1918) (harness-enforced actionability gate, see below) was initially filed as a deferred spike here but was subsequently scoped down and implemented directly.
+**Related**: [kubernaut-console#47](https://github.com/Ayush-Singh986/kubernaut-console/issues/47) (Console welcome-message keyword clarity for the three modes) was filed as a related follow-up, out of scope for this fix. [kubernaut#1918](https://github.com/Ayush-Singh986/kubernaut/issues/1918) (harness-enforced actionability gate, see below) was initially filed as a deferred spike here but was subsequently scoped down and implemented directly.
 
 Full test design, risk analysis, and BR/FedRAMP coverage matrix for both errata fixes: [`docs/tests/1912-1915/TEST_PLAN.md`](../../tests/1912-1915/TEST_PLAN.md).
 

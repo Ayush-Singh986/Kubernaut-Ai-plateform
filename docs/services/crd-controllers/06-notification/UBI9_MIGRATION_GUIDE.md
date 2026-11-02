@@ -47,15 +47,15 @@ Per **ADR-027**, all Kubernaut services must use Red Hat UBI10 base images for:
 
 ```bash
 # Navigate to repo root
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut
 
 # Build multi-architecture image with UBI10 (ADR-027 compliant)
 podman build --platform linux/amd64,linux/arm64 \
-  -t quay.io/jordigilh/notification:v1.1.0-ubi10 \
+  -t quay.io/Ayush-Singh986/notification:v1.1.0-ubi10 \
   -f docker/notification-controller.Dockerfile .
 
 # Verify multi-arch manifest
-podman manifest inspect quay.io/jordigilh/notification:v1.1.0-ubi10
+podman manifest inspect quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 
 # Expected output:
 # - Manifests for amd64 and arm64
@@ -75,7 +75,7 @@ podman run -d --rm \
   -p 8080:8080 \
   -p 8081:8081 \
   -e KUBECONFIG=/path/to/kubeconfig \
-  quay.io/jordigilh/notification:v1.1.0-ubi10
+  quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 
 # Check health
 curl http://localhost:8081/healthz
@@ -92,7 +92,7 @@ podman stop notification-test
 
 ```bash
 # Verify amd64 image exists in manifest
-podman manifest inspect quay.io/jordigilh/notification:v1.1.0-ubi10 \
+podman manifest inspect quay.io/Ayush-Singh986/notification:v1.1.0-ubi10 \
   | jq '.manifests[] | select(.platform.architecture == "amd64")'
 
 # Expected: Non-empty output with amd64 platform
@@ -117,8 +117,8 @@ spec:
     spec:
       containers:
       - name: manager
-        # OLD: quay.io/jordigilh/notification:v1.0.1
-        image: quay.io/jordigilh/notification:v1.1.0-ubi10
+        # OLD: quay.io/Ayush-Singh986/notification:v1.0.1
+        image: quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
         ports:
         - containerPort: 8080
           name: controller
@@ -149,8 +149,8 @@ If using PodSecurityPolicy or SecurityContextConstraints, verify UID 1001 is all
 
 ```bash
 # Push image to registry
-podman manifest push quay.io/jordigilh/notification:v1.1.0-ubi10 \
-  docker://quay.io/jordigilh/notification:v1.1.0-ubi10
+podman manifest push quay.io/Ayush-Singh986/notification:v1.1.0-ubi10 \
+  docker://quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 
 # Update deployment manifest (see Step 3)
 vim deploy/notification/deployment.yaml
@@ -237,11 +237,11 @@ kubectl logs deployment/notification-controller \
 
 ```bash
 # Alpine/distroless (v1.0.1)
-podman images quay.io/jordigilh/notification:v1.0.1
+podman images quay.io/Ayush-Singh986/notification:v1.0.1
 # Expected: ~42MB
 
 # UBI10 (v1.1.0-ubi10)
-podman images quay.io/jordigilh/notification:v1.1.0-ubi10
+podman images quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 # Expected: ~200-250MB (delta: +150-200MB)
 
 # Impact Assessment:
@@ -303,7 +303,7 @@ If issues occur with UBI10 migration:
 ```bash
 # Revert to previous version
 kubectl set image deployment/notification-controller \
-  manager=quay.io/jordigilh/notification:v1.0.1 \
+  manager=quay.io/Ayush-Singh986/notification:v1.0.1 \
   -n kubernaut-notifications
 
 # Revert security context (if changed)
@@ -339,7 +339,7 @@ Common issues and solutions:
 
 2. **Update Makefile**:
    ```makefile
-   NOTIFICATION_IMG ?= quay.io/jordigilh/notification:v1.1.0-ubi10
+   NOTIFICATION_IMG ?= quay.io/Ayush-Singh986/notification:v1.1.0-ubi10
 
    .PHONY: docker-build-notification
    docker-build-notification:

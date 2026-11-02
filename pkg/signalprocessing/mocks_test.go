@@ -3,8 +3,8 @@ package signalprocessing_test
 import (
 	"context"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/evaluator"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/evaluator"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"

@@ -27,10 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sretry "k8s.io/client-go/util/retry"
 
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	auditclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	auditclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 // ========================================

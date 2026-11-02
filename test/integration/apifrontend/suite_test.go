@@ -36,16 +36,16 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	eav1alpha1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/streaming"
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	eav1alpha1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/streaming"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

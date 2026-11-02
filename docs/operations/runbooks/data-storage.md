@@ -3,7 +3,7 @@
 **Version**: v1.1
 **Last Updated**: 2026-05-13
 **Status**: Production Ready
-**Related**: [ADR-034](../../architecture/decisions/ADR-034-unified-audit-table-design.md), [BR-AUDIT-007](../../requirements/BR-AUDIT-007-tamper-evident-exports.md), [BR-AUDIT-009](../../requirements/BR-AUDIT-009-retention-policies.md), [#1048](https://github.com/jordigilh/kubernaut/issues/1048) Phase 5
+**Related**: [ADR-034](../../architecture/decisions/ADR-034-unified-audit-table-design.md), [BR-AUDIT-007](../../requirements/BR-AUDIT-007-tamper-evident-exports.md), [BR-AUDIT-009](../../requirements/BR-AUDIT-009-retention-policies.md), [#1048](https://github.com/Ayush-Singh986/kubernaut/issues/1048) Phase 5
 
 > **Ownership note**: Data Storage is operator-managed. Resource names and certificate
 > ownership are resolved from the reconciled `Kubernaut` resource; the former standalone
@@ -188,7 +188,7 @@ The Data Storage service requires an RSA 2048-bit signing certificate (`tls.crt`
 ### Certificate Location
 
 - **Helm/dev**: Kubernetes Secret `datastorage-signing-cert`, mounted at `signerCertDir` (default: `/etc/certs`)
-- **Production (operator)**: Managed by `kubernaut-operator` ([#90](https://github.com/jordigilh/kubernaut-operator/issues/90))
+- **Production (operator)**: Managed by `kubernaut-operator` ([#90](https://github.com/Ayush-Singh986/kubernaut-operator/issues/90))
 
 ### Symptoms
 
@@ -219,7 +219,7 @@ The Data Storage service requires an RSA 2048-bit signing certificate (`tls.crt`
 
 1. **Operator-managed deployment**: Follow the operator's certificate rotation procedure.
    The operator manages certificate lifecycle via cert-manager
-   ([#84](https://github.com/jordigilh/kubernaut-operator/issues/84)).
+   ([#84](https://github.com/Ayush-Singh986/kubernaut-operator/issues/84)).
 
 ### Important Notes
 
@@ -263,7 +263,7 @@ When Redis TLS is enabled (`redis.tls.enabled: true`), the Data Storage service 
 
 ### Resolution
 
-1. **Verify Valkey has TLS enabled** — the server must be configured for TLS ([kubernaut-operator#89](https://github.com/jordigilh/kubernaut-operator/issues/89)).
+1. **Verify Valkey has TLS enabled** — the server must be configured for TLS ([kubernaut-operator#89](https://github.com/Ayush-Singh986/kubernaut-operator/issues/89)).
 
 2. **Check certificate paths** match the mounted secret paths.
 

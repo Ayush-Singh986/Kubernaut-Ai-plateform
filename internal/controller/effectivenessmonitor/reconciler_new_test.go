@@ -22,8 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	emaudit "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/audit"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
+	emaudit "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/audit"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
 )
 
 // TestNewReconciler_WiresDeps is a characterization/smoke test for

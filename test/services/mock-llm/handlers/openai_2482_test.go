@@ -27,11 +27,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/handlers"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/llm/openaicompat"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/handlers"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 func issue2482Request(toolMessage string) *http.Request {

@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
 )
 
 // LogFunc is the callback signature for sending log messages to the MCP client.

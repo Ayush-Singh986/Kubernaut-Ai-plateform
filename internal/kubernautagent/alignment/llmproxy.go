@@ -19,7 +19,7 @@ package alignment
 import (
 	"context"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // LLMProxy wraps an llm.Client and feeds each response to the shadow agent.

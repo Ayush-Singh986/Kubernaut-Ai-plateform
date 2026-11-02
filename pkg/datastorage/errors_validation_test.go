@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/validation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/validation"
 )
 
 // Test entry point moved to notification_audit_validator_test.go to avoid "Rerunning Suite" error

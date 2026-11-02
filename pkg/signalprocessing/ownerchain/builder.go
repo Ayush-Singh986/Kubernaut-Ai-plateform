@@ -54,7 +54,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
 )
 
 // MaxOwnerChainDepth per BR-SP-100: Stop at max depth 5

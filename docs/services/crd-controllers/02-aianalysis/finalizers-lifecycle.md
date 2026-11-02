@@ -43,8 +43,8 @@ import (
     "context"
     "fmt"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -135,7 +135,7 @@ import (
     "fmt"
     "time"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -214,8 +214,8 @@ package controller_test
 import (
     "context"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    "github.com/jordigilh/kubernaut/internal/controller/aianalysis"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller/aianalysis"
 
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
@@ -431,8 +431,8 @@ import (
     "context"
     "time"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/agentclient"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/agentclient"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -529,7 +529,7 @@ import (
     "fmt"
     "time"
 
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
 
     "k8s.io/client-go/tools/record"
 )
@@ -585,7 +585,7 @@ kubectl get events --field-selector involvedObject.name=<name>
 
 ### Lifecycle Monitoring
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**:
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**:
 > Most metric names in this monitoring section (`aianalysis_created_total`, `aianalysis_active_total`,
 > `aianalysis_deleted_total`, `aianalysis_approval_required_total`, `aianalysis_phase_start_timestamp`,
 > `aianalysis_lifecycle_duration_seconds`) are illustrative and do not correspond to metrics actually

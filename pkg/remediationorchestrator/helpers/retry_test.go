@@ -32,8 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	prodhelpers "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/helpers"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	prodhelpers "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/helpers"
 )
 
 // Helper to generate random string for testing

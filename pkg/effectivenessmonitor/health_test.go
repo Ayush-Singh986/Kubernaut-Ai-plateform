@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/health"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/health"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 var _ = Describe("Health Check Scorer (BR-EM-001)", func() {

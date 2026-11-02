@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/requestid"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/streaming"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/requestid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/streaming"
 )
 
 // RouterConfig holds all dependencies needed to construct the HTTP router.

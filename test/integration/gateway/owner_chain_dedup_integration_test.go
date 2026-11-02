@@ -50,12 +50,12 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	gwTypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/k8s/ownerchain"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	gwTypes "github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s/ownerchain"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 var _ = Describe("Owner Chain Deduplication (#270, BR-GATEWAY-004)", Ordered, ContinueOnFailure, Label("owner-chain", "dedup", "integration"), func() {

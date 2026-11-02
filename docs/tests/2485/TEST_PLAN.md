@@ -44,7 +44,7 @@ pseudonymization policy requires its own acceptance criteria.
 
 ## 2. Authority and controls
 
-- [Issue #2485](https://github.com/jordigilh/kubernaut/issues/2485)
+- [Issue #2485](https://github.com/Ayush-Singh986/kubernaut/issues/2485)
 - [BR-KA-211](../../requirements/BR-KA-211-llm-input-sanitization.md), FR-1,
   FR-2, and FR-4
 - [DD-KA-005](../../architecture/decisions/DD-KA-005-llm-input-sanitization.md)

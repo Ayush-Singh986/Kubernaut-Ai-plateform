@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
 )
 
 var _ = Describe("Two-Tier TTL Eviction — #1078", func() {

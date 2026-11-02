@@ -1,16 +1,16 @@
 # Test Plan: `main`-Branch Port of AF Scope Validation, Content Grounding, Ambiguous Severity Correlation, and AA Session-Desync Fixes
 
 **Issues** (all `main`-tracking clones of fixes implemented and merged on `release/v1.5`
-via [PR #2026](https://github.com/jordigilh/kubernaut/pull/2026)):
-- [#2025](https://github.com/jordigilh/kubernaut/issues/2025) — clone of
-  [#2022](https://github.com/jordigilh/kubernaut/issues/2022) (AF tool-layer scope validation)
-- [#2047](https://github.com/jordigilh/kubernaut/issues/2047) — clone of
-  [#2023](https://github.com/jordigilh/kubernaut/issues/2023) (content-grounding guard)
-- [#2028](https://github.com/jordigilh/kubernaut/issues/2028) — clone of
-  [#2027](https://github.com/jordigilh/kubernaut/issues/2027) (confidence-gated severity correlation,
+via [PR #2026](https://github.com/Ayush-Singh986/kubernaut/pull/2026)):
+- [#2025](https://github.com/Ayush-Singh986/kubernaut/issues/2025) — clone of
+  [#2022](https://github.com/Ayush-Singh986/kubernaut/issues/2022) (AF tool-layer scope validation)
+- [#2047](https://github.com/Ayush-Singh986/kubernaut/issues/2047) — clone of
+  [#2023](https://github.com/Ayush-Singh986/kubernaut/issues/2023) (content-grounding guard)
+- [#2028](https://github.com/Ayush-Singh986/kubernaut/issues/2028) — clone of
+  [#2027](https://github.com/Ayush-Singh986/kubernaut/issues/2027) (confidence-gated severity correlation,
   [DD-AF-012](../../architecture/decisions/DD-AF-012-confidence-gated-severity-correlation.md))
-- [#2030](https://github.com/jordigilh/kubernaut/issues/2030) — clone of
-  [#2029](https://github.com/jordigilh/kubernaut/issues/2029) (AA reconnect/takeover session desync),
+- [#2030](https://github.com/Ayush-Singh986/kubernaut/issues/2030) — clone of
+  [#2029](https://github.com/Ayush-Singh986/kubernaut/issues/2029) (AA reconnect/takeover session desync),
   split into **Part A** (bounded retry on CRD schema rejection) and **Part B** (AA-side session
   adoption)
 

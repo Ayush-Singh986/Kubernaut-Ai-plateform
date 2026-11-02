@@ -31,13 +31,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 var _ = Describe("Escalation Wiring (#1449)", Label("integration", "escalation", "wiring"), Serial, func() {

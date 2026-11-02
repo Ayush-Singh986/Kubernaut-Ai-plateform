@@ -28,10 +28,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )

@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tlswiring"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tlswiring"
 )
 
 var _ = Describe("Integration: TLS wiring", func() {

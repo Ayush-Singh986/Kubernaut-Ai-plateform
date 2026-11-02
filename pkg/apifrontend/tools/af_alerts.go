@@ -15,10 +15,10 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/validate"
 )
 
 // Infrastructure-level patterns for redacting URLs and IPs from alert

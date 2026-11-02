@@ -53,7 +53,7 @@ const (
 	// #2492 qualification profile. Release workflows may replace it with an
 	// explicitly supplied candidate manifest, but never with a mutable latest.
 	operatorRevision             = "9dc9394fd1844be4f4d4adb89db9a881dbc066ed"
-	operatorRepository           = "jordigilh/kubernaut-operator"
+	operatorRepository           = "Ayush-Singh986/kubernaut-operator"
 	applicationNamespace         = "kubernaut-system"
 	operatorNamespace            = "kubernaut-operator-system"
 	operatorCRName               = "kubernaut"

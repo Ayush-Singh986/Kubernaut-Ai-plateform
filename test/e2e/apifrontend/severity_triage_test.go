@@ -15,8 +15,8 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 var _ = Describe("Severity Triage Pipeline (G12)", Label("e2e", "phase4", "g12"), func() {

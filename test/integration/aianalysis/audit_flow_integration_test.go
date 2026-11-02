@@ -45,11 +45,11 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/shared/validators"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/validators"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -1,6 +1,6 @@
 #!/bin/bash
 set +e
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut-v1.5
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut-v1.5
 sleep 30
 while true; do
   echo "=== $(date) ==="

@@ -19,7 +19,7 @@ package notification_test
 import (
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 )
 
 // FuzzRoutingParseConfig exercises routing.ParseConfig (BR-NOT-066) with

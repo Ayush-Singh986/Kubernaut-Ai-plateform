@@ -19,8 +19,8 @@ package investigator
 import (
 	"sync"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // PhaseClientResolver resolves the appropriate LLM client for a given

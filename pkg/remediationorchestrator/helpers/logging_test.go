@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/helpers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/helpers"
 )
 
 var _ = Describe("Logging Helpers", func() {

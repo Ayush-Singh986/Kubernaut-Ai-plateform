@@ -23,9 +23,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	auditpkg "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	auditpkg "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // F-3 SOC2 Fix: Event Type Consistency Validation Tests

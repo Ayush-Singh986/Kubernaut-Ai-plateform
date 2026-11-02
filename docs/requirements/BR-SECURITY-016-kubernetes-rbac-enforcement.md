@@ -5,7 +5,7 @@
 **Priority**: **P0 (CRITICAL)**
 **Status**: ✅ Implemented
 **Date**: August 3, 2026
-**GitHub Issues**: [#1837](https://github.com/jordigilh/kubernaut/issues/1837)
+**GitHub Issues**: [#1837](https://github.com/Ayush-Singh986/kubernaut/issues/1837)
 
 ---
 

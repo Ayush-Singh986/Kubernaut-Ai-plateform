@@ -284,7 +284,7 @@ func randomSuffix() string {
 name := fmt.Sprintf("test-resource-%s", randomSuffix())
 
 // After
-import "github.com/jordigilh/kubernaut/pkg/testutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 name := testutil.UniqueTestName("test-resource")
 ```
 
@@ -337,7 +337,7 @@ package myservice_test
 import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("MyService Integration", func() {

@@ -30,11 +30,11 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	notification "github.com/jordigilh/kubernaut/internal/controller/notification"
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	notification "github.com/Ayush-Singh986/kubernaut/internal/controller/notification"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	notificationmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

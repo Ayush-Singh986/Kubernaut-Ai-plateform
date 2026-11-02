@@ -62,7 +62,7 @@ An **authoritative document** is the single source of truth for a particular asp
 **Example Compliance**:
 ```go
 // ✅ CORRECT: Uses source service's typed constants
-import signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+import signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
 
 switch sp.Status.Phase {
 case string(signalprocessingv1.PhaseCompleted):  // Authoritative pattern

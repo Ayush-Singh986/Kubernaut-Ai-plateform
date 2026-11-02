@@ -30,10 +30,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/phase"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/phase"
 )
 
 func newTestScheme() *runtime.Scheme {

@@ -25,8 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 )
 
 // ========================================

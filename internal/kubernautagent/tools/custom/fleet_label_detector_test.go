@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/tools/custom"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/tools/custom"
 )
 
 type fleetLabelTool struct {

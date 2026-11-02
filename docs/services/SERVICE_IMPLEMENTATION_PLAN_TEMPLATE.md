@@ -2183,7 +2183,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/jordigilh/kubernaut/pkg/[service]/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/[service]/metrics"
 )
 
 var _ = Describe("BR-XXX-XXX: Metrics Recording", func() {
@@ -2406,8 +2406,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/testutil/kind"
-	"github.com/jordigilh/kubernaut/pkg/[service]"
+	"github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+	"github.com/Ayush-Singh986/kubernaut/pkg/[service]"
 )
 
 func TestMyServiceIntegration(t *testing.T) {
@@ -2496,7 +2496,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"github.com/jordigilh/kubernaut/pkg/[service]"
+	"github.com/Ayush-Singh986/kubernaut/pkg/[service]"
 )
 
 func TestMyServiceIntegration(t *testing.T) {
@@ -2584,7 +2584,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jordigilh/kubernaut/pkg/[service]"
+	"github.com/Ayush-Singh986/kubernaut/pkg/[service]"
 )
 
 func TestMyServiceIntegration(t *testing.T) {
@@ -2678,7 +2678,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/[service]"
+	"github.com/Ayush-Singh986/kubernaut/pkg/[service]"
 )
 
 func TestMyServiceIntegration(t *testing.T) {
@@ -2806,7 +2806,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	[service]v1alpha1 "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+	[service]v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 var _ = Describe("Integration Test 1: Complete Workflow (Pending → Complete)", func() {
@@ -2920,7 +2920,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	[service]v1alpha1 "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+	[service]v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 var _ = Describe("Integration Test 2: Failure Recovery with Automatic Retry", func() {
@@ -3080,7 +3080,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	[service]v1alpha1 "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+	[service]v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 var _ = Describe("Integration Test 3: Graceful Degradation (Partial Failure)", func() {
@@ -6751,7 +6751,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	[servicev1alpha1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+	[servicev1alpha1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 // Reconciler reconciles a [Resource] object
@@ -7826,7 +7826,7 @@ func (c *Client) EnsureConnection(ctx context.Context) error {
 **Usage in Services**:
 ```go
 // pkg/gateway/cache/deduplication.go
-import "github.com/jordigilh/kubernaut/pkg/cache/redis"
+import "github.com/Ayush-Singh986/kubernaut/pkg/cache/redis"
 
 type DeduplicationCache struct {
     redisClient *redis.Client
@@ -7866,7 +7866,7 @@ Shared Redis client with connection management, graceful degradation, and generi
 
 ### Basic Client
 ```go
-import "github.com/jordigilh/kubernaut/pkg/cache/redis"
+import "github.com/Ayush-Singh986/kubernaut/pkg/cache/redis"
 
 client := redis.NewClient(&redis.Options{
     Addr: "localhost:6379",

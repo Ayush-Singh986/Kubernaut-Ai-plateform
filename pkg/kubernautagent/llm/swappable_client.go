@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 )
 
 const oldClientCloseTimeout = 5 * time.Second

@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubecors "github.com/jordigilh/kubernaut/pkg/http/cors"
+	kubecors "github.com/Ayush-Singh986/kubernaut/pkg/http/cors"
 )
 
 var _ = Describe("BR-HTTP-015: shared CORS coverage (issue 668)", func() {

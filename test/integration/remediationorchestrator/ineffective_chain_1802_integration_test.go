@@ -44,10 +44,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 var _ = Describe("CheckIneffectiveRemediationChain target-resource scoping (Issue #1802)", Label("integration", "issue-1802"), func() {

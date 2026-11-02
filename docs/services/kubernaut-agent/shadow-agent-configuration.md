@@ -1,10 +1,10 @@
 # Shadow Agent (Alignment Check) — Configuration Guide
 
 **Version**: 2.0
-**Feature**: Prompt Injection Guardrails ([#601](https://github.com/jordigilh/kubernaut/issues/601))
+**Feature**: Prompt Injection Guardrails ([#601](https://github.com/Ayush-Singh986/kubernaut/issues/601))
 **Since**: v1.4
 **ADR**: [ADR-KA-001](../../architecture/decisions/ADR-KA-001-shadow-agent-alignment-check.md)
-**Issues**: [#1076](https://github.com/jordigilh/kubernaut/issues/1076), [#1077](https://github.com/jordigilh/kubernaut/issues/1077), [#1078](https://github.com/jordigilh/kubernaut/issues/1078)
+**Issues**: [#1076](https://github.com/Ayush-Singh986/kubernaut/issues/1076), [#1077](https://github.com/Ayush-Singh986/kubernaut/issues/1077), [#1078](https://github.com/Ayush-Singh986/kubernaut/issues/1078)
 
 ---
 
@@ -382,7 +382,7 @@ Shadow evaluations generate N+1 LLM calls per investigation (N tool/LLM steps + 
 - **v1.4 scope**: Global enable/disable only — no per-namespace or per-signal granularity
 - **No streaming support**: Shadow evaluation is batch-per-step, not streaming token-by-token
 - **Restart required**: Toggling `enabled` requires a pod restart (no hot-reload for this config in v1.4)
-- **Single shadow model**: One evaluator per KA instance (multi-model consensus deferred to [#648](https://github.com/jordigilh/kubernaut/issues/648))
+- **Single shadow model**: One evaluator per KA instance (multi-model consensus deferred to [#648](https://github.com/Ayush-Singh986/kubernaut/issues/648))
 - **Verdict timeout waiter**: The internal goroutine waiting for evaluations to complete is not cancelled when `verdictTimeout` fires. It self-heals within `timeout` (default 10s) as all pending evaluations carry per-step timeouts. A clean fix (Observer-scoped context cancellation) is deferred to a follow-up PR.
 
 ---

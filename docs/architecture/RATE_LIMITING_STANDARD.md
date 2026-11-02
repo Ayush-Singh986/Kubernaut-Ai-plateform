@@ -49,7 +49,7 @@ import (
     "golang.org/x/time/rate"
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 type InvestigationRateLimiter struct {

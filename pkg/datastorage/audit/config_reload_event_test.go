@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	pkgaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	dsaudit "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
+	pkgaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	dsaudit "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
 )
 
 // GAP-11 (Issue #2285): Data Storage's own outbound CA-cert hot-reload had

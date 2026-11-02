@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	notificationconfig "github.com/jordigilh/kubernaut/pkg/notification/config"
+	notificationconfig "github.com/Ayush-Singh986/kubernaut/pkg/notification/config"
 )
 
 // IT-AUDIT-1985-005: cmd/notification must wire an independent, always-on

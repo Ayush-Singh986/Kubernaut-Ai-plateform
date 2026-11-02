@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // afCreateRRConfig returns a config that instructs the mock LLM to call

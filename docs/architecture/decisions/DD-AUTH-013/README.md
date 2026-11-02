@@ -4,7 +4,7 @@
 **Last Updated**: January 26, 2026  
 **Category**: Authentication & Authorization
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Per
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Per
 > [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) (Phase 2 DataStorage, Phase 3
 > Kubernaut Agent (KA), both ✅ COMPLETE), the `ose-oauth-proxy` **sidecar** described throughout this
 > document has been removed for both DataStorage and KA — confirmed by `charts/kubernaut/templates/`,
@@ -64,7 +64,7 @@ Session summaries and implementation status from January 26, 2026.
 
 ## Scope
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This section and the "Implementation Status" / "Key Files Modified" sections below describe the Kubernaut Agent (KA) as a Python/FastAPI service with generated client paths under `pkg/holmesgpt/client/`; KA has since been rewritten as a native Go service and these implementation details are outdated.
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This section and the "Implementation Status" / "Key Files Modified" sections below describe the Kubernaut Agent (KA) as a Python/FastAPI service with generated client paths under `pkg/holmesgpt/client/`; KA has since been rewritten as a native Go service and these implementation details are outdated.
 
 ### Services Covered
 - **DataStorage Service**: REST API with `ose-oauth-proxy` sidecar
@@ -209,7 +209,7 @@ This design decision is the **canonical reference** for all HTTP status codes re
 
 ### DataStorage Client (Go)
 ```go
-import dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+import dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 
 // Type-safe error handling
 switch v := err.(type) {
@@ -224,7 +224,7 @@ case *dsgen.CreateAuditEventBadRequest:
 
 ### Kubernaut Agent (KA) Client (Go)
 ```go
-import hapiclient "github.com/jordigilh/kubernaut/pkg/holmesgpt/client"
+import hapiclient "github.com/Ayush-Singh986/kubernaut/pkg/holmesgpt/client"
 
 // Custom client with switch statement for type safety
 res, err := client.Investigate(ctx, req)

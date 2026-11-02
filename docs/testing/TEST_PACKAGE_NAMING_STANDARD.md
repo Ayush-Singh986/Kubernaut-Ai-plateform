@@ -32,7 +32,7 @@
 package gateway_test
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 
 // ✅ CORRECT: Integration test (separate directory)
@@ -144,7 +144,7 @@ test/e2e/gateway/                # E2E tests (separate)
 ## 📚 **Related Standards**
 
 - [Testing Strategy](.cursor/rules/03-testing-strategy.mdc) - Overall testing approach
-- [Issue #50](https://github.com/jordigilh/kubernaut/issues/50) - Migration tracking issue
+- [Issue #50](https://github.com/Ayush-Singh986/kubernaut/issues/50) - Migration tracking issue
 
 ---
 

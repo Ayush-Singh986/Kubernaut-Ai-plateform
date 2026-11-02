@@ -222,7 +222,7 @@ ls kubernaut-must-gather/
 ```bash
 # Get artifact download URL
 curl -H "Authorization: token $GITHUB_TOKEN" \
-  https://api.github.com/repos/jordigilh/kubernaut/actions/runs/{run_id}/artifacts
+  https://api.github.com/repos/Ayush-Singh986/kubernaut/actions/runs/{run_id}/artifacts
 
 # Download artifact
 curl -L -H "Authorization: token $GITHUB_TOKEN" \
@@ -291,7 +291,7 @@ git push origin feature-branch
 - **DD-TESTING-002**: [Integration Test Diagnostics (Must-Gather Pattern)](../../architecture/decisions/DD-TESTING-002-integration-test-diagnostics-must-gather.md) — the separate, still-current podman-compose integration-tier mechanism
 - **Integration Test Infrastructure**: `test/infrastructure/shared_integration_utils.go`
 - **E2E Test Cleanup**: `test/infrastructure/datastorage.go` (`DeleteCluster`)
-- ~~**HAPI Integration Triage**: `docs/triage/HAPI_MOCK_LLM_PORT_MISMATCH_JAN_22_2026.md`~~ — dead link removed (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806)); `docs/triage/` no longer exists in the repo
+- ~~**HAPI Integration Triage**: `docs/triage/HAPI_MOCK_LLM_PORT_MISMATCH_JAN_22_2026.md`~~ — dead link removed (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)); `docs/triage/` no longer exists in the repo
 
 ---
 

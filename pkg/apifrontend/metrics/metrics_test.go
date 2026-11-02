@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/metrics"
 )
 
 func TestMetricsSuite(t *testing.T) {

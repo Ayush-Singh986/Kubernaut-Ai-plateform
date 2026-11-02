@@ -451,7 +451,7 @@ Audit Query
 
 ## v1.3 Implementation Status: Kubernaut Agent
 
-Issue [#433](https://github.com/jordigilh/kubernaut/issues/433) (Kubernaut Agent Go rewrite): **Kubernaut Agent (KA)** is the component that performs workflow discovery against Data Storage and drives post-selection validation. For **workflow catalog** audit events (`workflow.catalog.*`), behavior and BR mapping are unchanged: **Data Storage** remains the audit generator; **KA** replaces **HolmesGPT API** as the caller that propagates `remediationId` and triggers DS endpoints.
+Issue [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433) (Kubernaut Agent Go rewrite): **Kubernaut Agent (KA)** is the component that performs workflow discovery against Data Storage and drives post-selection validation. For **workflow catalog** audit events (`workflow.catalog.*`), behavior and BR mapping are unchanged: **Data Storage** remains the audit generator; **KA** replaces **HolmesGPT API** as the caller that propagates `remediationId` and triggers DS endpoints.
 
 | BR | v1.3 status (KA) |
 |----|------------------|
@@ -471,7 +471,7 @@ Issue [#433](https://github.com/jordigilh/kubernaut/issues/433) (Kubernaut Agent
 
 **Authority**: [DD-WORKFLOW-019](../architecture/decisions/DD-WORKFLOW-019-ka-owned-workflow-discovery.md), [DD-WORKFLOW-014 v4.0](../architecture/decisions/DD-WORKFLOW-014-workflow-selection-audit-trail.md)
 
-Issue [#1677](https://github.com/jordigilh/kubernaut/issues/1677) relocates ownership of the workflow/action-type discovery, scoring, and informer-backed cache from Data Storage Service (DS) into KubernautAgent (KA) — see DD-WORKFLOW-019. Because KA now performs the discovery/validation logic directly (not DS), **audit event generation for the four `workflow.catalog.*` events moves with it.** The v1.3 status above ("DS owns step events... Unchanged") is **superseded** by this section wherever the two conflict.
+Issue [#1677](https://github.com/Ayush-Singh986/kubernaut/issues/1677) relocates ownership of the workflow/action-type discovery, scoring, and informer-backed cache from Data Storage Service (DS) into KubernautAgent (KA) — see DD-WORKFLOW-019. Because KA now performs the discovery/validation logic directly (not DS), **audit event generation for the four `workflow.catalog.*` events moves with it.** The v1.3 status above ("DS owns step events... Unchanged") is **superseded** by this section wherever the two conflict.
 
 | BR | v2.1 status (KA-owned generation) |
 |----|------------------------------------|

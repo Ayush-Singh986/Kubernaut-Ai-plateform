@@ -27,7 +27,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // BR-INTERACTIVE-010 SC-5: ServiceAccount detection tests.

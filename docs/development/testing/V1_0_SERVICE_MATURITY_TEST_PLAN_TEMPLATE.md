@@ -172,8 +172,8 @@ var _ = Describe("[Service] Metrics E2E", func() {
 
 ```go
 import (
-    dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/client"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("[Service] Audit Integration", func() {

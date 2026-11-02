@@ -42,7 +42,7 @@
 
 **Service Name**: **Effectiveness Monitor Service**
 **Binary**: `cmd/monitor-service/` (needs to be created)
-**Docker Image**: `quay.io/jordigilh/monitor-service`
+**Docker Image**: `quay.io/Ayush-Singh986/monitor-service`
 **Port**: 8080
 **Type**: NEW standalone stateless HTTP API service
 **V1 Status**: ✅ **INCLUDED IN V1** (per architecture document)
@@ -191,7 +191,7 @@ Response: { "success_rate": 0.87, "total_executions": 150 }
 
 3. **Documentation**:
    - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/overview.md`
-   - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/crd-schema.md` (renamed from `api-specification.md`, [#1806](https://github.com/jordigilh/kubernaut/issues/1806))
+   - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/crd-schema.md` (renamed from `api-specification.md`, [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
    - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/security-configuration.md`
    - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/testing-strategy.md`
    - ⏸️ `docs/services/crd-controllers/07-effectivenessmonitor/implementation-checklist.md`

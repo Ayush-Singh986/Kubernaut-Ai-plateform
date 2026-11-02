@@ -41,12 +41,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	rarconditions "github.com/jordigilh/kubernaut/pkg/remediationapprovalrequest"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	rarconditions "github.com/Ayush-Singh986/kubernaut/pkg/remediationapprovalrequest"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 )
 
 // RARReconciler reconciles RemediationApprovalRequest objects for audit purposes only.

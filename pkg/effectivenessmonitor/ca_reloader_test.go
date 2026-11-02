@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
 )
 
 var _ = Describe("CAReloader (Issue #484, BR-PLATFORM-452)", Label("tls", "hotreload", "484"), func() {

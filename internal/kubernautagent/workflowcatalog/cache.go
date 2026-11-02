@@ -42,8 +42,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	atv1alpha1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
+	atv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
 )
 
 // actionTypeFieldIndex indexes RemediationWorkflow CRDs by spec.actionType,

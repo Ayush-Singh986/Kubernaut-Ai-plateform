@@ -29,7 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
 )
 
 // k8sStatusError builds a Kubernetes API error with an arbitrary

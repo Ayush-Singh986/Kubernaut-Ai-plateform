@@ -33,12 +33,12 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/agentsession"
-	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/agentsession"
+	kaaudit "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	karbac "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/rbac"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
 )
 
 // buildAgentSessionScheme builds the scheme for the AgentSession dispatcher's

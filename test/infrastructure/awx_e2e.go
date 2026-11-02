@@ -67,7 +67,7 @@ const (
 	AWXTokenSecretName = "awx-api-token"
 
 	// AWXTestPlaybooksRepo is the GitHub repo containing E2E test playbooks.
-	AWXTestPlaybooksRepo   = "https://github.com/jordigilh/kubernaut-test-playbooks.git"
+	AWXTestPlaybooksRepo   = "https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git"
 	AWXTestPlaybooksCommit = "42eadeba052b13e3ec4e113ebc8165efd5497974"
 
 	// AWXNodePort is the host-accessible port for AWX API in Kind.

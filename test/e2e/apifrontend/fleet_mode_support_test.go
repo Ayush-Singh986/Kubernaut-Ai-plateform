@@ -20,8 +20,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 const (

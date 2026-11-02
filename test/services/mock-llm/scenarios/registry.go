@@ -18,7 +18,7 @@ package scenarios
 import (
 	"sync"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // Scenario defines the interface that all scenario implementations must satisfy.

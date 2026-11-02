@@ -26,7 +26,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // remediationHistoryRepoAdapter adapts repository.RemediationHistoryRepository

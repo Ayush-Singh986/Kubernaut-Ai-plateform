@@ -4,7 +4,7 @@
 
 This document describes the comprehensive resilience patterns and failure handling mechanisms implemented in the Kubernaut system to ensure high availability, graceful degradation, and robust error recovery.
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This document describes an in-process fallback chain (a single `AIServiceIntegrator` with an in-process circuit breaker calling a "Direct LLM Analysis" and "Rule-based Fallback") that does not reflect the current CRD-based microservices architecture, where AIAnalysis is a separate controller with Kubernaut Agent (KA) as the sole V1.0 AI provider (no in-process multi-provider LLM fallback chain).
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This document describes an in-process fallback chain (a single `AIServiceIntegrator` with an in-process circuit breaker calling a "Direct LLM Analysis" and "Rule-based Fallback") that does not reflect the current CRD-based microservices architecture, where AIAnalysis is a separate controller with Kubernaut Agent (KA) as the sole V1.0 AI provider (no in-process multi-provider LLM fallback chain).
 >
 > **Additionally verified** (naming/metrics only, architecture correction above still stands): no
 > `CircuitBreaker` type exists anywhere in `pkg/aianalysis` — the real resilience mechanism for KA HTTP

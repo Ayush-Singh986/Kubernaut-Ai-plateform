@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // UT-ACM-054-FILTER: buildFilters unit tests

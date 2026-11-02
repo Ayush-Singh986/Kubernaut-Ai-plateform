@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
+	"github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
 )
 
 // eaigwVariant is this package's shared.Variant implementation: the only

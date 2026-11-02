@@ -3,7 +3,7 @@
 ### Overview
 
 **Architectural Principle**: Remediation Coordinator provides targeting data only (~8KB). Kubernaut Agent (KA)
-(formerly "HolmesGPT" — renamed in the Go rewrite, v1.3, issue [#433](https://github.com/jordigilh/kubernaut/issues/433))
+(formerly "HolmesGPT" — renamed in the Go rewrite, v1.3, issue [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433))
 fetches logs/metrics dynamically using built-in tools.
 
 **Why This Matters**: Understanding this pattern ensures compliance with Kubernetes etcd limits and provides fresh data for KA investigations.
@@ -81,7 +81,7 @@ spec:
 
 **AIAnalysis Controller → Kubernaut Agent (KA) REST API** (via `pkg/agentclient`, OpenAPI-generated):
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The snippet
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The snippet
 > below is illustrative pseudocode only — it does not reflect a real Go API. The actual integration is the
 > AIAnalysis controller calling KA's REST API through the generated `pkg/agentclient` client; see
 > `test/integration/aianalysis/agentclient_integration_test.go` for the real call pattern and

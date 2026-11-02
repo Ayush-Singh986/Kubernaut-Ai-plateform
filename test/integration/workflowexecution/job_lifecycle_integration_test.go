@@ -30,11 +30,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	weconditions "github.com/jordigilh/kubernaut/pkg/workflowexecution"
-	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	weconditions "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution"
+	weaudit "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
 )
 
 const differentWorkflowID = "test-workflow-different"

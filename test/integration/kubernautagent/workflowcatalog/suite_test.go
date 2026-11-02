@@ -36,8 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 var (

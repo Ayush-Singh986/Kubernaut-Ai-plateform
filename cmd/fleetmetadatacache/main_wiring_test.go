@@ -45,12 +45,12 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	fmcconfig "github.com/jordigilh/kubernaut/pkg/fleet/fmc/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	fmcconfig "github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // Issue #1683: FMC server TLS + 3-port standard + FedRAMP profile wiring.

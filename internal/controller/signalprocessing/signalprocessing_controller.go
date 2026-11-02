@@ -45,17 +45,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/audit"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/classifier"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/status"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/classifier"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/status"
 	// BR-SP-110: Kubernetes Conditions
 )
 

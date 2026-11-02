@@ -31,13 +31,13 @@ import (
 
 	"github.com/go-logr/logr"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // Test suite for Data Storage E2E tests

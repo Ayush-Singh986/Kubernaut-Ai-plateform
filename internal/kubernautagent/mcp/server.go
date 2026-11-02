@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	sharedauth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	sharedauth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

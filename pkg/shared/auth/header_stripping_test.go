@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 var _ = Describe("Impersonation Header Stripping — #703", func() {

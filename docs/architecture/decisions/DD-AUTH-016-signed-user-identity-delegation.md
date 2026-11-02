@@ -189,7 +189,7 @@ Graceful degradation (the fail-open behavior specified in "Key Design Properties
 - **New DoS surface**: since the control's purpose is forensic, a benign signing bug now denies legitimate operator requests entirely instead of just weakening the audit trail for that call
 - **Does not harden the compromised-AF case** — see Threat Model Note above; this is not a security improvement over Alternative B against that threat, only against non-malicious defects
 
-**Status**: Deferred — not adopted here. Tracked separately in [#1907](https://github.com/jordigilh/kubernaut/issues/1907), which should only be considered after Alternative B's graceful-degradation mode has run in production long enough to confirm `identity_verified = false` telemetry stays near zero.
+**Status**: Deferred — not adopted here. Tracked separately in [#1907](https://github.com/Ayush-Singh986/kubernaut/issues/1907), which should only be considered after Alternative B's graceful-degradation mode has run in production long enough to confirm `identity_verified = false` telemetry stays near zero.
 
 **Confidence**: not scored — captured for future reference, not proposed for adoption in this decision.
 

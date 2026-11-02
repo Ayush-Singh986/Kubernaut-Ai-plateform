@@ -1,6 +1,6 @@
 # Audit Shared Library
 
-**Package**: `github.com/jordigilh/kubernaut/pkg/audit`
+**Package**: `github.com/Ayush-Singh986/kubernaut/pkg/audit`
 
 **Authority**: DD-AUDIT-002 (Audit Shared Library Design)
 
@@ -75,7 +75,7 @@ This package provides a **shared library** for asynchronous buffered audit trace
 
 ```go
 import (
-    "github.com/jordigilh/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 ```
 
@@ -292,8 +292,8 @@ import (
     "context"
     "log/slog"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
 )
 
 type Gateway struct {

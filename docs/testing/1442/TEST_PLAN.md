@@ -1,6 +1,6 @@
 # Test Plan: Fix #1442 MCP Session State Lost
 
-**Issue**: [#1442](https://github.com/jordigilh/kubernaut/issues/1442)
+**Issue**: [#1442](https://github.com/Ayush-Singh986/kubernaut/issues/1442)
 **Service Type**: [x] Stateless HTTP API (API Frontend + Kubernaut Agent)
 **Date**: 2026-06-16
 **Status**: Active

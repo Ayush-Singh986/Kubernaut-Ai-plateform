@@ -34,8 +34,8 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/genai"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // wiringLogSink is a minimal logr.LogSink that records Info() messages, used

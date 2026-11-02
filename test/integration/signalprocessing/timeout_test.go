@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	spconditions "github.com/jordigilh/kubernaut/pkg/signalprocessing"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	spconditions "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing"
 )
 
 // DD-TIMEOUT-002 / Issue #2176: proves SignalProcessing self-enforces RO's

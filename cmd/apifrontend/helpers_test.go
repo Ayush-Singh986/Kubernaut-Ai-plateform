@@ -5,8 +5,8 @@ import (
 
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
 )
 
 func TestParseLogLevel(t *testing.T) {

@@ -35,7 +35,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 var _ = Describe("Issue #673: Request Body Size Limit (BR-GATEWAY-182)", Ordered, ContinueOnFailure, func() {

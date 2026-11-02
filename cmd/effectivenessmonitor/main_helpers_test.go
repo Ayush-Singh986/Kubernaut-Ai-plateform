@@ -25,8 +25,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
 )
 
 // TestLoadEffectivenessMonitorConfig_DefaultsWhenPathEmpty is a

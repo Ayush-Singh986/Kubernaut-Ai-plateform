@@ -26,10 +26,10 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/utils/ptr"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/agentsession"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/agentsession"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // BR-AA-KA-065.2: AgentSession.Spec is a lossless 1:1 translation of the

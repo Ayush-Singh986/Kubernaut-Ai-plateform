@@ -118,11 +118,11 @@ against the extracted shared validator.
 ### 4.2 Features Not to be Tested
 
 - **Operator CRD exposure of `reasoning` for `phaseModels`/`ai.alignmentCheck.llm`**: `phaseModels`
-  *itself* is already exposed via the Kubernaut CRD (`kubernaut-operator` [#178](https://github.com/jordigilh/kubernaut-operator/issues/178),
+  *itself* is already exposed via the Kubernaut CRD (`kubernaut-operator` [#178](https://github.com/Ayush-Singh986/kubernaut-operator/issues/178),
   merged) and propagated into KA's ConfigMap today. What is **not** yet exposed is the new
   `reasoning` sub-field this issue adds — that requires a CRD schema change
   (`LLMSpec.Reasoning`/`LLMPhaseOverrideSpec.Reasoning`) tracked separately as
-  `kubernaut-operator` [#211](https://github.com/jordigilh/kubernaut-operator/issues/211) (open).
+  `kubernaut-operator` [#211](https://github.com/Ayush-Singh986/kubernaut-operator/issues/211) (open).
   Operators using ConfigMap-based config (bypassing the CRD, e.g. `RuntimeConfigMapName`) can use
   this issue's fix today; CRD users need #211 to land first. Cross-linked on both issues.
 - **`pkg/apifrontend`'s own `phaseModels` concept**: confirmed (grep) AF has no per-phase concept

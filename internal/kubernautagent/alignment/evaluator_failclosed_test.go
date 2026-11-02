@@ -26,10 +26,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
-	alignprompt "github.com/jordigilh/kubernaut/internal/kubernautagent/alignment/prompt"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment"
+	alignprompt "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment/prompt"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 var _ = Describe("Fail-closed behavior — BR-AI-601", func() {

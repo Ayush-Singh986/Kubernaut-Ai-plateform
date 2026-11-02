@@ -9,7 +9,7 @@
 
 ## Context & Problem
 
-**Problem** (Issue #1888, `main`/v1.6 tracking clone [#1890](https://github.com/jordigilh/kubernaut/issues/1890)): AF's `kubectl_get`/`kubectl_list` MCP tools intermittently fail to
+**Problem** (Issue #1888, `main`/v1.6 tracking clone [#1890](https://github.com/Ayush-Singh986/kubernaut/issues/1890)): AF's `kubectl_get`/`kubectl_list` MCP tools intermittently fail to
 resolve valid CRD kinds (e.g., Red Hat ACM's `search.open-cluster-management.io/Search`) with
 "cannot resolve GVK for kind", even though the CRD is genuinely installed and RBAC-accessible.
 The failure is permanent for the life of the pod — a restart fixes it.
@@ -228,7 +228,7 @@ if mapper != nil {
 | `docs/tests/1888/TEST_PLAN.md` | Test plan for this fix |
 | `pkg/kubernautagent/tools/k8s/resolver.go` | Existing precedent for the same retry pattern |
 | Issue #310 / #1275 / #1040 | Prior `gvk.go` fixes (ambiguity, static-table CRDs, apiVersion disambiguation) |
-| [PR #1896](https://github.com/jordigilh/kubernaut/pull/1896) | `release/v1.5` implementation (design authority for this port) |
+| [PR #1896](https://github.com/Ayush-Singh986/kubernaut/pull/1896) | `release/v1.5` implementation (design authority for this port) |
 
 ---
 

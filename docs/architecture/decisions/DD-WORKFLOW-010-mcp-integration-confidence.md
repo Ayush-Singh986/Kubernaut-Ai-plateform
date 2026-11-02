@@ -5,7 +5,7 @@
 **Target Version**: v1.0 (MVP)
 **Related**: DD-WORKFLOW-008, DD-WORKFLOW-009, DD-EMBEDDING-001, DD-STORAGE-008
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Nov 2025 proposal describes a **Python** `kubernaut-agent`, a temporary Mock MCP Server, a semantic
 > `/api/v1/playbooks/search` REST endpoint on Data Storage, and a planned separate Embedding Service —
 > none of which reflect the shipped architecture. `kubernaut-agent`/HolmesGPT-API was rewritten in Go as

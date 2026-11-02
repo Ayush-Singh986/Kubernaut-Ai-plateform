@@ -25,7 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	dsmetrics "github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
+	dsmetrics "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
 )
 
 // Worker periodically purges expired audit events from PostgreSQL.

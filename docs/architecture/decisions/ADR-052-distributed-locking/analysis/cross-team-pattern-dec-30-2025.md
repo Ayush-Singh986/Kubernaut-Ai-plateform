@@ -593,7 +593,7 @@ if err != nil {
 ## Contact
 
 **Gateway Team Lead**: [Contact Info]
-**Document Author**: AI Assistant (via jordigilh)
+**Document Author**: AI Assistant (via Ayush-Singh986)
 **Questions**: Create issue in `kubernaut` repo with tag `cross-team:ro-gateway`
 
 ---

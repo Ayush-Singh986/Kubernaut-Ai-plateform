@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 var _ = Describe("DD-KA-2496 phase-rejection audit (BR-AUDIT-005, AU-2/AU-3, CC7.2)", func() {

@@ -16,11 +16,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 var _ = Describe("PagerDuty Delivery Integration (#60)", func() {

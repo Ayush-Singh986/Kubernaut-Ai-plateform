@@ -6,7 +6,7 @@
 **Business Impact**: Strategic Platform Evolution
 **Status**: 🗄️ **SUPERSEDED** — see note below
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Jan 2025 executive summary describes a standalone **Context API service** and a Python **HolmesGPT**
 > with pluggable toolsets, providing "historical intelligence" as a distinct service from real-time
 > investigation. That standalone Context API service was deprecated and removed; its capabilities were

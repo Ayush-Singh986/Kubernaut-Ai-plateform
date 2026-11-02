@@ -76,8 +76,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-    "github.com/jordigilh/kubernaut/pkg/gateway/processing"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 )
 
 var _ = Describe("BR-GATEWAY-001: Prometheus Adapter", func() {
@@ -165,9 +165,9 @@ import (
     . "github.com/onsi/gomega"
     goredis "github.com/go-redis/redis/v8"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/kind"
-    "github.com/jordigilh/kubernaut/pkg/gateway"
-    "github.com/jordigilh/kubernaut/internal/gateway/redis"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/internal/gateway/redis"
 )
 
 var suite *kind.IntegrationSuite

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ds"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ds"
 )
 
 // ListWorkflowsArgs defines the input for kubernaut_list_workflows.

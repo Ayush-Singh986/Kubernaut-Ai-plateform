@@ -22,8 +22,8 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // Summarizer uses a secondary LLM call to shorten tool output that exceeds

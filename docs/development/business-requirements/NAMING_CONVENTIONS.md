@@ -145,13 +145,13 @@ package ai_business_test  // Component + business_test suffix
 
 import (
     // Production code under test
-    "github.com/jordigilh/kubernaut/pkg/ai/insights"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ai/insights"
 
     // Shared business test utilities
-    "github.com/jordigilh/kubernaut/test/business-requirements/shared"
+    "github.com/Ayush-Singh986/kubernaut/test/business-requirements/shared"
 
     // Centralized mocks
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 )
 ```
 
@@ -161,10 +161,10 @@ package insights_test  // Component_test suffix
 
 import (
     // Production code under test
-    "github.com/jordigilh/kubernaut/pkg/ai/insights"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ai/insights"
 
     // Centralized mocks for minimal dependencies
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 )
 ```
 

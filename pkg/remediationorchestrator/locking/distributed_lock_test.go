@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/locking"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/locking"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

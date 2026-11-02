@@ -31,13 +31,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/types"
 
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ratelimit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ratelimit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 // resultLabelSuccess is the tool-call/audit result label used when a tool

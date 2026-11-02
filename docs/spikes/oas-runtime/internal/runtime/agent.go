@@ -12,7 +12,7 @@ import (
 	"github.com/codeany-ai/open-agent-sdk-go/hooks"
 	"github.com/codeany-ai/open-agent-sdk-go/types"
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/spikes/oas-runtime/internal/acp"
+	"github.com/Ayush-Singh986/kubernaut/spikes/oas-runtime/internal/acp"
 )
 
 // Config holds OAS Runtime configuration.

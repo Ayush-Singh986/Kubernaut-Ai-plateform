@@ -31,7 +31,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 var _ = Describe("Test 16: Structured Logging Verification (BR-GATEWAY-024, BR-GATEWAY-075)", Ordered, ContinueOnFailure, func() {

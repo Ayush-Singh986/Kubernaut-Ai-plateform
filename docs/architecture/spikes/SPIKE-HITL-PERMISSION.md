@@ -1,8 +1,8 @@
 # Spike: HITL Tool Approval via PermissionRequest Hook + ACP Awaiting State
 
-**Issue**: [#1203](https://github.com/jordigilh/kubernaut/issues/1203)
+**Issue**: [#1203](https://github.com/Ayush-Singh986/kubernaut/issues/1203)
 **Design Gate**: DG-24
-**Status**: COMPLETED — the SDK-hook-to-ACP-awaiting-state bridge validated here is superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536): Kubernaut no longer has an in-process SDK hook inside an opaque agent to bridge from. Pre-execution, per-tool-call HITL approval (pause-and-ask before the agent's tool call runs) has no clear equivalent in the opaque-agent model yet — AuthBridge's interception point (per `ADR-KA-002`) can only block/allow in-flight, not negotiate approval the way this spike's hook did. Open, unscheduled.
+**Status**: COMPLETED — the SDK-hook-to-ACP-awaiting-state bridge validated here is superseded by [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536): Kubernaut no longer has an in-process SDK hook inside an opaque agent to bridge from. Pre-execution, per-tool-call HITL approval (pause-and-ask before the agent's tool call runs) has no clear equivalent in the opaque-agent model yet — AuthBridge's interception point (per `ADR-KA-002`) can only block/allow in-flight, not negotiate approval the way this spike's hook did. Open, unscheduled.
 **Date**: 2026-05-20
 
 ## Objective

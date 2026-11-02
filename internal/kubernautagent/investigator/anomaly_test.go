@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
 )
 
 // DescribeTable and Entry are dot-imported from ginkgo/v2 above.

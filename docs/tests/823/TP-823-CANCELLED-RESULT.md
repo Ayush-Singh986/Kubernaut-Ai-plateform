@@ -61,7 +61,7 @@ in the session Manager.
 - **BR-SESSION-001**: Operator can cancel an autonomous investigation in progress
 - **BR-SESSION-002**: Cancelled investigation preserves accumulated context (snapshot)
 - **BR-SESSION-005**: All session control actions are audited (cancel, observe)
-- **BR-SESSION-007**: Streaming event types are runtime-agnostic, forward-compatible with the opaque-OCI-agent/AuthBridge event relay model ([#1535](https://github.com/jordigilh/kubernaut/issues/1535))
+- **BR-SESSION-007**: Streaming event types are runtime-agnostic, forward-compatible with the opaque-OCI-agent/AuthBridge event relay model ([#1535](https://github.com/Ayush-Singh986/kubernaut/issues/1535))
 - **ADR-038**: Async Buffered Audit Ingestion — fire-and-forget semantics
 - **Issue #823**: Session Store Cancellation Infrastructure (parent issue)
 - **TP-823-v1.0**: Companion test plan for PR1 cancellation infrastructure
@@ -623,11 +623,11 @@ go test ./test/integration/kubernautagent/session/... -ginkgo.v -ginkgo.focus="I
 go build ./... && make test
 
 # Coverage (unit, investigator)
-go test ./test/unit/kubernautagent/investigator/... -coverprofile=cover_inv.out -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/investigator
+go test ./test/unit/kubernautagent/investigator/... -coverprofile=cover_inv.out -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator
 go tool cover -func=cover_inv.out
 
 # Coverage (integration, session manager)
-go test ./test/integration/kubernautagent/session/... -coverprofile=cover_sess.out -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/session
+go test ./test/integration/kubernautagent/session/... -coverprofile=cover_sess.out -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session
 go tool cover -func=cover_sess.out
 
 # Race detection

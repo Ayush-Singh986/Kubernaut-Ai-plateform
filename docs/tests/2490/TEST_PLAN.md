@@ -14,7 +14,7 @@
 
 ## 1. Purpose and Business Outcome
 
-Issue [#2490](https://github.com/jordigilh/kubernaut/issues/2490) fixes the
+Issue [#2490](https://github.com/Ayush-Singh986/kubernaut/issues/2490) fixes the
 remediation-history path truncating a causal chain after the latest remediation
 whose Effectiveness Monitor post-hash matches the current resource hash. The
 DataStorage query must expose every earlier linked remediation so the
@@ -66,7 +66,7 @@ the response into disjoint Tier 1 and Tier 2 windows.
 - **BR-KA-016**: remediation history context for LLM prompt enrichment.
 - **BR-INS-001 / BR-INS-002**: effectiveness assessment and correlation consumed by the history context.
 - [DD-KA-016](../../architecture/decisions/DD-KA-016-remediation-history-context.md): two-tier history architecture, amended to v1.6 for #2490.
-- Issue [#2490](https://github.com/jordigilh/kubernaut/issues/2490).
+- Issue [#2490](https://github.com/Ayush-Singh986/kubernaut/issues/2490).
 - Issue #616: dual pre/post-hash anchor matching.
 - Issue #1802: target-resource and optional cluster isolation.
 - DataStorage due-diligence F1: time-unbounded EM correlation across tier boundaries.
@@ -272,7 +272,7 @@ envtest/E2E prerequisite is currently unavailable when
 | Tier bridge partition | `pkg/datastorage/server/remediation_history_handler.go` | Implemented and validated |
 | Prompt guidance | `internal/kubernautagent/prompt/` | Implemented and validated |
 | DD amendment | `docs/architecture/decisions/DD-KA-016-remediation-history-context.md` | Complete |
-| Upstream PR/image digest/ownership | PR [#2491](https://github.com/jordigilh/kubernaut/pull/2491) and image evidence below | Published; live validation pending |
+| Upstream PR/image digest/ownership | PR [#2491](https://github.com/Ayush-Singh986/kubernaut/pull/2491) and image evidence below | Published; live validation pending |
 
 ## 11. Release Image and Ownership Evidence
 

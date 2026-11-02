@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
 )
 
 // =============================================================================

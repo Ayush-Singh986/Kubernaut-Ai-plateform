@@ -21,11 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/prompt"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/prompt"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // RunWorkflowDiscoveryFromRCA executes Phase 3 (workflow selection) using a

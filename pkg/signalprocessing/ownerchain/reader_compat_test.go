@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/ownerchain"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/ownerchain"
 )
 
 func TestOwnerchainReaderCompat(t *testing.T) {

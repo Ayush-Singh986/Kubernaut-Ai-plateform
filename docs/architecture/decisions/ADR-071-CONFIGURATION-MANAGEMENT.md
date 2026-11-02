@@ -38,7 +38,7 @@ import (
     "os"
 
     "{module}/pkg/{service}/config"  // or internal/config/{service} for CRD controllers
-    kubelog "github.com/jordigilh/kubernaut/pkg/log"
+    kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 func main() {
@@ -388,7 +388,7 @@ import (
 
     "gopkg.in/yaml.v3"
 
-    sharedconfig "github.com/jordigilh/kubernaut/internal/config"
+    sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
 )
 
 // DefaultConfigPath is the standard Kubernetes ConfigMap mount path for this service.

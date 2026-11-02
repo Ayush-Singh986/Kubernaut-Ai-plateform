@@ -26,7 +26,7 @@ limitations under the License.
 //
 //	import (
 //	    "github.com/go-chi/chi/v5"
-//	    kubecors "github.com/jordigilh/kubernaut/pkg/http/cors"
+//	    kubecors "github.com/Ayush-Singh986/kubernaut/pkg/http/cors"
 //	)
 //
 //	func setupRouter() chi.Router {

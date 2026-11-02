@@ -24,7 +24,7 @@ limitations under the License.
 package audit
 
 import (
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // ComponentMapping maps string component names to OpenAPI ErrorDetails.Component enum values.

@@ -171,7 +171,7 @@ import (
     "encoding/json"
     "fmt"
 
-    remediationv1 "github.com/jordigilh/kubernaut/pkg/apis/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediation/v1"
     ctrl "sigs.k8s.io/controller-runtime"
 )
 

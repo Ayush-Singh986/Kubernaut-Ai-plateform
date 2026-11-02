@@ -23,9 +23,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
-	alignprompt "github.com/jordigilh/kubernaut/internal/kubernautagent/alignment/prompt"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment"
+	alignprompt "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment/prompt"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // todoPayloads are test payloads for agent-internal todo_write/todo_read

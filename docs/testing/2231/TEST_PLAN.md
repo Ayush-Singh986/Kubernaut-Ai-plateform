@@ -17,7 +17,7 @@ to a controller-runtime `Reconciler` + `dispatchCleanupFinalizer`, closing the u
 
 ### 1.1 Purpose
 
-Issue [#2231](https://github.com/jordigilh/kubernaut/issues/2231) tracks a confirmed-live
+Issue [#2231](https://github.com/Ayush-Singh986/kubernaut/issues/2231) tracks a confirmed-live
 reliability gap in KA's `Dispatcher`: a raw `watch.Deleted` event for `AgentSession` is
 delivered at-most-once, outside controller-runtime's workqueue retry machinery, and can be
 silently dropped under load (proven for AF's structurally-identical prior design, DD-AA-KA-001's
@@ -56,7 +56,7 @@ the fix: adopting the same `Manager` + `Reconciler` + finalizer pattern already 
 
 - [DD-AA-KA-001](../../architecture/decisions/DD-AA-KA-001-agentsession-crd-http-removal.md), Amendment: #2231 (2026-08-22) — the design decision this plan implements
 - [BR-AA-KA-065](../../requirements/BR-AA-KA-065-agentsession-watch-design.md) — AgentSession watch/dispatch design
-- Issue [#2231](https://github.com/jordigilh/kubernaut/issues/2231)
+- Issue [#2231](https://github.com/Ayush-Singh986/kubernaut/issues/2231)
 
 ### 2.2 Cross-References
 

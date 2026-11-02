@@ -9,15 +9,15 @@ import (
 	"google.golang.org/adk/v2/model"
 	adksession "google.golang.org/adk/v2/session"
 
-	"github.com/jordigilh/kubernaut/internal/version"
+	"github.com/Ayush-Singh986/kubernaut/internal/version"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ratelimit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ratelimit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 func buildMCPHandler(d *handlerDeps) (http.Handler, func() bool, error) {

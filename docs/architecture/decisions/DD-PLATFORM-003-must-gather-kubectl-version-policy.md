@@ -183,7 +183,7 @@ this specific tool.
 
 ## 2026-10-17 Amendment: CVE-2026-56851 Exception
 
-The release workflow run [39064021455](https://github.com/jordigilh/kubernaut/actions/runs/39064021455)
+The release workflow run [39064021455](https://github.com/Ayush-Singh986/kubernaut/actions/runs/39064021455)
 reported **CVE-2026-56851** in the bundled `kubectl` binary's
 `golang.org/x/text v0.33.0` dependency (fixed in `v0.41.0`). Per the user's
 direction, retain the existing released `kubectl v1.36.2` and add only this

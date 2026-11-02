@@ -20,7 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 // HistoricalDecisionTextLimit is the per-field bound for model-authored

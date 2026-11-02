@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // replayConfidence is set higher than keyword scenarios (1.0) so that

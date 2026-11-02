@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

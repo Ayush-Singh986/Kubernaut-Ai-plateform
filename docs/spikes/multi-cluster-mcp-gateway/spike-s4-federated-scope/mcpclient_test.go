@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	mcpclient "github.com/jordigilh/kubernaut/docs/spikes/multi-cluster-mcp-gateway/spike-s4-federated-scope"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	mcpclient "github.com/Ayush-Singh986/kubernaut/docs/spikes/multi-cluster-mcp-gateway/spike-s4-federated-scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 var _ = Describe("FederatedScopeChecker — Spike S4", func() {

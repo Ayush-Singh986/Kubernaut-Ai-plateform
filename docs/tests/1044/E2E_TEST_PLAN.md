@@ -63,7 +63,7 @@ and IT-KA-1044-001 in the parent test plan.
 
 ### 2.1 Authoritative Documents
 
-- [Issue #1044](https://github.com/jordigilh/kubernaut/issues/1044) — apiVersion omission regression
+- [Issue #1044](https://github.com/Ayush-Singh986/kubernaut/issues/1044) — apiVersion omission regression
 - [TP-1044-v1.0](TEST_PLAN.md) — Parent test plan (unit + integration tiers)
 - BR-AI-1044 — apiVersion validation gate for ambiguous kinds
 - [TESTING_GUIDELINES.md](../../development/business-requirements/TESTING_GUIDELINES.md) — Per-tier >=80%

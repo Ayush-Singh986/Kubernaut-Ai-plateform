@@ -8,7 +8,7 @@
 **Date**: December 6, 2025
 
 **Last Updated**: 2026-08-01 — Renamed from `BR-KA-198` and re-categorized under the `BR-AI-*`
-prefix ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) follow-up). The
+prefix ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) follow-up). The
 mechanical Tier B1 rename (`BR-HAPI-198` → `BR-KA-198`) was ID-only and preserved the original
 (mis-scoped) `HAPI`/`KA` service prefix, but this requirement's content has always assigned
 rule-based threshold evaluation to **AIAnalysis**, not Kubernaut Agent — KA only returns

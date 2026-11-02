@@ -16,7 +16,7 @@
 
 ### Problem Statement
 
-Gateway, EffectivenessMonitor (EM), and KubernautAgent (KA) all perform owner-chain resolution — walking Kubernetes owner references to correlate a Pod/alert-label resource kind up to its owning controller (Deployment, OLM `Subscription`, Istio `AuthorizationPolicy`, ArgoCD `Application`, etc.) for fingerprinting and investigation. When the service's own ServiceAccount lacks `get`/`list`/`watch` on a resource kind that appears in this chain, resolution fails and the signal is **silently dropped** — no `RemediationRequest` is ever created (issue [#1069](https://github.com/jordigilh/kubernaut/issues/1069)).
+Gateway, EffectivenessMonitor (EM), and KubernautAgent (KA) all perform owner-chain resolution — walking Kubernetes owner references to correlate a Pod/alert-label resource kind up to its owning controller (Deployment, OLM `Subscription`, Istio `AuthorizationPolicy`, ArgoCD `Application`, etc.) for fingerprinting and investigation. When the service's own ServiceAccount lacks `get`/`list`/`watch` on a resource kind that appears in this chain, resolution fails and the signal is **silently dropped** — no `RemediationRequest` is ever created (issue [#1069](https://github.com/Ayush-Singh986/kubernaut/issues/1069)).
 
 `kubernaut-operator` closed this gap for Gateway/EM by hardcoding a broad, ever-growing `PolicyRule` list (`ownerChainResolutionRules()`, `internal/resources/rbac.go:708-727`) covering PDB, OLM, Istio, cert-manager, ArgoCD, OpenShift Routes, and KubeVirt/CDI — unconditionally merged into both ClusterRoles. This repo's own Helm chart has **no such list at all for Gateway** (confirmed empty on both `main` and `release/v1.5`) and only partial coverage for EM/KA.
 
@@ -34,7 +34,7 @@ Simply porting the operator's hardcoded list into the Helm chart (the originally
 
 ### Trigger
 
-Issue [#1069](https://github.com/jordigilh/kubernaut/issues/1069) (RBAC gaps silently drop signals) + design review pushback on the initially-proposed fix (porting the operator's hardcoded ecosystem list verbatim into the Helm chart).
+Issue [#1069](https://github.com/Ayush-Singh986/kubernaut/issues/1069) (RBAC gaps silently drop signals) + design review pushback on the initially-proposed fix (porting the operator's hardcoded ecosystem list verbatim into the Helm chart).
 
 ---
 
@@ -74,7 +74,7 @@ Issue [#1069](https://github.com/jordigilh/kubernaut/issues/1069) (RBAC gaps sil
 
 ### Alternative 3a: Bind Gateway to the built-in `view` ClusterRole (matches existing #545 pattern)
 
-**Approach**: Add a `gateway-view` `ClusterRoleBinding` binding Gateway's ServiceAccount to Kubernetes' built-in aggregated `view` ClusterRole — the exact pattern RemediationOrchestrator and EffectivenessMonitor already use (issue [#545](https://github.com/jordigilh/kubernaut/issues/545), `docs/tests/545/TEST_PLAN.md`, `effectivenessmonitor-view` / `remediationorchestrator-view` bindings).
+**Approach**: Add a `gateway-view` `ClusterRoleBinding` binding Gateway's ServiceAccount to Kubernetes' built-in aggregated `view` ClusterRole — the exact pattern RemediationOrchestrator and EffectivenessMonitor already use (issue [#545](https://github.com/Ayush-Singh986/kubernaut/issues/545), `docs/tests/545/TEST_PLAN.md`, `effectivenessmonitor-view` / `remediationorchestrator-view` bindings).
 
 **Discovery during spike**: Kubernetes' built-in `view` ClusterRole aggregates rules from any `ClusterRole` labeled `rbac.authorization.k8s.io/aggregate-to-view: "true"` — a live, controller-managed mechanism, not a static list (confirmed against `kubernetes/kubernetes` upstream source; PDB read was added to `view` via [kubernetes/kubernetes#52654](https://github.com/kubernetes/kubernetes/pull/52654) and ships in the `system:aggregate-to-view` bootstrap ClusterRole). "Well-behaved" ecosystem operators (cert-manager, Istio, KubeVirt) publish their own aggregated ClusterRoles with this label, so `view` transparently gains read access to their CRDs — **only on clusters where those operators are actually installed**. This is a stronger least-privilege property than a static hardcoded list: the effective permission set is contingent on what's actually present on a given cluster, not on what Kubernetes might install elsewhere.
 
@@ -151,7 +151,7 @@ Issue [#1069](https://github.com/jordigilh/kubernaut/issues/1069) (RBAC gaps sil
 - `charts/kubernaut/tests/owner_chain_rbac_extensibility_test.yaml` — helm-unittest coverage (IT-HELM-1069-001..004)
 - `docs/installation/02-configure-services.md` (follow-up) — sample `ClusterRole` snippets for OLM, ArgoCD
 
-**Not in scope for this repo**: `kubernaut-operator`. [jordigilh/kubernaut-operator#277](https://github.com/jordigilh/kubernaut-operator/issues/277) (v1.6) tracks the same redesign for that repo's maintainers to decide on independently.
+**Not in scope for this repo**: `kubernaut-operator`. [Ayush-Singh986/kubernaut-operator#277](https://github.com/Ayush-Singh986/kubernaut-operator/issues/277) (v1.6) tracks the same redesign for that repo's maintainers to decide on independently.
 
 ### Addendum: `global.additionalClusterRoles` (2026-08-02, post-implementation)
 
@@ -192,7 +192,7 @@ values, templates, tests, and docs. Breaking, pre-GA change; no migration path n
 
 - **Related**: [DD-FLEET-001](DD-FLEET-001-fleet-scope-and-owner-chain.md) (owner chain resolution for fleet/remote clusters — a different owner-chain concern, not superseded by this decision)
 - **Builds On**: #1686/BR-RBAC-020 (namespace-scoped RBAC least-privilege toggle pattern)
-- **Supports**: Issue [#1069](https://github.com/jordigilh/kubernaut/issues/1069), [#1860](https://github.com/jordigilh/kubernaut/issues/1860)
+- **Supports**: Issue [#1069](https://github.com/Ayush-Singh986/kubernaut/issues/1069), [#1860](https://github.com/Ayush-Singh986/kubernaut/issues/1860)
 
 ## Review & Evolution
 

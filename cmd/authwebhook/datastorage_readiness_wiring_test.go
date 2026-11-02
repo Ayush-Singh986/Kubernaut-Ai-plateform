@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	awconfig "github.com/jordigilh/kubernaut/pkg/authwebhook/config"
+	awconfig "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook/config"
 )
 
 // IT-AUDIT-1985-010: cmd/authwebhook must wire an independent, always-on

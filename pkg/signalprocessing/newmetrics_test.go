@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 var _ = Describe("UT-SP-668-005: NewMetrics registry path", func() {

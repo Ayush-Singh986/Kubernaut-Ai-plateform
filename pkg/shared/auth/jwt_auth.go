@@ -30,7 +30,7 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jws"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // ErrIssuerNotFound indicates the JWT's issuer claim does not match any

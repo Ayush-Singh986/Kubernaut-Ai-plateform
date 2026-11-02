@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-[#2080](https://github.com/jordigilh/kubernaut/issues/2080) (originally fixed
+[#2080](https://github.com/Ayush-Singh986/kubernaut/issues/2080) (originally fixed
 alongside #2079) added exponential backoff to `handleSessionLost`'s KA
 session regeneration path so a transient session-hand-off race wouldn't burn
 through the 5-regeneration cap before the legitimate multi-hop hand-off had
@@ -10,9 +10,9 @@ time to settle. That fix computed a `RequeueAfter` delay from
 `errorClassifier.GetRetryDelay(session.Generation)` and returned it from the
 handler.
 
-CI runs [31454349115](https://github.com/jordigilh/kubernaut/actions/runs/31454349115)
+CI runs [31454349115](https://github.com/Ayush-Singh986/kubernaut/actions/runs/31454349115)
 (2026-08-11, validating the original fix's own backport PR #2087) and
-[31695817033](https://github.com/jordigilh/kubernaut/actions/runs/31695817033)
+[31695817033](https://github.com/Ayush-Singh986/kubernaut/actions/runs/31695817033)
 (2026-08-13, an unrelated #2117 merge) both show `E2E-FP-1189-005` failing
 with `Session regeneration cap exceeded (5 regenerations)`, with all 5
 generations completing within ~1-2 wall-clock seconds instead of the intended

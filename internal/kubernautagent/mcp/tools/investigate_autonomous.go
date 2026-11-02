@@ -21,10 +21,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 func (t *InvestigateTool) handleCancel(input InvestigateInput, user mcpinternal.UserInfo) (InvestigateOutput, error) {

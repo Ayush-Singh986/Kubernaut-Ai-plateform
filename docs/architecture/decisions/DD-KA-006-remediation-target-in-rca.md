@@ -107,7 +107,7 @@ KA's investigation response **MUST** return a `remediationTarget` object within 
   - **`namespace`**: CONDITIONALLY REQUIRED — Present for namespace-scoped resources, omitted for cluster-scoped resources (e.g., Node, PersistentVolume)
   - **`api_version`** (wire, snake_case): OPTIONAL — disambiguates the resource's API group when the Kind exists in multiple groups (e.g. `Route` in `route.openshift.io` vs `serving.knative.dev`), #1040
 
-> **Known gap**: `internal/kubernautagent/api/openapi.json` does not yet document the `remediationTarget` schema. Tracked as a follow-up alongside the other OpenAPI spec accuracy gaps noted in [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806).
+> **Known gap**: `internal/kubernautagent/api/openapi.json` does not yet document the `remediationTarget` schema. Tracked as a follow-up alongside the other OpenAPI spec accuracy gaps noted in [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806).
 
 ### 2. AIAnalysis CRD Enhancement (BR-AI-084)
 
@@ -384,7 +384,7 @@ Plumb `apiVersion` through to `RemediationTargetInput` if policy authors need to
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.1–1.6 | 2026-01-20 to 2026-03-25 | Historical evolution under the Python-era implementation: introduced `apiVersion`, three-layer defense-in-depth, LLM-provided-then-KA-resolved hybrid model, and the three-phase RCA flow. Superseded by v2.0 below; see git history for the original entries if archaeology is needed. |
-| 2.0 | 2026-08-01 | Rewritten against the Go KA implementation as part of [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806). Field renamed `affectedResource` → `remediationTarget` throughout (KA wire contract, AIAnalysis CRD, Rego `PolicyInput`). Corrected the canonical-parameter-injection model: `TARGET_RESOURCE_*` are unconditionally injected and unconditionally preserved (`kaManagedParams`), not conditional on workflow schema declaration. Corrected root-resolution priority to match `InjectRemediationTarget` (owner chain → enrichment source identity → signal identity). Corrected Layer 3 file/function to `pkg/remediationorchestrator/handler/aianalysis.go` (`HandleRemediationTargetMissing`). Documented the RemediationRequest-level `Status.RemediationTarget` propagation step. Flagged the OpenAPI spec and Rego `apiVersion` gaps rather than asserting false completeness. |
+| 2.0 | 2026-08-01 | Rewritten against the Go KA implementation as part of [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806). Field renamed `affectedResource` → `remediationTarget` throughout (KA wire contract, AIAnalysis CRD, Rego `PolicyInput`). Corrected the canonical-parameter-injection model: `TARGET_RESOURCE_*` are unconditionally injected and unconditionally preserved (`kaManagedParams`), not conditional on workflow schema declaration. Corrected root-resolution priority to match `InjectRemediationTarget` (owner chain → enrichment source identity → signal identity). Corrected Layer 3 file/function to `pkg/remediationorchestrator/handler/aianalysis.go` (`HandleRemediationTargetMissing`). Documented the RemediationRequest-level `Status.RemediationTarget` propagation step. Flagged the OpenAPI spec and Rego `apiVersion` gaps rather than asserting false completeness. |
 
 ---
 

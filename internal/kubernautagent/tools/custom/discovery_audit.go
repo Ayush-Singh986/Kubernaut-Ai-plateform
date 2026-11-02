@@ -22,9 +22,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	kaaudit "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // ========================================

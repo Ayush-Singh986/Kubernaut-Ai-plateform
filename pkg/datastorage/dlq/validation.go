@@ -16,7 +16,7 @@ limitations under the License.
 
 package dlq
 
-import "github.com/jordigilh/kubernaut/pkg/datastorage/eventdata"
+import "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/eventdata"
 
 const (
 	MaxEventDataSize  = eventdata.MaxEventDataSize

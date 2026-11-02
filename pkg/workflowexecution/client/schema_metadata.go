@@ -20,7 +20,7 @@ package client
 import (
 	"encoding/json"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // SchemaMetadata bundles all workflow catalog artifacts needed by the WE

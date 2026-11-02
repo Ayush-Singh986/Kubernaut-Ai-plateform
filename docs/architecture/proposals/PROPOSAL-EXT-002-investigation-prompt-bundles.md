@@ -1,11 +1,11 @@
 # PROPOSAL-EXT-002: Investigation Prompt Bundles
 
-**Status**: ❌ SUPERSEDED (July 3, 2026) — see [#883](https://github.com/jordigilh/kubernaut/issues/883) (closed). #883's closing comment is explicit: "KA no longer compiles/bridges customer prompts into any runtime-specific recipe format (**Goose Recipe, OAS spec, or PromptBundle**)... Agent runtimes are now packaged as generic OCI images, opaque to KA." That statement directly names and kills this proposal's core mechanism (the `PromptBundle` CRD/format and the "converge on Goose recipes, KA-as-compiler" plan). See [#1536](https://github.com/jordigilh/kubernaut/issues/1536) for the current opaque-OCI-agent direction. Retained for historical context only.
+**Status**: ❌ SUPERSEDED (July 3, 2026) — see [#883](https://github.com/Ayush-Singh986/kubernaut/issues/883) (closed). #883's closing comment is explicit: "KA no longer compiles/bridges customer prompts into any runtime-specific recipe format (**Goose Recipe, OAS spec, or PromptBundle**)... Agent runtimes are now packaged as generic OCI images, opaque to KA." That statement directly names and kills this proposal's core mechanism (the `PromptBundle` CRD/format and the "converge on Goose recipes, KA-as-compiler" plan). See [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536) for the current opaque-OCI-agent direction. Retained for historical context only.
 **Date**: April 15, 2026
 **Superseded**: July 3, 2026
 **Author**: Kubernaut Architecture Team
 **Confidence**: 90% (architecture validated through adversarial review; A2A task contracts and execution trace enforcement finalized)
-**Related**: [#711](https://github.com/jordigilh/kubernaut/issues/711) (Investigation Prompt Bundles), [#883](https://github.com/jordigilh/kubernaut/issues/883) (❌ closed/superseded — Goose Recipe Format Convergence), [PROPOSAL-EXT-001](PROPOSAL-EXT-001-external-integration-strategy.md) (External Integration Strategy), [DD-016](../decisions/DD-016-dynamic-toolset-v2-deferral.md) (Dynamic Toolset Deferral)
+**Related**: [#711](https://github.com/Ayush-Singh986/kubernaut/issues/711) (Investigation Prompt Bundles), [#883](https://github.com/Ayush-Singh986/kubernaut/issues/883) (❌ closed/superseded — Goose Recipe Format Convergence), [PROPOSAL-EXT-001](PROPOSAL-EXT-001-external-integration-strategy.md) (External Integration Strategy), [DD-016](../decisions/DD-016-dynamic-toolset-v2-deferral.md) (Dynamic Toolset Deferral)
 
 ---
 
@@ -190,7 +190,7 @@ Regardless of the recipe, KA's pipeline infrastructure handles:
 | Effectiveness verification | `EffectivenessAssessment` CRD, EM recipes | -- |
 | Audit trail | Full execution trace, DataStorage pipeline | -- |
 
-This separation means issues like [#555](https://github.com/jordigilh/kubernaut/issues/555) (Cost Optimization) and [#554](https://github.com/jordigilh/kubernaut/issues/554) (Threat Remediation) are not new features requiring custom code. They are **cookbooks** -- different recipes, different MCP extensions, same Kubernaut pipeline.
+This separation means issues like [#555](https://github.com/Ayush-Singh986/kubernaut/issues/555) (Cost Optimization) and [#554](https://github.com/Ayush-Singh986/kubernaut/issues/554) (Threat Remediation) are not new features requiring custom code. They are **cookbooks** -- different recipes, different MCP extensions, same Kubernaut pipeline.
 
 ### The LLM Reasoning Model
 
@@ -1175,7 +1175,7 @@ The `signal_context` and `enrichment_context` fields ensure the remote agent has
 
 | Version | Capability | Notes |
 |---------|-----------|-------|
-| **v1.5** | Goose recipe format convergence | Customer-facing recipes use standard [Goose recipe format](https://github.com/aaif-goose/goose). KA provides structured context as Goose parameters, receives structured results via `response.json_schema`. Pending upstream support for structured parameter types (`object`, `array`) -- see [#883](https://github.com/jordigilh/kubernaut/issues/883). OCI distribution wraps standard Goose recipe YAML. |
+| **v1.5** | Goose recipe format convergence | Customer-facing recipes use standard [Goose recipe format](https://github.com/aaif-goose/goose). KA provides structured context as Goose parameters, receives structured results via `response.json_schema`. Pending upstream support for structured parameter types (`object`, `array`) -- see [#883](https://github.com/Ayush-Singh986/kubernaut/issues/883). OCI distribution wraps standard Goose recipe YAML. |
 | **v1.5** | Hybrid execution: inline core phases + remote hooks via Goose recipes | Phase executor is a single reusable component. `pre-investigation` and `pre-workflow-selection` hooks delegate to customer-managed agents via Goose recipes. Core phases (investigation, rca-resolution, workflow-selection) execute inline. `failClosed` default. |
 | **v1.5** | Skills marketplace integration | External skill resolution via OCI pull for inline phases. Requires marketplace format to be stable. |
 | **v1.5** | Execution trace contract | Remote agents return structured execution traces (tool calls, LLM responses, token usage) as A2A artifacts. KA ingests these into the unified audit trail. |
@@ -1294,7 +1294,7 @@ Initially this critique was thought to hold for `rca-resolution`, where natural 
 | **Execution Trace** | Structured record of a remote agent's intermediate steps (tool calls, LLM responses, token usage) returned as an A2A artifact |
 | **failClosed** | Failure policy that aborts the pipeline when a recipe fails. Default behavior |
 | **failOpen** | Failure policy that skips the failed recipe (hook phases) or falls back to the default recipe (core phases) |
-| **Goose Recipe** | The open standard format for reusable AI agent configurations, defined by the [Goose project](https://github.com/aaif-goose/goose). Kubernaut converges on this format for customer-facing recipes. See [#883](https://github.com/jordigilh/kubernaut/issues/883) |
+| **Goose Recipe** | The open standard format for reusable AI agent configurations, defined by the [Goose project](https://github.com/aaif-goose/goose). Kubernaut converges on this format for customer-facing recipes. See [#883](https://github.com/Ayush-Singh986/kubernaut/issues/883) |
 | **Inline Execution** | Recipe execution mode where KA runs the LLM loop in-process. Used for core phases in v1.5 |
 | **KA** | Kubernaut Agent -- the investigation pipeline orchestrator |
 | **LRU** | Least Recently Used -- cache eviction strategy |

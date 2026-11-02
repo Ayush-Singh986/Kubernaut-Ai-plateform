@@ -63,27 +63,27 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	// Import ALL CRD types that RO interacts with
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	remediationworkflowv1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	remediationworkflowv1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 
 	// Import RO controller
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 	// Import audit infrastructure (ADR-032)
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
-	"github.com/jordigilh/kubernaut/test/shared/integration"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/integration"
 	// Child CRD controllers NOT imported - Phase 1 integration tests use manual control
 	// Real controller testing happens in:
 	//   - Service integration tests (test/integration/{service}/)

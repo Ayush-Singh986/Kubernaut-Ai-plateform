@@ -25,7 +25,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 type stubClient struct {

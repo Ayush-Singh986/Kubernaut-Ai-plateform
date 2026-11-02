@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // AuditStore provides non-blocking audit event storage with asynchronous buffered writes.

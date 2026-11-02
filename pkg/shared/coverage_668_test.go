@@ -26,11 +26,11 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	cacheredis "github.com/jordigilh/kubernaut/pkg/cache/redis"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	cacheredis "github.com/Ayush-Singh986/kubernaut/pkg/cache/redis"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // flushBatchSpy implements audit.DataStorageClient for BufferedAuditStore Flush coverage (BR-STORAGE-001).

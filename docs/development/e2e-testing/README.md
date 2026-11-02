@@ -2,9 +2,9 @@
 
 This directory contains configurations and guides for Kubernaut's end-to-end testing infrastructure, primarily using **Kind (Kubernetes in Docker)** for lightweight, fast testing.
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Two corrections
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Two corrections
 > while verifying this doc. (1) **HolmesGPT** was rewritten in Go and renamed **Kubernaut Agent (KA)** in v1.3
-> (issue [#433](https://github.com/jordigilh/kubernaut/issues/433)); references below are renamed accordingly.
+> (issue [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433)); references below are renamed accordingly.
 > (2) Several commands referenced below do not exist in the current repo — there is no bare `make test-e2e`,
 > `setup-test-e2e`, or `cleanup-test-e2e` target, no `run-e2e-tests.sh`/`run-use-case-N.sh` scripts, and no
 > `deploy/holmesgpt-deployment.yaml`. The actual current E2E entry points are per-service Makefile targets, e.g.

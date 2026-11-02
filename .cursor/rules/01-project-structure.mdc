@@ -86,7 +86,7 @@ Organized into 7 top-level directories:
 - [docs/development/](mdc:docs/development/) - Methodology, guidelines, getting-started, guides
 - [docs/services/](mdc:docs/services/) - Per-service documentation (stateless + CRD controllers)
 
-User-facing documentation lives at [kubernaut-docs](https://jordigilh.github.io/kubernaut-docs/).
+User-facing documentation lives at [kubernaut-docs](https://Ayush-Singh986.github.io/kubernaut-docs/).
 
 ## Deployment
 

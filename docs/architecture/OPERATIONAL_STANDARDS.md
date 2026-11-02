@@ -66,7 +66,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/config"
+    "github.com/Ayush-Singh986/kubernaut/pkg/config"
 )
 
 func NewHTTPClient() *http.Client {
@@ -99,7 +99,7 @@ import (
     "database/sql"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/config"
+    "github.com/Ayush-Singh986/kubernaut/pkg/config"
 )
 
 func NewPostgreSQLClient(dsn string) (*sql.DB, error) {

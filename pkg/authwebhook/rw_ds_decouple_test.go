@@ -23,9 +23,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // #1661 Change 8c: AW must patch .status directly from its own local

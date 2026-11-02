@@ -18,8 +18,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
 )
 
 // GAP-08 (kubernaut#1505): buildReplayCache selects the distributed Valkey

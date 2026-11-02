@@ -5,7 +5,7 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	config "github.com/jordigilh/kubernaut/pkg/datastorage/config"
+	config "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
 )
 
 // BR-PLATFORM-012, Issue #2275: rename Server.DisableProfiling (default

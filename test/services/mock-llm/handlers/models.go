@@ -18,7 +18,7 @@ package handlers
 import (
 	"net/http"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 )
 
 func (h *handler) handleModels(w http.ResponseWriter, _ *http.Request) {

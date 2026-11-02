@@ -3,8 +3,8 @@
 
 **Status**: Accepted
 **Date**: 2026-08-17
-**Issues**: [#2170](https://github.com/jordigilh/kubernaut/issues/2170), [#2171](https://github.com/jordigilh/kubernaut/issues/2171), [#2172](https://github.com/jordigilh/kubernaut/issues/2172)
-**Fixes**: [#2080](https://github.com/jordigilh/kubernaut/issues/2080), [#2081](https://github.com/jordigilh/kubernaut/issues/2081), the `#1713`-shaped interactive-detection dual-signal gap
+**Issues**: [#2170](https://github.com/Ayush-Singh986/kubernaut/issues/2170), [#2171](https://github.com/Ayush-Singh986/kubernaut/issues/2171), [#2172](https://github.com/Ayush-Singh986/kubernaut/issues/2172)
+**Fixes**: [#2080](https://github.com/Ayush-Singh986/kubernaut/issues/2080), [#2081](https://github.com/Ayush-Singh986/kubernaut/issues/2081), the `#1713`-shaped interactive-detection dual-signal gap
 **Related**: [BR-AA-KA-065](../../requirements/BR-AA-KA-065-agentsession-watch-design.md) (supersedes
 [BR-AA-KA-064](../../requirements/BR-AA-KA-064-session-based-pull-design.md)), `internal/kubernautagent/mcp/session_manager.go`
 (`LeaseSessionManager`, the per-object Lease primitive this decision's dispatch-Lease reuses),
@@ -19,7 +19,7 @@ secondhand signal, instead of being read from the source directly. The AA↔KA l
 relies on point-to-point HTTP with its own retry/backoff logic instead of K8s-native durability.
 
 1. **#2080/#2081** (confirmed root cause via CI run
-   [31990537765](https://github.com/jordigilh/kubernaut/actions/runs/31990537765),
+   [31990537765](https://github.com/Ayush-Singh986/kubernaut/actions/runs/31990537765),
    `E2E-FP-1189-005`): AA polls KA's REST session-status endpoint by session ID.
    KA's per-session ownership authorization (#823) means AA's poll 404s once AF has
    taken over/correlated a different session; AA regenerates, hits the 5-regeneration
@@ -606,7 +606,7 @@ fix passed cleanly (43.7s and 47.6s respectively, both comfortably under the 120
 confirmed genuine `AgentSessionReasonCapacityExceeded` retry). The feature itself (dispatch admission
 control, retry logic, Lease cleanup, RBAC) is proven correct and stable. Residual CI redness on
 `E2E (aianalysis)` and `Integration (aianalysis)` in the same runs is a **different, pre-existing, already
-tracked issue**: [#2204](https://github.com/jordigilh/kubernaut/issues/2204) (root-caused via live pprof +
+tracked issue**: [#2204](https://github.com/Ayush-Singh986/kubernaut/issues/2204) (root-caused via live pprof +
 goroutine-dump correlation on `helios08`) -- bursty concurrent `AgentSession` creation across *any* spec in
 the shared per-process KA container causes legitimate LLM-tool-loop backlog that pushes some *unrelated*
 specs' fixed 60s `Eventually` assertions (in `05_audit_trail_test.go`, `06_error_audit_trail_test.go`,
@@ -631,7 +631,7 @@ cluster latency (informer relist/propagation delay, apiserver/etcd load) dispatc
 and read "no IS yet," permanently deciding `Status.Interactive=false` for a session the human had
 already asked to drive interactively (`Status.Interactive` is a write-once ack per Gap 1 above — KA
 never re-checks). Confirmed via must-gather RCA on a CI E2E flake
-([E2E-FP-1912-001](https://github.com/jordigilh/kubernaut/issues/2265)): the IS CRD's own
+([E2E-FP-1912-001](https://github.com/Ayush-Singh986/kubernaut/issues/2265)): the IS CRD's own
 `creationTimestamp` postdated the `AgentSession`'s dispatch-time `Status.Interactive=false` write by
 tens of milliseconds — a real TOCTOU race, not a mock-LLM or test-harness artifact.
 
@@ -1046,7 +1046,7 @@ follow-up PR there to stay in sync.
 
 ### Post-merge correction: `handler.Funcs.DeleteFunc` capture replaced with a finalizer (2026-08-21)
 
-CI RCA (PR #2222, run [32513171970](https://github.com/jordigilh/kubernaut/actions/runs/32513171970))
+CI RCA (PR #2222, run [32513171970](https://github.com/Ayush-Singh986/kubernaut/actions/runs/32513171970))
 surfaced that `IT-AF-2214-002` (the delete-driven Cancelled path) failed intermittently. Root-caused
 by reproducing against the exact failing commit and the exact CI-built amd64 images (loaded via
 `KUBERNAUT_CI_ARTIFACT_TAG`) on an amd64 host under `--race --procs=4` (matching the CI job): **3 of
@@ -1079,7 +1079,7 @@ still no `agentsessions/status` grant — AF still never writes KA's Status fiel
 **Verification**: re-ran the same reproduction harness (real CI images, `--race --procs=4`, amd64) on
 the fixed code — see PR #2222 for the run count and result at time of merge.
 
-**Cross-check (not fixed here, flagged for awareness, tracked as [#2231](https://github.com/jordigilh/kubernaut/issues/2231))**:
+**Cross-check (not fixed here, flagged for awareness, tracked as [#2231](https://github.com/Ayush-Singh986/kubernaut/issues/2231))**:
 KA's `Dispatcher.watchLoop` reacts to a raw `watch.Deleted` event for the same `AgentSession` type
 via `cancelOnDelete` — the same structural pattern this fix moved AF *away* from, for the same
 underlying reason. Deferring the actual delete via AF's finalizer does not meaningfully change KA's
@@ -1090,8 +1090,8 @@ whether a design fix (or an explicit documented accepted-risk note) is warranted
 
 ### Post-merge correction: two more RBAC-verb drifts surfaced by the finalizer fix (2026-08-21)
 
-CI RCA (PR #2222, run [32525130330](https://github.com/jordigilh/kubernaut/actions/runs/32525130330)
-and run [32529373504](https://github.com/jordigilh/kubernaut/actions/runs/32529373504)) surfaced two
+CI RCA (PR #2222, run [32525130330](https://github.com/Ayush-Singh986/kubernaut/actions/runs/32525130330)
+and run [32529373504](https://github.com/Ayush-Singh986/kubernaut/actions/runs/32529373504)) surfaced two
 more instances of the same "N independent RBAC copies drift out of sync" defect this decision already
 flagged above (the "three sources" lesson), both triggered directly by the finalizer fix landing:
 

@@ -6,7 +6,7 @@ TP-AF-1468
 
 ## 2. References
 
-- **Issue**: [#1468](https://github.com/jordigilh/kubernaut/issues/1468)
+- **Issue**: [#1468](https://github.com/Ayush-Singh986/kubernaut/issues/1468)
 - **Business Requirement**: BR-API-1468
 - **Design Decision**: DD-AF-008 (status/subscribe SSE protocol)
 - **FedRAMP Controls**: AU-3, SI-4, SC-7, SI-10

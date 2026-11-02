@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/sizeutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sizeutil"
 )
 
 func TestSizeutil(t *testing.T) {

@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 var _ = Describe("GracefulSessionClosedHandler — BR-INTERACTIVE-001", Label("unit", "disconnect", "1442"), func() {

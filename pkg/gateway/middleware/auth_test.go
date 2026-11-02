@@ -37,8 +37,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 var _ = Describe("Auth Middleware (BR-GATEWAY-036, BR-GATEWAY-037)", func() {

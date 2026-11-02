@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
-	sharedauth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
+	sharedauth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 var _ = Describe("UserRateLimiter — SEC-02", func() {

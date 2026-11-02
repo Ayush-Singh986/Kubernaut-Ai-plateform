@@ -5,7 +5,7 @@
 **Status**: 🗄️ **SUPERSEDED** — see note below
 **Module**: API Server Services (`pkg/api/server/`)
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > Jan 2025 document specifies an aspirational `pkg/api/server/` layer — a standalone "Context API
 > Server" for HolmesGPT toolset integration, plus a broad enterprise API gateway (GraphQL, Kong/
 > Ambassador/Istio integration, WebSocket/SSE real-time analytics, HSM-backed mTLS, multi-region

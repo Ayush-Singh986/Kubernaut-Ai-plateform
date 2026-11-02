@@ -1,7 +1,7 @@
 # DD-AUTH-012: ose-oauth-proxy for SAR-Based REST API Authorization
 
 **Date**: January 26, 2026
-**Status**: ⚠️ **SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md)** (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806))
+**Status**: ⚠️ **SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md)** (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 **Version**: 1.0
 **Authority**: Historical — see supersession note below
 **Related**: DD-AUTH-009 (oauth-proxy migration), DD-AUTH-011 (Granular RBAC, also superseded), DD-AUTH-004 (DataStorage auth), DD-AUTH-006 (Kubernaut Agent (KA) auth)
@@ -117,7 +117,7 @@ containers:
 ```yaml
 containers:
   - name: oauth2-proxy  # Named oauth2-proxy but uses ose-oauth-proxy image
-    image: quay.io/jordigilh/ose-oauth-proxy:latest  # Custom multi-arch: arm64+amd64
+    image: quay.io/Ayush-Singh986/ose-oauth-proxy:latest  # Custom multi-arch: arm64+amd64
     args:
       - --provider=oidc
       - --oidc-issuer-url=https://kubernetes.default.svc.cluster.local
@@ -148,7 +148,7 @@ containers:
 
 **Note**: KA uses `verb:"get"` because it's protecting **its own REST API endpoints** (not DataStorage).
 
-> **Correction (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This note
+> **Correction (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This note
 > previously said "Only Gateway should access KA" — that was already stale when this document was written.
 > [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md)'s own changelog documents the actual
 > bug and fix: Gateway was mistakenly granted `kubernaut-agent-client` RBAC despite having zero KA code
@@ -212,7 +212,7 @@ if exportedBy == "" {
 
 ## 🔒 **WORKFLOW CATALOG AUDIT TRACKING**
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This
 > entire section describes the DataStorage workflow catalog CRUD API, which was **fully retired** (see
 > `BUSINESS_REQUIREMENTS.md`'s Category 10 retirement, and commit history around Jan 2026). Neither
 > `pkg/datastorage/audit/workflow_catalog_event.go` nor `pkg/datastorage/server/workflow_handlers.go` exist

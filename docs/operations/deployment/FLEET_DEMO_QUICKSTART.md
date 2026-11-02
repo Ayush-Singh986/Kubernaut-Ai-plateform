@@ -20,7 +20,7 @@ clusters when finished.
 
 ## User-managed deployment
 
-1. Install the [Kubernaut Operator](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+1. Install the [Kubernaut Operator](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 2. Install the operator's dependency chart and create the PostgreSQL, Valkey, LLM,
    and fleet credential Secrets. Create the SignalProcessing and AIAnalysis policy
    ConfigMaps referenced by `spec.signalProcessing.policy.configMapName` and

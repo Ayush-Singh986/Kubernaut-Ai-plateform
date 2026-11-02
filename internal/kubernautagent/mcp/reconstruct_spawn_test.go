@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 type reconSpawnRunner struct {

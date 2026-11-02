@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/ogenx"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/ogenx"
 )
 
 // OgenClient implements the Client interface using the ogen-generated DS client.

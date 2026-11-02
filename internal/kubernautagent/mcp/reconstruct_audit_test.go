@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 // recordingAuditStore captures audit events for assertion. Local to this

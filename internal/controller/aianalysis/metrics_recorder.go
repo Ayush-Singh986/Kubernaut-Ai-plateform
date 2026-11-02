@@ -19,7 +19,7 @@ package aianalysis
 import (
 	"context"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
 )
 
 // ========================================

@@ -1,6 +1,6 @@
 # PROPOSAL-EXT-004: Goose Recipes as AgenticWorkflow Runtime
 
-**Status**: ❌ SUPERSEDED — see [#1536](https://github.com/jordigilh/kubernaut/issues/1536) (runtime-agnostic opaque-OCI-image direction; Kubernaut no longer selects or knows about a "Goose runtime"). Retained for historical context only.  
+**Status**: ❌ SUPERSEDED — see [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536) (runtime-agnostic opaque-OCI-image direction; Kubernaut no longer selects or knows about a "Goose runtime"). Retained for historical context only.  
 **Date**: May 19, 2026  
 **Superseded**: July 5, 2026  
 **Author**: Kubernaut Architecture Team  
@@ -8,7 +8,7 @@
 **Related**: [PROPOSAL-EXT-003](PROPOSAL-EXT-003-goose-runtime-evaluation.md) (superseded), [PROPOSAL-EXT-005](PROPOSAL-EXT-005-oracle-agent-spec.md) (superseded), [PROPOSAL-EXT-006](PROPOSAL-EXT-006-deep-agents.md) (superseded)  
 **Spike Code**: [goose-mcp-roundtrip/](../spikes/goose-mcp-roundtrip/) (end-to-end MCP roundtrip with Vertex AI)  
 **Spike Summary**: [SPIKE-GOOSE-MCP-ROUNDTRIP](../spikes/SPIKE-GOOSE-MCP-ROUNDTRIP.md), [SPIKE-ACP-ENFORCEMENT](../spikes/SPIKE-ACP-ENFORCEMENT.md), [SPIKE-OCI-RUNTIME-CONTRACT](../spikes/SPIKE-OCI-RUNTIME-CONTRACT.md)  
-**Tracking**: [#1240](https://github.com/jordigilh/kubernaut/issues/1240) (umbrella, closed) → superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536), [#1535](https://github.com/jordigilh/kubernaut/issues/1535)  
+**Tracking**: [#1240](https://github.com/Ayush-Singh986/kubernaut/issues/1240) (umbrella, closed) → superseded by [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536), [#1535](https://github.com/Ayush-Singh986/kubernaut/issues/1535)  
 **Target**: ~~v1.6 milestone~~ — successor work now tracked under v1.7
 
 ---

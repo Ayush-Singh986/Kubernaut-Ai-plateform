@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 var _ = Describe("E2E-KA-970: Parallel Tool Execution", Label("e2e", "ka", "parallel"), func() {

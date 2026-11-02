@@ -40,7 +40,7 @@ import (
     "context"
     "time"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
     tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 
     "github.com/go-logr/logr"
@@ -190,7 +190,7 @@ package controller
 import (
     "context"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
 
     "go.opentelemetry.io/otel"
     "go.opentelemetry.io/otel/attribute"
@@ -559,8 +559,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/metrics/server"
     "sigs.k8s.io/controller-runtime/pkg/healthz"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/pkg/apis/workflowexecution/v1"
-    "github.com/jordigilh/kubernaut/pkg/workflowexecution"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/workflowexecution/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution"
 )
 
 var (

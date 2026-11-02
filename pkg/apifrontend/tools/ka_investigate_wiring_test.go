@@ -30,14 +30,14 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	sharedK8s "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	sharedK8s "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 const investigationSummarySchema = "investigation_summary"

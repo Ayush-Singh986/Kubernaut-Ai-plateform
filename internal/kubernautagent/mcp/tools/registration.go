@@ -25,7 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/jsonschema-go/jsonschema"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"k8s.io/apimachinery/pkg/api/resource"
 )

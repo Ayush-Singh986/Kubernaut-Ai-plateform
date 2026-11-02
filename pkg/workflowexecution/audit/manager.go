@@ -46,10 +46,10 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
 )
 
 // ServiceName is the canonical service identifier for audit events.

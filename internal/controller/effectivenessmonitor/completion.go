@@ -25,8 +25,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
 )
 
 // completeAssessment finalizes the EA with Completed phase and assessment reason.

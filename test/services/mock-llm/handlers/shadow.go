@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 )
 
 var injectionPatterns = []string{

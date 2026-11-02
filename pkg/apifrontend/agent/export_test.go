@@ -8,7 +8,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // MockReadonlyContext creates a minimal ReadonlyContext for testing

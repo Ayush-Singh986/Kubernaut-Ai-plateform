@@ -1,6 +1,6 @@
 # Test Plan — #1378: Extend DetectedLabels with CNV/KubeVirt Fields
 
-**IEEE 829 Compliant** | **Issue**: [#1378](https://github.com/jordigilh/kubernaut/issues/1378) | **Milestone**: v1.5
+**IEEE 829 Compliant** | **Issue**: [#1378](https://github.com/Ayush-Singh986/kubernaut/issues/1378) | **Milestone**: v1.5
 
 ## 1. Test Plan Identifier
 

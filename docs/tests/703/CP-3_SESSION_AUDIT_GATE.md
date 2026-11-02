@@ -21,10 +21,10 @@ CP-3 validates the core interactive session mechanics: session hijacking prevent
 - **Framework**: Ginkgo/Gomega BDD
 - **Key Imports**:
   ```go
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/session"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/notifications"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/session"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/notifications"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
   "k8s.io/client-go/kubernetes/fake"
   coordinationv1 "k8s.io/api/coordination/v1"
   metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -2,8 +2,8 @@
 
 **Status:** Approved 2026-10-10; local implementation verification complete;
 batched PR CI pending.
-**Issue:** [#2500](https://github.com/jordigilh/kubernaut/issues/2500)
-**Approved full plan:** [IEEE 829 hybrid plan](https://github.com/jordigilh/kubernaut/issues/2500#issuecomment-6101625657)
+**Issue:** [#2500](https://github.com/Ayush-Singh986/kubernaut/issues/2500)
+**Approved full plan:** [IEEE 829 hybrid plan](https://github.com/Ayush-Singh986/kubernaut/issues/2500#issuecomment-6101625657)
 **Delivery:** focused commit in PR #2493, batched with the other follow-ups.
 
 ## Purpose, requirements, scope and controls

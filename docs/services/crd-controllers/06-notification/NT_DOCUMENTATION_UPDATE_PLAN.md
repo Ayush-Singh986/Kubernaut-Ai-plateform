@@ -254,7 +254,7 @@ Update NT service documentation to reflect recent achievements:
    Use full metric name constants (DD-005 V3.0):
 
    ```go
-   import ntmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
+   import ntmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
 
    It("should expose reconciler_active metric", func() {
        Eventually(func() string {

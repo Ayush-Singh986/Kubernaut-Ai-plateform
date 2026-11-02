@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/mcp"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/mcp"
 )
 
 var _ = Describe("MCP Skeleton — #433, Option C", func() {

@@ -10,14 +10,14 @@
 **Authority**:
 - BR-EM-004: Spec hash comparison to detect configuration drift
 - DD-EM-002: Canonical Spec Hash for Pre/Post Remediation Comparison
-- [#396](https://github.com/jordigilh/kubernaut/issues/396): Include mounted ConfigMap content in RO/EM spec hash computation
+- [#396](https://github.com/Ayush-Singh986/kubernaut/issues/396): Include mounted ConfigMap content in RO/EM spec hash computation
 
 **Cross-References**:
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)
 - [Test Case Specification Template](../../testing/TEST_CASE_SPECIFICATION_TEMPLATE.md)
 - [Integration/E2E No-Mocks Policy](../../testing/INTEGRATION_E2E_NO_MOCKS_POLICY.md)
 - [DD-EM-002: Canonical Spec Hash](../../architecture/decisions/DD-EM-002-canonical-spec-hash.md)
-- GitHub Issue: [#396](https://github.com/jordigilh/kubernaut/issues/396)
+- GitHub Issue: [#396](https://github.com/Ayush-Singh986/kubernaut/issues/396)
 
 ---
 

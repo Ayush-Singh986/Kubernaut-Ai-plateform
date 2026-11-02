@@ -9,7 +9,7 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // DefaultNamespaceFile is the K8s downward API path for the pod's namespace.

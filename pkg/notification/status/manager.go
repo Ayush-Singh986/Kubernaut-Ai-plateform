@@ -11,8 +11,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	notificationphase "github.com/jordigilh/kubernaut/pkg/notification/phase"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	notificationphase "github.com/Ayush-Singh986/kubernaut/pkg/notification/phase"
 )
 
 // Manager handles NotificationRequest status updates

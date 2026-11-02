@@ -19,7 +19,7 @@ package audit
 import (
 	"context"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // Writer defines the interface for writing audit records to the Data Storage Service

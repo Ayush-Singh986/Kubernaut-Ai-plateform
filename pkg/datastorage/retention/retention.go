@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/partition"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/partition"
 )
 
 // Config holds the retention worker configuration, driven by Helm values.

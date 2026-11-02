@@ -24,10 +24,10 @@ import (
 	"text/template"
 	"time"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // notAvailable is the placeholder rendered in prompt text when a value is

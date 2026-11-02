@@ -24,10 +24,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/agentsession"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/agentsession"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
 )
 
 var _ = Describe("Issue #2533 AIAnalysis historical decision audit source", func() {

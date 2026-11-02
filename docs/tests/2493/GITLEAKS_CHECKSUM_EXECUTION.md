@@ -3,8 +3,8 @@
 **Date**: 2026-10-11
 **Requirement**: BR-SECURITY-2493 §9
 **Status**: Locally verified; included in the user-requested batched publication
-**Review**: https://github.com/jordigilh/kubernaut/pull/2493#discussion_r4239946051
-**Alert**: https://github.com/jordigilh/kubernaut/security/code-scanning/42
+**Review**: https://github.com/Ayush-Singh986/kubernaut/pull/2493#discussion_r4239946051
+**Alert**: https://github.com/Ayush-Singh986/kubernaut/security/code-scanning/42
 
 ## Assessment and narrowly scoped exception
 

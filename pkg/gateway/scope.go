@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // StatusRejected indicates the signal was rejected because the resource is not managed.

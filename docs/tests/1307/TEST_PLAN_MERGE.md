@@ -1,6 +1,6 @@
 # Test Plan — #1307 Addendum: Merge Investigation Tools into `kubernaut_investigate`
 
-**IEEE 829 Compliant** | **Issue**: [#1307](https://github.com/jordigilh/kubernaut/issues/1307) | **Parent**: TP-1307-TOOL-ORDERING-GUARD
+**IEEE 829 Compliant** | **Issue**: [#1307](https://github.com/Ayush-Singh986/kubernaut/issues/1307) | **Parent**: TP-1307-TOOL-ORDERING-GUARD
 
 ## 1. Test Plan Identifier
 

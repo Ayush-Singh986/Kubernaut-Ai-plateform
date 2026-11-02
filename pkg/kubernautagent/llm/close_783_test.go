@@ -24,9 +24,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
-	kaopenai "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
+	kaopenai "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/openai"
 )
 
 // TP-783: Close() behavior across every llm.Client implementation. The

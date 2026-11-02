@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
 )
 
 // Token in/out reporting (#2387 follow-up): harness-renamed token counts

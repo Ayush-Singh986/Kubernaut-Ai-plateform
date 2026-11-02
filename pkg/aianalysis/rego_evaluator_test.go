@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
 )
 
 // ptr returns a pointer to the given float64 value (#225 test helper)

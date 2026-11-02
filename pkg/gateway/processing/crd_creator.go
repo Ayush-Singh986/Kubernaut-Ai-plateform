@@ -28,12 +28,12 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/k8s"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
-	sharedK8s "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	sharedK8s "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 // RetryObserver is notified on each failed CRD creation retry attempt.

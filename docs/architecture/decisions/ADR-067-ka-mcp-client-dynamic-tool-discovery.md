@@ -6,7 +6,7 @@
 **Context**: Fleet remediation (ACM) requires multi-cluster investigation via remote MCP servers
 **Related**: ADR-064 (Multi-Cluster MCP Gateway), ADR-065 (Fleet Cluster Identity on RR), Issue #54
 
-> **Superseded (Issue [#2254](https://github.com/jordigilh/kubernaut/issues/2254))**: The "Two
+> **Superseded (Issue [#2254](https://github.com/Ayush-Singh986/kubernaut/issues/2254))**: The "Two
 > Deployment Topologies (User's Choice)" model below -- direct connections for small fleets,
 > MCP Gateway for large fleets -- is not what shipped. The actual v1.6 architecture
 > ([ADR-068](ADR-068-fleet-federation-architecture.md), Status: Implemented (MVP)) is

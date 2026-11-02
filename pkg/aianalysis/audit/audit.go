@@ -28,13 +28,13 @@ import (
 
 	"github.com/go-logr/logr"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit" // BR-AUDIT-005 Gap #7: Standardized error details
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Event type constants (per DD-AUDIT-003)

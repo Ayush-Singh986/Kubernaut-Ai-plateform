@@ -26,7 +26,7 @@ import (
     "context"
     "fmt"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -115,11 +115,11 @@ import (
     "fmt"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/analysis/v1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
-    kubernetesexecutionv1 "github.com/jordigilh/kubernaut/api/kubernetes/execution/v1" // DEPRECATED - ADR-025
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/analysis/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
+    kubernetesexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/kubernetes/execution/v1" // DEPRECATED - ADR-025
 
     apierrors "k8s.io/apimachinery/pkg/api/errors"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -274,10 +274,10 @@ import (
     "context"
     "fmt"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/analysis/v1"
-    "github.com/jordigilh/kubernaut/pkg/remediation/controller"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/analysis/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediation/controller"
 
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
@@ -511,7 +511,7 @@ import (
     "context"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -604,7 +604,7 @@ import (
     "fmt"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
 
     "k8s.io/client-go/tools/record"
 )

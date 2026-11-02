@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 // EventType classifies audit events for L3 forensic analysis.

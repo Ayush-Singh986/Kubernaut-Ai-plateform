@@ -22,7 +22,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
 )
 
 // ConnectConfig bundles everything Connect needs to dial the MCP Gateway on

@@ -1,7 +1,7 @@
 # Metrics & SLOs
 
 **Version**: v3.0
-**Status**: ✅ Corrected for [#1806](https://github.com/jordigilh/kubernaut/issues/1806) (HAPI → Kubernaut Agent rename/rewrite)
+**Status**: ✅ Corrected for [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) (HAPI → Kubernaut Agent rename/rewrite)
 **Last Updated**: 2026-08-02
 
 ---

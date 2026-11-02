@@ -18,7 +18,7 @@
 - [ADR-034](../architecture/decisions/ADR-034-unified-audit-table-design.md) -- Unified audit table
 - [DD-WEBHOOK-003](../architecture/decisions/DD-WEBHOOK-003-webhook-complete-audit-pattern.md) -- Webhook audit pattern
 
-**GitHub Issue**: [#300](https://github.com/jordigilh/kubernaut/issues/300)
+**GitHub Issue**: [#300](https://github.com/Ayush-Singh986/kubernaut/issues/300)
 
 ---
 

@@ -23,10 +23,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/locking"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/locking"
 )
 
 // IsTerminalPhase checks if a phase is terminal (no further processing).

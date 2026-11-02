@@ -21,7 +21,7 @@ import (
 	"errors"
 	"testing"
 
-	afaudit "github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	afaudit "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
 )
 
 type recordCAConfigReloadSpyEmitter struct {

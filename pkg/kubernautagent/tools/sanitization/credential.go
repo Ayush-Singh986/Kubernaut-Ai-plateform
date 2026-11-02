@@ -20,7 +20,7 @@ import (
 	"context"
 	"regexp"
 
-	sharedsanitization "github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	sharedsanitization "github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 // CredentialSanitizer scrubs credentials from tool output (G4 per DD-KA-005,

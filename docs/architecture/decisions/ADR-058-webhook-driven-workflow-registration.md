@@ -6,7 +6,7 @@
 **Authority**: AUTHORITATIVE for RemediationWorkflow CRD admission and DS bridge architecture
 **Related**: DD-WEBHOOK-001 (CRD Webhook Matrix), DD-WEBHOOK-003 (Audit Pattern), DD-WORKFLOW-017 (Lifecycle), BR-WORKFLOW-006 (CRD Spec), ADR-051 (Webhook Scaffolding)
 **Supersedes**: DD-WORKFLOW-005 (OCI Schema Extraction), DD-WORKFLOW-007 (Manual Registration) for the registration path
-**GitHub Issue**: [#299](https://github.com/jordigilh/kubernaut/issues/299)
+**GitHub Issue**: [#299](https://github.com/Ayush-Singh986/kubernaut/issues/299)
 
 ---
 

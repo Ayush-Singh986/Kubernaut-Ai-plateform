@@ -23,10 +23,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // DSAdapter implements DataStorageClient by wrapping the ogen-generated DS client.

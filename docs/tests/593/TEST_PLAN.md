@@ -419,7 +419,7 @@ go test ./test/integration/notification/... -ginkgo.v -ginkgo.focus="Teams"
 go test ./test/unit/notification/delivery/... -ginkgo.focus="UT-NOT-593-001"
 
 # Coverage
-go test ./test/unit/notification/delivery/... -coverprofile=coverage_teams_ut.out -coverpkg=github.com/jordigilh/kubernaut/pkg/notification/delivery/...
+go test ./test/unit/notification/delivery/... -coverprofile=coverage_teams_ut.out -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery/...
 go tool cover -func=coverage_teams_ut.out
 ```
 

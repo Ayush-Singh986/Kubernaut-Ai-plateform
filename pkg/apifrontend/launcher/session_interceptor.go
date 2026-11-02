@@ -7,7 +7,7 @@ import (
 	"github.com/a2aproject/a2a-go/a2asrv"
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // SessionInterceptor implements a2asrv.CallInterceptor to provide multi-turn

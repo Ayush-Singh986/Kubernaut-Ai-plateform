@@ -7,8 +7,8 @@ import (
 
 	adksession "google.golang.org/adk/v2/session"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ka"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ka"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // completeBusinessOutcome enforces business-output obligations after an ADK

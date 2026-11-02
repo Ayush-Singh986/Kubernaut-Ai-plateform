@@ -5,7 +5,7 @@
 > Current complete-profile coverage is maintained in
 > [TP-2515](../2515/TEST_PLAN.md).
 
-**IEEE 829 Compliant** | **Issue**: [#1726](https://github.com/jordigilh/kubernaut/issues/1726) | **Milestone**: v1.6
+**IEEE 829 Compliant** | **Issue**: [#1726](https://github.com/Ayush-Singh986/kubernaut/issues/1726) | **Milestone**: v1.6
 
 ## 1. Test Plan Identifier
 

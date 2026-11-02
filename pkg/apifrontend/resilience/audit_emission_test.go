@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
 )
 
 type auditSpyEmitter struct {

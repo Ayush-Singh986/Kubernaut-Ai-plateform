@@ -26,7 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 )
 
 // ========================================

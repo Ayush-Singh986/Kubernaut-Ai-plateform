@@ -6,7 +6,7 @@
 **Confidence**: 90% (original proposal) → rewritten against actual implementation, 2026-08-01
 
 **Last Updated**: 2026-08-01 — Rewritten against the Go implementation
-([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). The original document
+([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). The original document
 proposed a detailed retry/circuit-breaker/manual-fallback design for the (then-hypothetical)
 Python HolmesGPT-API integration. What was actually built for the Go implementation differs
 substantially: no circuit breaker exists on this path, the retry parameters are different, the

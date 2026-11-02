@@ -103,7 +103,7 @@ Updated tallies after closing the tier-skip and dead-code gaps below: AU-3 addit
 - BR-FLEET-001: Fleet remediation requires cluster identity on every RR
 - BR-INTEGRATION-065: Multi-cluster signal routing and scope gating
 - [ADR-065](../../architecture/decisions/ADR-065-fleet-cluster-identity-on-rr.md): Fleet Cluster Identity on RR — reserves `IT-AF-FLEET (pending)` for this work
-- Issue [#1409](https://github.com/jordigilh/kubernaut/issues/1409): Console cluster context banner
+- Issue [#1409](https://github.com/Ayush-Singh986/kubernaut/issues/1409): Console cluster context banner
 - Issue #1423 (referenced): takeover-path Console banner context gap
 - Issue #54: Multi-cluster remediation tracking
 

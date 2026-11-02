@@ -1,6 +1,6 @@
 # Test Plan: Fix #1371 extractNamespace Defaults to "default" for Cluster-Scoped Resources
 
-**Issue**: [#1371](https://github.com/jordigilh/kubernaut/issues/1371)
+**Issue**: [#1371](https://github.com/Ayush-Singh986/kubernaut/issues/1371)
 **Service Type**: [x] CRD Controller (Gateway)
 **Date**: 2026-06-26
 **Status**: Active

@@ -749,7 +749,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 )
 
 var _ = Describe("DistributedLockManager", func() {
@@ -962,7 +962,7 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 var _ = Describe("Gateway Distributed Locking Integration (DD-GATEWAY-013)", func() {
@@ -1200,7 +1200,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 var _ = Describe("Gateway Distributed Locking E2E (DD-GATEWAY-013)", func() {
@@ -1497,7 +1497,7 @@ diff baseline_results.txt distributed_lock_results.txt
 
 ## Approval & Sign-Off
 
-**Approved By**: jordigilh (User)
+**Approved By**: Ayush-Singh986 (User)
 **Approval Date**: December 30, 2025
 **Implementation Start**: [Date]
 **Expected Completion**: [Date + 2 days]

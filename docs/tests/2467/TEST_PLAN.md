@@ -3,7 +3,7 @@
 > **Template Version**: 2.0 — Hybrid IEEE 829-2008 + Kubernaut
 
 **Test Plan Identifier**: TP-2467-v1.0<br>
-**Issue**: [#2467](https://github.com/jordigilh/kubernaut/issues/2467)<br>
+**Issue**: [#2467](https://github.com/Ayush-Singh986/kubernaut/issues/2467)<br>
 **Feature**: Keep SignalProcessing-owned classifications authoritative through AIAnalysis, Kubernaut Agent, and API Frontend RCA contracts<br>
 **Created**: 2026-09-27<br>
 **Author**: Kubernaut Team<br>

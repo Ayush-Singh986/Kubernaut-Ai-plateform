@@ -35,7 +35,7 @@ limitations under the License.
 package evaluator
 
 import (
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // PolicyInput is the typed contract between Go and Rego.

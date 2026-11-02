@@ -6,7 +6,7 @@
 **Target Version**: V1.6
 **Status**: Approved
 **Date**: 2026-09-30
-**Related Issue**: [#2478](https://github.com/jordigilh/kubernaut/issues/2478)
+**Related Issue**: [#2478](https://github.com/Ayush-Singh986/kubernaut/issues/2478)
 
 ---
 

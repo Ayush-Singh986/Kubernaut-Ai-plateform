@@ -482,7 +482,7 @@ go test ./test/integration/kubernautagent/session/... -ginkgo.v
 go test ./test/integration/kubernautagent/session/... -ginkgo.focus="Audit"
 
 # Coverage (manager.go)
-go test ./test/integration/kubernautagent/session/... -coverprofile=cover.out -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/session
+go test ./test/integration/kubernautagent/session/... -coverprofile=cover.out -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session
 go tool cover -func=cover.out
 ```
 

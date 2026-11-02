@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/codeany-ai/open-agent-sdk-go/types"
-	"github.com/jordigilh/kubernaut/spikes/oas-runtime/internal/acp"
-	"github.com/jordigilh/kubernaut/spikes/oas-runtime/internal/runtime"
+	"github.com/Ayush-Singh986/kubernaut/spikes/oas-runtime/internal/acp"
+	"github.com/Ayush-Singh986/kubernaut/spikes/oas-runtime/internal/runtime"
 )
 
 func main() {

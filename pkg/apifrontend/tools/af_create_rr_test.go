@@ -20,14 +20,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	gwtypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	gwtypes "github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

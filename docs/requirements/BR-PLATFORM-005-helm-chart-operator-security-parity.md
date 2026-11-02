@@ -179,7 +179,7 @@ per BR-PLATFORM-003/004's OCP-removal scope).
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #1589](https://github.com/jordigilh/kubernaut/issues/1589) (follow-up
+- **Tracked in**: [Issue #1589](https://github.com/Ayush-Singh986/kubernaut/issues/1589) (follow-up
   triage after the initial Helm/Operator parity pass covering BR-PLATFORM-003/004).
 - **Builds on**: BR-PLATFORM-003 (observability/autoscaling parity), BR-PLATFORM-004 (single-install
   guard) — same Issue #1589 initiative, same Operator-vs-Helm triage methodology.

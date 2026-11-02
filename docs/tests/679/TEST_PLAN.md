@@ -386,7 +386,7 @@ go test ./test/unit/kubernautagent/enrichment/... -ginkgo.v
 # Coverage
 go test ./test/unit/kubernautagent/enrichment/... \
   -coverprofile=coverage-679.out \
-  -coverpkg=github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment/...
+  -coverpkg=github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment/...
 go tool cover -func=coverage-679.out
 ```
 

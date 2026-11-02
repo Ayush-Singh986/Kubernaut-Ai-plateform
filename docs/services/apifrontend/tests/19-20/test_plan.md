@@ -1,7 +1,7 @@
 # Test Plan: MCP Tool Bridge — Wire Stubs to Real Implementations
 
 **Test Plan Identifier:** TP-AF-019-020-BRIDGE
-**Issues:** [#19](https://github.com/jordigilh/kubernaut-apifrontend/issues/19), [#20](https://github.com/jordigilh/kubernaut-apifrontend/issues/20)
+**Issues:** [#19](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/19), [#20](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/20)
 **Version:** 1.1
 **Date:** 2026-05-09
 **Status:** Draft

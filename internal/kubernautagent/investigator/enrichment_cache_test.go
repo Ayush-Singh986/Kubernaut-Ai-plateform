@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
 )
 
 var _ = Describe("TP-764: Enrichment deduplication (#764)", func() {

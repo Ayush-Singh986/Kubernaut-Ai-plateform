@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tlswiring"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tlswiring"
 )
 
 func TestConfigureServer_NoCertDirFailsClosed(t *testing.T) {

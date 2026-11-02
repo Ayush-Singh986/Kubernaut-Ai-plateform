@@ -3,7 +3,7 @@
 # This pipeline validates failure handling in the WorkflowExecution controller
 #
 # Usage:
-#   1. Bundle: tkn bundle push quay.io/jordigilh/test-workflows/failing:v1.0.0 -f failing-pipeline.yaml
+#   1. Bundle: tkn bundle push quay.io/Ayush-Singh986/test-workflows/failing:v1.0.0 -f failing-pipeline.yaml
 #   2. Create WorkflowExecution referencing this bundle
 #   3. Verify WFE transitions to Failed with proper FailureDetails
 #

@@ -5,8 +5,8 @@
 **Date**: 2026-08
 **Confidence**: 92%
 **Extends**: [DD-TIMEOUT-001: Global Remediation Timeout Strategy](DD-TIMEOUT-001-global-remediation-timeout.md)
-**Implements**: [Issue #2176](https://github.com/jordigilh/kubernaut/issues/2176)
-**Follow-up**: [Issue #2181](https://github.com/jordigilh/kubernaut/issues/2181) (EffectivenessAssessment / NotificationRequest)
+**Implements**: [Issue #2176](https://github.com/Ayush-Singh986/kubernaut/issues/2176)
+**Follow-up**: [Issue #2181](https://github.com/Ayush-Singh986/kubernaut/issues/2181) (EffectivenessAssessment / NotificationRequest)
 
 ---
 
@@ -135,7 +135,7 @@ EA (Verifying phase) and NT (Notifying phase) are **not** covered by this decisi
 `checkPhaseTimeouts` doesn't even backstop those two phases today. Extending `TimeoutConfig` with
 two new fields, extending RO's own backstop to cover them, and adding the same
 propagate-and-self-enforce pattern to EA/NT is a separate, larger feature, tracked as a follow-up:
-[Issue #2181](https://github.com/jordigilh/kubernaut/issues/2181).
+[Issue #2181](https://github.com/Ayush-Singh986/kubernaut/issues/2181).
 
 ## Consequences
 
@@ -160,7 +160,7 @@ propagate-and-self-enforce pattern to EA/NT is a separate, larger feature, track
     child layer is documented as the fast path, RO's backstop as the defense-in-depth fallback.
 - ⚠️ **EA/NT remain backstop-only** until the follow-up issue lands, so this decision does not yet
   give full five-CRD coverage.
-  - **Mitigation**: explicitly tracked, not silently dropped — see [Issue #2181](https://github.com/jordigilh/kubernaut/issues/2181).
+  - **Mitigation**: explicitly tracked, not silently dropped — see [Issue #2181](https://github.com/Ayush-Singh986/kubernaut/issues/2181).
 
 ## Related Documents
 
@@ -169,8 +169,8 @@ propagate-and-self-enforce pattern to EA/NT is a separate, larger feature, track
 | [DD-TIMEOUT-001](DD-TIMEOUT-001-global-remediation-timeout.md) | Extended by this decision — DD-TIMEOUT-001 stops at RO's own boundary and never specified child-CRD propagation |
 | [BR-ORCH-027-028](../../requirements/BR-ORCH-027-028-timeout-management.md) | AC-028-2 (phase timeout before global) and AC-028-5 (per-remediation override) are now enforced end-to-end via this decision |
 | [DD-AIANALYSIS-001](DD-AIANALYSIS-001-spec-structure.md) | Notes `AIAnalysisTimeoutConfig` as superseded by `TimesOutAt` |
-| [Issue #2176](https://github.com/jordigilh/kubernaut/issues/2176) | Parent issue implementing this decision |
-| [Issue #2181](https://github.com/jordigilh/kubernaut/issues/2181) | Follow-up: extend to EffectivenessAssessment / NotificationRequest |
+| [Issue #2176](https://github.com/Ayush-Singh986/kubernaut/issues/2176) | Parent issue implementing this decision |
+| [Issue #2181](https://github.com/Ayush-Singh986/kubernaut/issues/2181) | Follow-up: extend to EffectivenessAssessment / NotificationRequest |
 
 ---
 

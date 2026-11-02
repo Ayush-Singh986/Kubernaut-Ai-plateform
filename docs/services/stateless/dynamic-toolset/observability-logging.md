@@ -395,7 +395,7 @@ if err := d.DiscoverServices(ctx); err != nil {
   "component": "discovery",
   "detectors_count": 4,
   "error": "failed to list services: connection refused",
-  "stacktrace": "goroutine 1 [running]:\ngithub.com/jordigilh/kubernaut/pkg/toolset/discovery.(*ServiceDiscovererImpl).DiscoverServices(...)\n\t/app/pkg/toolset/discovery/discoverer.go:45 +0x2a5\n..."
+  "stacktrace": "goroutine 1 [running]:\ngithub.com/Ayush-Singh986/kubernaut/pkg/toolset/discovery.(*ServiceDiscovererImpl).DiscoverServices(...)\n\t/app/pkg/toolset/discovery/discoverer.go:45 +0x2a5\n..."
 }
 ```
 

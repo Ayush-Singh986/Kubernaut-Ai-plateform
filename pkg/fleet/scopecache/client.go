@@ -24,7 +24,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // CacheReader abstracts the cache read operations for scope checking.

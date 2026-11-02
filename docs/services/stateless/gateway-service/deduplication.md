@@ -253,7 +253,7 @@ import (
     "time"
 
     "github.com/go-redis/redis/v8"
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 
 // DeduplicationService handles alert deduplication using Redis
@@ -394,7 +394,7 @@ import (
     "time"
 
     "github.com/go-redis/redis/v8"
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 
 // StormDetector identifies alert storms

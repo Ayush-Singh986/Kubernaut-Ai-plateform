@@ -277,7 +277,7 @@ import (
     "context"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
     "go.uber.org/zap"
 )
 
@@ -467,7 +467,7 @@ import (
     "time"
 
     corev1 "k8s.io/api/core/v1"
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
     "go.uber.org/zap"
 )
 
@@ -605,7 +605,7 @@ import (
     "time"
 
     corev1 "k8s.io/api/core/v1"
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
     "go.uber.org/zap"
 )
 
@@ -738,7 +738,7 @@ package generator
 import (
     "context"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
     corev1 "k8s.io/api/core/v1"
 )
 
@@ -832,7 +832,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 type PrometheusToolsetGenerator struct{}
@@ -877,7 +877,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 type GrafanaToolsetGenerator struct{}
@@ -933,7 +933,7 @@ import (
     "k8s.io/client-go/kubernetes"
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
 )
 
 // ConfigMapReconciler ensures ConfigMap matches desired state
@@ -1390,10 +1390,10 @@ import (
     "k8s.io/client-go/kubernetes"
     "k8s.io/client-go/rest"
 
-    "github.com/jordigilh/kubernaut/pkg/toolset"
-    "github.com/jordigilh/kubernaut/pkg/toolset/discovery"
-    "github.com/jordigilh/kubernaut/pkg/toolset/generator"
-    "github.com/jordigilh/kubernaut/pkg/toolset/reconciler"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/discovery"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/generator"
+    "github.com/Ayush-Singh986/kubernaut/pkg/toolset/reconciler"
 )
 
 func main() {

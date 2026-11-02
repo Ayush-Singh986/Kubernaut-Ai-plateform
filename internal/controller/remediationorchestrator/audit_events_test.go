@@ -29,14 +29,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	prodcontroller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

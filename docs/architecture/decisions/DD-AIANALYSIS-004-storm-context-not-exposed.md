@@ -363,7 +363,7 @@ After determining that storm context has minimal value for LLM RCA (3-6%), the a
 
 ## References
 
-> **✅ CORRECTED** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): `pkg/aianalysis/client/holmesgpt.go`
+> **✅ CORRECTED** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): `pkg/aianalysis/client/holmesgpt.go`
 > does not exist in the current codebase; the real KA API contract files are cited below (verified against
 > `pkg/aianalysis/handlers/interfaces.go` and `pkg/agentclient/`).
 

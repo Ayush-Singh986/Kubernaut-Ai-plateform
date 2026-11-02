@@ -20,13 +20,13 @@ import (
 	"net/http"
 	"time"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/fault"
-	mockmetrics "github.com/jordigilh/kubernaut/test/services/mock-llm/metrics"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/response"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/tracker"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/fault"
+	mockmetrics "github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/response"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/tracker"
 )
 
 func (h *handler) handleOllama(w http.ResponseWriter, r *http.Request) {

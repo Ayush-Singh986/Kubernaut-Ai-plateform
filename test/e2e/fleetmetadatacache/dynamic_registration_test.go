@@ -16,7 +16,7 @@ limitations under the License.
 
 package fleetmetadatacache
 
-import "github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
+import "github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
 
 // E2E-FMC-054-013. See shared.DynamicRegistration for the scenario body
 // (shared verbatim with the EAIGW lane) and variant.go for what's

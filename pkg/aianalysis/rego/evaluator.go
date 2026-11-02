@@ -29,7 +29,7 @@ import (
 	"github.com/go-logr/logr"
 	rego "github.com/open-policy-agent/opa/v1/rego"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 // Config for Rego evaluator

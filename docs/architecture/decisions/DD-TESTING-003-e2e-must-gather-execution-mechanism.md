@@ -16,14 +16,14 @@ per-pod. This duplicates (poorly) what the production `must-gather` image
 (`cmd/must-gather/`) already does comprehensively (CRDs, events, cluster state, Tekton, DataStorage
 API, DB infra, metrics, sanitization, checksums, tarball).
 
-**Real incident** (PR #2185, referenced in [#2036](https://github.com/jordigilh/kubernaut/issues/2036)):
+**Real incident** (PR #2185, referenced in [#2036](https://github.com/Ayush-Singh986/kubernaut/issues/2036)):
 E2E tests hit the suite timeout. `MustGatherPodLogs()` never ran because it is invoked from Ginkgo's
 own `AfterSuite`/`AfterEach` hooks, which do not reliably execute after a timeout-triggered process
 kill. Diagnostics were lost for the exact failure mode where they matter most.
 
 Additionally, `main`'s `DeleteCluster()` deletes the Kind cluster whenever `testsFailed == false`,
 which is also true on timeout/cancellation (tracked separately in
-[#2192](https://github.com/jordigilh/kubernaut/issues/2192), already fixed in `release/v1.5` via #2191).
+[#2192](https://github.com/Ayush-Singh986/kubernaut/issues/2192), already fixed in `release/v1.5` via #2191).
 Even with that fixed, we still need a diagnostic mechanism that (a) matches production must-gather
 output, and (b) can be invoked independently of Ginkgo's own hook lifecycle so it survives timeouts.
 
@@ -35,7 +35,7 @@ two candidate mechanisms via time-boxed spikes and picks one.
 
 - **BR-TESTING-001**: Integration/E2E tests MUST provide actionable diagnostics on failure
 - **BR-PLATFORM-001.3.2**: Must-gather RBAC/execution (existing, `cmd/must-gather/templates/`)
-- Supports the migration tracked in [#2036](https://github.com/jordigilh/kubernaut/issues/2036)
+- Supports the migration tracked in [#2036](https://github.com/Ayush-Singh986/kubernaut/issues/2036)
 
 ---
 
@@ -174,7 +174,7 @@ tarball out, then delete the Pod and RBAC objects.
    Extended with a repeatable `--extra-namespace` flag (`ExtraNamespaces []string` on
    `RunMustGatherImageOptions`) for suites needing diagnostics from infra namespaces outside
    `kubernaut-system` (e.g. `mcp-system`, `istio-system`, `envoy-ai-gateway-system`) — tracked
-   as a production must-gather feature in [#2194](https://github.com/jordigilh/kubernaut/issues/2194).
+   as a production must-gather feature in [#2194](https://github.com/Ayush-Singh986/kubernaut/issues/2194).
 3. ✅ Piloted on the `gateway` E2E suite; verified a real bundle collected via a focused
    integration smoke test against a live Kind cluster.
 4. ✅ Rolled out to all remaining E2E suites: single-cluster (`apifrontend`, `authwebhook`,
@@ -278,8 +278,8 @@ representative `kubernaut-system` workload (2 Deployments + 1 Job), using the un
 ## Related Decisions
 
 - **Builds On**: [DD-TESTING-002: Integration Test Diagnostics (Must-Gather Pattern)](DD-TESTING-002-integration-test-diagnostics-must-gather.md) — the podman-compose integration-tier analog; this DD covers the E2E/Kind tier instead
-- **Resolves**: [#2036](https://github.com/jordigilh/kubernaut/issues/2036) — E2E must-gather migration
-- **Related**: [#2192](https://github.com/jordigilh/kubernaut/issues/2192) — Kind cluster teardown race forward-port (independent fix, same incident family)
+- **Resolves**: [#2036](https://github.com/Ayush-Singh986/kubernaut/issues/2036) — E2E must-gather migration
+- **Related**: [#2192](https://github.com/Ayush-Singh986/kubernaut/issues/2192) — Kind cluster teardown race forward-port (independent fix, same incident family)
 
 ---
 
@@ -289,7 +289,7 @@ representative `kubernaut-system` workload (2 Deployments + 1 Job), using the un
 - **Existing local-dev pattern**: [`cmd/must-gather/Makefile`](../../../cmd/must-gather/Makefile) `test-e2e-container` target
 - **New E2E collector**: [`test/infrastructure/must_gather_image.go`](../../../test/infrastructure/must_gather_image.go) `RunMustGatherImage()` / `BuildMustGatherImageForE2E()`
 - **RBAC templates (Alt 2, not adopted here)**: [`cmd/must-gather/templates/`](../../../cmd/must-gather/templates/)
-- **Follow-up tracking**: [#2194](https://github.com/jordigilh/kubernaut/issues/2194) (extended must-gather features: jobs.sh collector, `--extra-namespace`), [#2196](https://github.com/jordigilh/kubernaut/issues/2196) (pre-existing `KUBERNAUT_NAMESPACES` bash array-export bug in `logs.sh`/`events.sh`/`metrics.sh`/`cluster-state.sh`, found during this migration, out of scope for this DD)
+- **Follow-up tracking**: [#2194](https://github.com/Ayush-Singh986/kubernaut/issues/2194) (extended must-gather features: jobs.sh collector, `--extra-namespace`), [#2196](https://github.com/Ayush-Singh986/kubernaut/issues/2196) (pre-existing `KUBERNAUT_NAMESPACES` bash array-export bug in `logs.sh`/`events.sh`/`metrics.sh`/`cluster-state.sh`, found during this migration, out of scope for this DD)
 
 ---
 

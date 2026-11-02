@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/llm/openaicompat"
 )
 
 // ChatClient abstracts a single non-streaming Chat Completions call for

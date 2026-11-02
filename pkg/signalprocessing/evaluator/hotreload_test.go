@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/evaluator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/evaluator"
 )
 
 // BR-SP-051: Hot-reload policy evaluation

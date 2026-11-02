@@ -23,7 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
 )
 
 // ========================================

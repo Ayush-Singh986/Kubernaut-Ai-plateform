@@ -38,14 +38,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/controller/aianalysis"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/status"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/controller/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/status"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ----------------------------------------------------------------------------

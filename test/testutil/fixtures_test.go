@@ -22,9 +22,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/schema"
-	"github.com/jordigilh/kubernaut/test/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/schema"
+	"github.com/Ayush-Singh986/kubernaut/test/testutil"
 )
 
 func TestTestutil(t *testing.T) {

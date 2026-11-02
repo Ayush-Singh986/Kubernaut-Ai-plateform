@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/transport"
 )
 
 var _ = Describe("Header Value Resolver — #417", func() {

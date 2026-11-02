@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	awconfig "github.com/jordigilh/kubernaut/pkg/authwebhook/config"
+	awconfig "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook/config"
 )
 
 // ========================================

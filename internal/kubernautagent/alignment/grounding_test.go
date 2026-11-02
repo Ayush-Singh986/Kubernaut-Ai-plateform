@@ -26,11 +26,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/alignment"
-	alignprompt "github.com/jordigilh/kubernaut/internal/kubernautagent/alignment/prompt"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment"
+	alignprompt "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/alignment/prompt"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // groundedResponse returns a standard "grounded" evaluator LLM response for grounding review.

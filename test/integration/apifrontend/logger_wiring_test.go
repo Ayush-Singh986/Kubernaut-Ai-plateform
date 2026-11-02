@@ -19,12 +19,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/apifrontend"
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/apifrontend"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

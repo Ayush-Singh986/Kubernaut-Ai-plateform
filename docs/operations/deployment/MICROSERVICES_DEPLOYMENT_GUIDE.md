@@ -29,16 +29,16 @@ This guide provides comprehensive deployment instructions for Kubernaut's **appr
 ### **Service Portfolio**
 | Service | Image | Port | Responsibility |
 |---------|-------|------|---------------|
-| **🔗 Gateway** | `quay.io/jordigilh/gateway-service:v1.0.0` | 8080 | HTTP Gateway & Security |
-| **🧠 Alert Processor** | `quay.io/jordigilh/alert-service:v1.0.0` | 8081 | Alert Processing Logic |
-| **🤖 AI Analysis** | `quay.io/jordigilh/ai-service:v1.0.0` | 8082 | AI Analysis & Decision Making |
-| **🎯 Workflow Orchestrator** | `quay.io/jordigilh/workflow-service:v1.0.0` | 8083 | Workflow Execution |
-| **⚡ K8s Executor** | `quay.io/jordigilh/executor-service:v1.0.0` | 8084 | Kubernetes Operations |
-| **📊 Data Storage** | `quay.io/jordigilh/storage-service:v1.0.0` | 8085 | Data Persistence |
-| **🔍 Intelligence** | `quay.io/jordigilh/intelligence-service:v1.0.0` | 8086 | Pattern Discovery |
-| **📈 Effectiveness Monitor** | `quay.io/jordigilh/monitor-service:v1.0.0` | 8087 | Effectiveness Assessment |
-| **🌐 Context API** | `quay.io/jordigilh/context-service:v1.0.0` | 8088 | Context Orchestration |
-| **📢 Notifications** | `quay.io/jordigilh/notification-service:v1.0.0` | 8089 | Multi-Channel Notifications |
+| **🔗 Gateway** | `quay.io/Ayush-Singh986/gateway-service:v1.0.0` | 8080 | HTTP Gateway & Security |
+| **🧠 Alert Processor** | `quay.io/Ayush-Singh986/alert-service:v1.0.0` | 8081 | Alert Processing Logic |
+| **🤖 AI Analysis** | `quay.io/Ayush-Singh986/ai-service:v1.0.0` | 8082 | AI Analysis & Decision Making |
+| **🎯 Workflow Orchestrator** | `quay.io/Ayush-Singh986/workflow-service:v1.0.0` | 8083 | Workflow Execution |
+| **⚡ K8s Executor** | `quay.io/Ayush-Singh986/executor-service:v1.0.0` | 8084 | Kubernetes Operations |
+| **📊 Data Storage** | `quay.io/Ayush-Singh986/storage-service:v1.0.0` | 8085 | Data Persistence |
+| **🔍 Intelligence** | `quay.io/Ayush-Singh986/intelligence-service:v1.0.0` | 8086 | Pattern Discovery |
+| **📈 Effectiveness Monitor** | `quay.io/Ayush-Singh986/monitor-service:v1.0.0` | 8087 | Effectiveness Assessment |
+| **🌐 Context API** | `quay.io/Ayush-Singh986/context-service:v1.0.0` | 8088 | Context Orchestration |
+| **📢 Notifications** | `quay.io/Ayush-Singh986/notification-service:v1.0.0` | 8089 | Multi-Channel Notifications |
 
 ---
 
@@ -59,7 +59,7 @@ docker login quay.io
 ### **Deploy All Services**
 ```bash
 # Clone repository
-git clone https://github.com/jordigilh/kubernaut.git
+git clone https://github.com/Ayush-Singh986/kubernaut.git
 cd kubernaut
 
 # Deploy infrastructure
@@ -182,7 +182,7 @@ spec:
     spec:
       containers:
       - name: gateway
-        image: quay.io/jordigilh/gateway-service:v1.0.0
+        image: quay.io/Ayush-Singh986/gateway-service:v1.0.0
         ports:
         - containerPort: 8080
         env:
@@ -271,7 +271,7 @@ spec:
     spec:
       containers:
       - name: alert-processor
-        image: quay.io/jordigilh/alert-service:v1.0.0
+        image: quay.io/Ayush-Singh986/alert-service:v1.0.0
         ports:
         - containerPort: 8081
         env:
@@ -335,7 +335,7 @@ spec:
     spec:
       containers:
       - name: ai-analysis
-        image: quay.io/jordigilh/ai-service:v1.0.0
+        image: quay.io/Ayush-Singh986/ai-service:v1.0.0
         ports:
         - containerPort: 8082
         env:
@@ -414,7 +414,7 @@ spec:
     spec:
       containers:
       - name: workflow-orchestrator
-        image: quay.io/jordigilh/workflow-service:v1.0.0
+        image: quay.io/Ayush-Singh986/workflow-service:v1.0.0
         ports:
         - containerPort: 8083
         env:
@@ -481,7 +481,7 @@ spec:
       serviceAccountName: kubernaut-executor
       containers:
       - name: k8s-executor
-        image: quay.io/jordigilh/executor-service:v1.0.0
+        image: quay.io/Ayush-Singh986/executor-service:v1.0.0
         ports:
         - containerPort: 8084
         env:

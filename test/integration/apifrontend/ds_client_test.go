@@ -9,9 +9,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ds"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ds"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 type bearerTransport struct {

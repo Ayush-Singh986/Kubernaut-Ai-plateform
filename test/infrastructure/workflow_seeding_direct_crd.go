@@ -29,9 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/contenthash"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/contenthash"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // SeedWorkflowsViaDirectCRDCreation registers workflow fixtures directly via

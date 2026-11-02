@@ -30,14 +30,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/agentsession"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/agentsession"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 const (

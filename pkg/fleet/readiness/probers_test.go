@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
 )
 
 // fakeMCPClient is a test double for readiness.MCPClient.

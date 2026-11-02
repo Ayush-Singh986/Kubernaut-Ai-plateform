@@ -102,7 +102,7 @@ OCP-removal scope).
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #1589](https://github.com/jordigilh/kubernaut/issues/1589) (follow-up
+- **Tracked in**: [Issue #1589](https://github.com/Ayush-Singh986/kubernaut/issues/1589) (follow-up
   triage after BR-PLATFORM-003/004/005).
 - **Builds on**: BR-PLATFORM-005 (security/NetworkPolicy parity) — same triage methodology
   (compare `kubernaut-operator/internal/resources/*.go` against the Helm chart), same Issue #1589

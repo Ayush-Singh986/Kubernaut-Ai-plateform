@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/shared/k8s/ownerchain"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s/ownerchain"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"

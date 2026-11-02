@@ -23,8 +23,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // applyLLMRCA copies the resolved RCA fields (whichever of snake_case /

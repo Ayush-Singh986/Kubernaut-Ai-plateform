@@ -8,8 +8,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 var _ = Describe("State Machine", func() {

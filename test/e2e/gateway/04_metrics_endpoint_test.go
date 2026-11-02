@@ -30,7 +30,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Test 04: Metrics Endpoint (BR-GATEWAY-017)

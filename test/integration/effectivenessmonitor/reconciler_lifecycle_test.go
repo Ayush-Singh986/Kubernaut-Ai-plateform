@@ -25,7 +25,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 var _ = Describe("Reconciler Lifecycle (BR-EM-005)", func() {

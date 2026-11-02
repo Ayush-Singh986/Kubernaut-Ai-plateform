@@ -13,9 +13,9 @@
 **Author**: AI Assistant
 **Status**: Draft
 **Branch**: `development/v1.5`
-**Parent Issue**: [#1048](https://github.com/jordigilh/kubernaut/issues/1048)
-**Tracking Issue**: [#1088](https://github.com/jordigilh/kubernaut/issues/1088)
-**Operator Dependencies**: [kubernaut-operator#92](https://github.com/jordigilh/kubernaut-operator/issues/92) (endpoint propagation delay)
+**Parent Issue**: [#1048](https://github.com/Ayush-Singh986/kubernaut/issues/1048)
+**Tracking Issue**: [#1088](https://github.com/Ayush-Singh986/kubernaut/issues/1088)
+**Operator Dependencies**: [kubernaut-operator#92](https://github.com/Ayush-Singh986/kubernaut-operator/issues/92) (endpoint propagation delay)
 
 ---
 
@@ -72,7 +72,7 @@ This test plan validates Phases 6-8 (P1 Operational Readiness) of the Data Stora
 ### 2.2 Cross-References
 
 - [Phase 5 Test Plan](../1048/PHASE5_TEST_PLAN.md)
-- [Issue #1088 — Data Storage Readiness Plan](https://github.com/jordigilh/kubernaut/issues/1088)
+- [Issue #1088 — Data Storage Readiness Plan](https://github.com/Ayush-Singh986/kubernaut/issues/1088)
 - [100 Go Mistakes](https://github.com/teivah/100-go-mistakes) — REFACTOR validation
 - [Testing Strategy](.cursor/rules/03-testing-strategy.mdc)
 - [V1.0 Test Plan Template](../../development/testing/V1_0_SERVICE_MATURITY_TEST_PLAN_TEMPLATE.md)

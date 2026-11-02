@@ -19,7 +19,7 @@ make build-test-workflows
 make push-test-workflows
 
 # Override registry (e.g., for CI or ghcr.io)
-make push-test-workflows WORKFLOW_REGISTRY=ghcr.io/jordigilh/kubernaut/test-workflows
+make push-test-workflows WORKFLOW_REGISTRY=ghcr.io/Ayush-Singh986/kubernaut/test-workflows
 ```
 
 ## Images

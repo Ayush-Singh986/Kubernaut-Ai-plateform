@@ -27,11 +27,11 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // backendGVRListKinds mirrors the GVR the EAIGWRegistry watches (Envoy AI

@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcptools "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	mcptools "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // fakeWorkflowLister implements mcptools.WorkflowLister for unit tests,

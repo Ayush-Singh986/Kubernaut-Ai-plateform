@@ -13,8 +13,8 @@
 **Author**: AI Assistant
 **Status**: Draft
 **Branch**: `development/v1.5`
-**Tracking Issue**: [#1088](https://github.com/jordigilh/kubernaut/issues/1088)
-**Parent Issue**: [#1048](https://github.com/jordigilh/kubernaut/issues/1048)
+**Tracking Issue**: [#1088](https://github.com/Ayush-Singh986/kubernaut/issues/1088)
+**Parent Issue**: [#1048](https://github.com/Ayush-Singh986/kubernaut/issues/1048)
 **Audit Reference**: GA Readiness Audit (commit 05d895087, May 13 2026)
 
 ---

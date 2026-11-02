@@ -110,7 +110,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 
 // PrometheusAdapter handles Prometheus AlertManager webhook format
@@ -261,7 +261,7 @@ import (
     "context"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway/adapters"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
 )
 
 var _ = Describe("BR-GATEWAY-001: Prometheus Adapter", func() {
@@ -346,7 +346,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
     corev1 "k8s.io/api/core/v1"
 )
 
@@ -590,7 +590,7 @@ package adapters
 
 import (
     "context"
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 
 // SignalAdapter converts source-specific signal formats to internal format
@@ -717,8 +717,8 @@ import (
     "net/http"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-    "github.com/jordigilh/kubernaut/pkg/gateway/processing"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
     "github.com/prometheus/client_golang/prometheus"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/log"
@@ -877,7 +877,7 @@ import (
     "net/http"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
     "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -1088,7 +1088,7 @@ import (
     "sync"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
     corev1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -1232,7 +1232,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
     "github.com/open-policy-agent/opa/rego"
     "sigs.k8s.io/controller-runtime/pkg/log"
 )

@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"time"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 // ApprovalRequestEventPayload is the structured payload emitted as a

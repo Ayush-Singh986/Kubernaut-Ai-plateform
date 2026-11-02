@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-03-16  
-**Issue**: [#415](https://github.com/jordigilh/kubernaut/issues/415)  
+**Issue**: [#415](https://github.com/Ayush-Singh986/kubernaut/issues/415)  
 **Supersedes**: DD-INFRA-001 (partially), DD-SEVERITY-001 (partially), TRIAGE-SEVERITY-EXTENSIBILITY (partially)
 
 ## Context

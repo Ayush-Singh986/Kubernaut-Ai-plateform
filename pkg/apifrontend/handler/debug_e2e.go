@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/streaming"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/streaming"
 )
 
 func init() {

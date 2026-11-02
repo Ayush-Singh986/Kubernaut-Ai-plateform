@@ -6,7 +6,7 @@
 
 ## 2. References
 
-- **Issue**: [#1246](https://github.com/jordigilh/kubernaut/issues/1246)
+- **Issue**: [#1246](https://github.com/Ayush-Singh986/kubernaut/issues/1246)
 - **BR**: BR-WORKFLOW-006 (Kubernetes-native workflow schema), BR-PLATFORM-012 (Graceful degradation)
 - **ADR**: ADR-058 (CRD-based workflow registration)
 - **Design**: Issue #548 (StartupReconciler PVC-wipe resilience)

@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 	"k8s.io/client-go/kubernetes"
 )
 

@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/handlers"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/handlers"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 // --- ACP types (subset for spike validation) ---

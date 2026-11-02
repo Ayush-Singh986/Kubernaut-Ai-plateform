@@ -156,7 +156,7 @@ import (
     "context"
     "net/http"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 // CorrelationIDMiddleware extracts or generates correlation ID
@@ -198,7 +198,7 @@ import (
     "context"
     "net/http"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 // AddCorrelationID adds correlation ID to outgoing request
@@ -266,8 +266,8 @@ import (
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    remediationv1 "github.com/jordigilh/kubernaut/pkg/apis/remediation/v1"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediation/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 func (s *GatewayService) createRemediationRequestCRD(
@@ -314,9 +314,9 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     ctrl "sigs.k8s.io/controller-runtime"
 
-    remediationv1 "github.com/jordigilh/kubernaut/pkg/apis/remediation/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/pkg/apis/aianalysis/v1"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediation/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/aianalysis/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 func (r *RemediationRequestReconciler) Reconcile(
@@ -390,9 +390,9 @@ import (
 
     ctrl "sigs.k8s.io/controller-runtime"
 
-    aianalysisv1 "github.com/jordigilh/kubernaut/pkg/apis/aianalysis/v1"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
-    "github.com/jordigilh/kubernaut/pkg/httpclient"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/aianalysis/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/httpclient"
 )
 
 func (r *AIAnalysisReconciler) Reconcile(
@@ -487,7 +487,7 @@ import (
     "github.com/go-logr/logr"
     ctrl "sigs.k8s.io/controller-runtime"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 func (r *AIAnalysisReconciler) Reconcile(
@@ -534,7 +534,7 @@ import (
 
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 func (s *GatewayService) handleSignalIngestion(w http.ResponseWriter, r *http.Request) {

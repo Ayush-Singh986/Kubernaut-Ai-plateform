@@ -1,6 +1,6 @@
 # DD-PLATFORM-006: Helm Chart Configuration Surface Reduction
 
-**Status**: ✅ **IMPLEMENTED** (merged via [PR #1790](https://github.com/jordigilh/kubernaut/pull/1790))
+**Status**: ✅ **IMPLEMENTED** (merged via [PR #1790](https://github.com/Ayush-Singh986/kubernaut/pull/1790))
 **Decision Date**: 2026-07-31 (merge date; Decision Area 14's materialized-defaults generator
 remains deferred to its own follow-up PR — see Status section below)
 **Version**: 5.14 (Decision Area 20 added: PostgreSQL server-side TLS, closing issue #2270 as a
@@ -8,7 +8,7 @@ genuine chart-wiring fix rather than a client-side schema-default flip — the b
 zero TLS wiring, structurally the same gap Decision Area 8 originally closed for Valkey. Decision
 Area 19's confidence raised 85% → 95% after a follow-up session's spikes closed both previously-
 residual risks (valkey-cli client-cert probe syntax; the break-glass runbook). Both implemented
-together in [PR #2272](https://github.com/jordigilh/kubernaut/pull/2272). Previously 5.13, Decision
+together in [PR #2272](https://github.com/Ayush-Singh986/kubernaut/pull/2272). Previously 5.13, Decision
 Area 19 added: Valkey client authentication via mTLS, triaging issue
 #2269 — two pre-implementation spikes found the requested `requirepass` fix would not actually
 close the gap (DataStorage's existing "mandatory" password is confirmed empirically inert against
@@ -42,7 +42,7 @@ cache's opt-in one, since FMC's Valkey dependency has no fail-open fallback)
 - DD-PLATFORM-007: LLM Profile Consolidation (`global.llmProfiles`/`llmProfileRef` — landed via
   #1735/#1736; this DD's Decision Area 4 builds on it)
 
-**Tracking Issue**: [#1743](https://github.com/jordigilh/kubernaut/issues/1743)
+**Tracking Issue**: [#1743](https://github.com/Ayush-Singh986/kubernaut/issues/1743)
 
 **Implementation Plan**: `.cursor/plans/dd-platform-006_full_implementation_10d3769d.plan.md`
 (6 sequential PRs, RED/GREEN test cases, Wiring Manifests)
@@ -1110,7 +1110,7 @@ a live cluster.
 
 ### Decision Area 19 — Valkey Client Authentication via mTLS (closes the DA6/DA8 gap between mandatory transport encryption and actual client authentication)
 
-**Finding, triaging [kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)**: Decision
+**Finding, triaging [kubernaut#2269](https://github.com/Ayush-Singh986/kubernaut/issues/2269)**: Decision
 Area 8 made the chart's own Valkey deployment TLS-only and Decision Area 6 mandated
 `datastorage.config.redis.tls.enabled` as a security-relevant, non-optional toggle — but neither
 Decision Area evaluated Valkey **client authentication** as its own control. `--tls-auth-clients
@@ -1250,7 +1250,7 @@ now closed:
   exception path was needed.
 
 Implemented (together with Decision Area 20 below) in
-[PR #2272](https://github.com/jordigilh/kubernaut/pull/2272); `helm-unittest`/`helm lint`/
+[PR #2272](https://github.com/Ayush-Singh986/kubernaut/pull/2272); `helm-unittest`/`helm lint`/
 `helm template` all validated across both `tls.mode` variants. The remaining, unclaimed proof tier
 is this repo's existing Kind-based E2E fullpipeline/fleet suites actually exercising the mTLS
 handshake end-to-end once that PR's CI runs.
@@ -1260,7 +1260,7 @@ intentionally scoped out of DA19 itself — see **Decision Area 20** below, whic
 
 ### Decision Area 20 — PostgreSQL Server-Side TLS (parity with Decision Area 8 for Valkey)
 
-**Finding, triaging [kubernaut#2270](https://github.com/jordigilh/kubernaut/issues/2270)**:
+**Finding, triaging [kubernaut#2270](https://github.com/Ayush-Singh986/kubernaut/issues/2270)**:
 `values.schema.json`'s `datastorage.config.database.sslMode` defaults to `"disable"`, and is only
 forced non-`disable` by `Config.Validate()`'s `validateProductionConstraints()` when
 `Environment=="production"` — unlike Redis TLS, which this chart hardcodes unconditionally
@@ -1332,7 +1332,7 @@ Decision Area 8's treatment of Valkey:
 client compatibility) was empirically validated end-to-end against a real container, not just
 reasoned about. The residual 8% is ordinary chart-wiring implementation risk (getting the exact
 volume/ConfigMap YAML right), not design-level risk. Implemented alongside Decision Area 19 in
-[PR #2272](https://github.com/jordigilh/kubernaut/pull/2272); `helm-unittest`/`helm lint`/
+[PR #2272](https://github.com/Ayush-Singh986/kubernaut/pull/2272); `helm-unittest`/`helm lint`/
 `helm template` all validated across `postgresql.enabled` true/false and both `tls.mode` variants —
 the remaining, unclaimed proof tier is this repo's existing Kind-based E2E fullpipeline suite
 actually exercising the Postgres TLS handshake end-to-end once that PR's CI runs.
@@ -1475,8 +1475,8 @@ further user review — made explicit, in both the hint text and a new Consequen
 is a genuine accepted cost to remediation quality/confidence, not merely an invisible
 nice-to-have)
 **Last Updated**: 2026-07-31
-**Status**: ✅ Implemented — merged to `main` via [PR #1790](https://github.com/jordigilh/kubernaut/pull/1790)
-(merge commit `80daf42f7`), tracking issue [#1743](https://github.com/jordigilh/kubernaut/issues/1743)
+**Status**: ✅ Implemented — merged to `main` via [PR #1790](https://github.com/Ayush-Singh986/kubernaut/pull/1790)
+(merge commit `80daf42f7`), tracking issue [#1743](https://github.com/Ayush-Singh986/kubernaut/issues/1743)
 closed. All CI suites (unit, integration, helm-unittest, E2E fullpipeline, E2E fleet) green on the
 merge commit. Decision Area 14's materialized-defaults generator (234 fields) remains deferred to
 PR9, tracked as an explicit follow-up rather than blocking this DD's Decision Areas 1-13/15-17.

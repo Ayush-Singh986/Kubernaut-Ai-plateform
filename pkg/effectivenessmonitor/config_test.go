@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/config"
 )
 
 var _ = Describe("Configuration (BR-EM-006, BR-EM-007, BR-EM-008)", func() {

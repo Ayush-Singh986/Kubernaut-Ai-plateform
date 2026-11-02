@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // BR-SECURITY-1505 (GAP-08, kubernaut#1505): distributed jti replay cache

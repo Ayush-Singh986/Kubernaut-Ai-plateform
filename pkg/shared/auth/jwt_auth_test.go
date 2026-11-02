@@ -31,8 +31,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"

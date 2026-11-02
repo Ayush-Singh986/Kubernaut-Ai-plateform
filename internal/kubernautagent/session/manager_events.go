@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // storePartialResult attaches a result to a session that is already in a

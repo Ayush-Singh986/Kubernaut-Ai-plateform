@@ -25,10 +25,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // Extracted from the now-deleted wiring_test.go (issue #2190, DD-AA-KA-001):

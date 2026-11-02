@@ -31,15 +31,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/config"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/status"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	prodcontroller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/status"
 )
 
 type preAnalysisBlockEngine struct {

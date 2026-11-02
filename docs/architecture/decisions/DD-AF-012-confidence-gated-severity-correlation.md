@@ -1,20 +1,20 @@
 # DD-AF-012: Confidence-Gated Severity Correlation with Agent Clarification
 
 **Status**: ✅ IMPLEMENTED on `main` (2026-08-09) — ported from `release/v1.5` (Issue #2027, PR
-[#2026](https://github.com/jordigilh/kubernaut/pull/2026)) as Issue #2028's `main`/v1.6 clone. See
+[#2026](https://github.com/Ayush-Singh986/kubernaut/pull/2026)) as Issue #2028's `main`/v1.6 clone. See
 "Implementation results (main port)" for the Wiring Manifest, TDD results, and test IDs for this
 branch.
 **Date**: 2026-08-08 (root-cause correction: 2026-08-09, `release/v1.5` implemented: 2026-08-09,
 `main` ported: 2026-08-09)
-**Issue**: [#2027](https://github.com/jordigilh/kubernaut/issues/2027) (`release/v1.5`),
-[#2028](https://github.com/jordigilh/kubernaut/issues/2028) (`main`/v1.6 clone)
+**Issue**: [#2027](https://github.com/Ayush-Singh986/kubernaut/issues/2027) (`release/v1.5`),
+[#2028](https://github.com/Ayush-Singh986/kubernaut/issues/2028) (`main`/v1.6 clone)
 **Related**: [DD-AF-001](DD-AF-001-pod-based-alert-correlation.md) (Tier 1 correlation this decision
 extends), DD-AF-010 (referenced in `pkg/apifrontend/severity/triage.go`/`af_create_rr.go` for the
 fail-closed-over-guessing philosophy this decision continues, no standalone doc file exists yet),
-[#2018](https://github.com/jordigilh/kubernaut/issues/2018)/[#2021](https://github.com/jordigilh/kubernaut/issues/2021)
+[#2018](https://github.com/Ayush-Singh986/kubernaut/issues/2018)/[#2021](https://github.com/Ayush-Singh986/kubernaut/issues/2021)
 (specificity-vs-state ranking fix — confirmed correct, not the cause of this recurrence),
-[#2022](https://github.com/jordigilh/kubernaut/issues/2022)/[#2025](https://github.com/jordigilh/kubernaut/issues/2025)
-(`kubernaut.ai/managed` scope pattern referenced below), [#2023](https://github.com/jordigilh/kubernaut/issues/2023)/[#2047](https://github.com/jordigilh/kubernaut/issues/2047)
+[#2022](https://github.com/Ayush-Singh986/kubernaut/issues/2022)/[#2025](https://github.com/Ayush-Singh986/kubernaut/issues/2025)
+(`kubernaut.ai/managed` scope pattern referenced below), [#2023](https://github.com/Ayush-Singh986/kubernaut/issues/2023)/[#2047](https://github.com/Ayush-Singh986/kubernaut/issues/2047)
 (harness-signal + prompt-instruction dual pattern this decision reuses)
 
 ## Context
@@ -249,6 +249,6 @@ subpackages) pass with zero failures.
 
 ## References
 
-- **Issue**: [#2027](https://github.com/jordigilh/kubernaut/issues/2027) (`release/v1.5`),
-  [#2028](https://github.com/jordigilh/kubernaut/issues/2028) (`main`), comment with the triage
-  summary: [issuecomment-5229204437](https://github.com/jordigilh/kubernaut/issues/2027#issuecomment-5229204437)
+- **Issue**: [#2027](https://github.com/Ayush-Singh986/kubernaut/issues/2027) (`release/v1.5`),
+  [#2028](https://github.com/Ayush-Singh986/kubernaut/issues/2028) (`main`), comment with the triage
+  summary: [issuecomment-5229204437](https://github.com/Ayush-Singh986/kubernaut/issues/2027#issuecomment-5229204437)

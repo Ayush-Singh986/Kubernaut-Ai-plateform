@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 var _ = Describe("shutdownTimeout", func() {

@@ -289,7 +289,7 @@ Project-specific templates enforcing Kubernaut standards.
    - `internal/controller/aianalysis/`
 4. Developer copies templates and replaces placeholders:
    - `{{CONTROLLER_NAME}}` → `aianalysis`
-   - `{{PACKAGE_PATH}}` → `github.com/jordigilh/kubernaut`
+   - `{{PACKAGE_PATH}}` → `github.com/Ayush-Singh986/kubernaut`
    - `{{CRD_GROUP}}/{{CRD_VERSION}}/{{CRD_KIND}}` → `aianalysis.kubernaut.io/v1alpha1/AIAnalysis`
 5. Implements controller-specific reconciliation logic
 6. Runs `make manifests generate fmt vet` to generate CRD and DeepCopy methods
@@ -393,7 +393,7 @@ Project-specific templates enforcing Kubernaut standards.
 | Placeholder | Description | Example |
 |-------------|-------------|---------|
 | `{{CONTROLLER_NAME}}` | Controller name (lowercase, no hyphens) | `aianalysis` |
-| `{{PACKAGE_PATH}}` | Full Go module path | `github.com/jordigilh/kubernaut` |
+| `{{PACKAGE_PATH}}` | Full Go module path | `github.com/Ayush-Singh986/kubernaut` |
 | `{{CRD_GROUP}}` | CRD API group | `aianalysis.kubernaut.io` |
 | `{{CRD_VERSION}}` | CRD API version | `v1alpha1` |
 | `{{CRD_KIND}}` | CRD Kind name | `AIAnalysis` |

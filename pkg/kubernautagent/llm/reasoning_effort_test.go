@@ -22,7 +22,7 @@ import (
 
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // BR-AI-087 / #1778: EffortToThinkingConfig/EffortToThinkingLevel were

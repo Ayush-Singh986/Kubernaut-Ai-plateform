@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
 )
 
 var _ = Describe("YAML Scenario Overrides", func() {

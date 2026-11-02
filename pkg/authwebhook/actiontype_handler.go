@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	atv1alpha1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	atv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"

@@ -26,12 +26,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
-	infrastructure "github.com/jordigilh/kubernaut/test/infrastructure"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
+	infrastructure "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 // IT-FLEET-READY-WE-001: cmd/workflowexecution must wire a readiness.Gate

@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
 )
 
 var _ = Describe("EM Config Knobs (#573, ADR-EM-001 section 10)", func() {

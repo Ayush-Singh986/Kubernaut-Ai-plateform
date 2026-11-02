@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Test Plan ID | TP-AF-1156-001 |
-| Issue | [#1156](https://github.com/jordigilh/kubernaut/issues/1156) |
+| Issue | [#1156](https://github.com/Ayush-Singh986/kubernaut/issues/1156) |
 | Service | ApiFrontend (AF) |
 | Date | 2026-05-19 |
 | Status | Draft |

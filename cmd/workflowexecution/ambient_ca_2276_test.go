@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
 )
 
 func generateAmbientCATestCert(t *testing.T) string {

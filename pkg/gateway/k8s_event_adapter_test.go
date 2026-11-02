@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
 )
 
 // Business Outcome Testing: Test WHAT the K8s Event Adapter enables, not HOW it parses

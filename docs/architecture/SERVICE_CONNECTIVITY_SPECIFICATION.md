@@ -7,13 +7,13 @@
 
 ---
 
-> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This document
+> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This document
 > predates Kubernaut's CRD-controller architecture and describes an earlier, sequential-HTTP-call design
 > (`Remediation Processor`, `Workflow Orchestrator`, `K8s Executor`, `Intelligence Service`, etc.) that was never
 > built as specified here. The current production architecture is 12 CRD-controller/stateless services — see
 > [Kubernaut Service Catalog](KUBERNAUT_SERVICE_CATALOG.md) for the authoritative decomposition. Two corrections
 > specific to this issue: (1) **HolmesGPT** (the "External AI & Investigation Tools" integration below) was
-> rewritten in Go and renamed **Kubernaut Agent (KA)** in v1.3 (issue [#433](https://github.com/jordigilh/kubernaut/issues/433));
+> rewritten in Go and renamed **Kubernaut Agent (KA)** in v1.3 (issue [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433));
 > it is now a first-class Kubernaut service (`cmd/kubernautagent/`), not an external tool consumed via a
 > "Context API Service". (2) **Context API** (referenced throughout this document as the HolmesGPT-facing
 > service) was deprecated and folded into Data Storage per

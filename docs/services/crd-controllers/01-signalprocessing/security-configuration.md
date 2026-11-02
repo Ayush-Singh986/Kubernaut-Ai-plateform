@@ -233,7 +233,7 @@ import (
     "context"
     "fmt"
 
-    signalprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 
     corev1 "k8s.io/api/core/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -279,7 +279,7 @@ import (
     "fmt"
     "regexp"
 
-    signalprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 )
 
 var (
@@ -324,7 +324,7 @@ package controller
 import (
     "fmt"
 
-    signalprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 
     "k8s.io/client-go/tools/record"
 )
@@ -365,7 +365,7 @@ package controller
 import (
     "context"
 
-    signalprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 
     "github.com/go-logr/logr"
 )

@@ -19,8 +19,8 @@
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 - [Repository README](../../../README.md) (the legacy application chart is retired)
-- [GitHub Issue #342](https://github.com/jordigilh/kubernaut/issues/342)
-- Related fixes: [#336](https://github.com/jordigilh/kubernaut/issues/336), [#339](https://github.com/jordigilh/kubernaut/issues/339), [PR #341](https://github.com/jordigilh/kubernaut/pull/341)
+- [GitHub Issue #342](https://github.com/Ayush-Singh986/kubernaut/issues/342)
+- Related fixes: [#336](https://github.com/Ayush-Singh986/kubernaut/issues/336), [#339](https://github.com/Ayush-Singh986/kubernaut/issues/339), [PR #341](https://github.com/Ayush-Singh986/kubernaut/pull/341)
 
 ---
 

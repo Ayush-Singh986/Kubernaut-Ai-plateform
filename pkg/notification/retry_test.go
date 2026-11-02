@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/retry"
-	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/retry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/circuitbreaker"
 )
 
 // BR-NOT-052: Retry Policy - BEHAVIOR & CORRECTNESS Testing

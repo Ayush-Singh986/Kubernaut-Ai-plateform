@@ -418,7 +418,7 @@ case BackendACM:
     return NewFederatedScopeChecker(localChecker, remoteChecker, logger), nil
 ```
 
-Add import: `"github.com/jordigilh/kubernaut/pkg/fleet/acm"`
+Add import: `"github.com/Ayush-Singh986/kubernaut/pkg/fleet/acm"`
 
 **Tests passing after**: UT-ACM-054-001..008, IT-ACM-054-001
 

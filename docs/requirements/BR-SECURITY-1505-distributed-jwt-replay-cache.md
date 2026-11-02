@@ -6,7 +6,7 @@
 **Target Version**: **V1.5**
 **Status**: ✅ Implemented
 **Date**: June 30, 2026
-**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-08)
+**GitHub Issues**: [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505) (GAP-08)
 
 > **Partially superseded (Helm gating + replay semantics)**: [DD-PLATFORM-006](../architecture/decisions/DD-PLATFORM-006-helm-chart-configuration-surface-reduction.md)
 > Decision Area 9/13 added TLS support to this client (`replayCache.tls`),
@@ -81,7 +81,7 @@ Key design choices:
 
 ## Related Documents
 
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md) — configure the replay cache through the operator-managed `Kubernaut` CR.
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md) — configure the replay cache through the operator-managed `Kubernaut` CR.
 
 ---
 

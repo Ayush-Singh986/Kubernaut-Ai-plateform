@@ -14,8 +14,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	afsession "github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	afsession "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 type auditSpy struct {

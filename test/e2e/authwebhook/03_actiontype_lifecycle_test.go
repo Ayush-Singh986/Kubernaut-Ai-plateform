@@ -29,9 +29,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	atv1alpha1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	atv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ========================================

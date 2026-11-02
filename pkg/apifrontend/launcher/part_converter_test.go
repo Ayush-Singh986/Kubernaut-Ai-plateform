@@ -12,7 +12,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
 )
 
 func partConverterBridgeCtx() (*fakeQueue, context.Context) {

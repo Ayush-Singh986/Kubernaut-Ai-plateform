@@ -1,6 +1,6 @@
 # Test Plan — #54: GatewayDiscoverer (Two-Phase Tool Discovery)
 
-**IEEE 829 Compliant** | **Issue**: [#54](https://github.com/jordigilh/kubernaut/issues/54) | **Milestone**: v1.5
+**IEEE 829 Compliant** | **Issue**: [#54](https://github.com/Ayush-Singh986/kubernaut/issues/54) | **Milestone**: v1.5
 
 > **⚠️ Superseded in part by [DD-FLEET-005](../../architecture/decisions/DD-FLEET-005-cluster-transparent-tool-exposure.md) (issue #1732)**: `GatewayDiscoverer`,
 > `KuadrantDiscoverer`, `EAIGWDiscoverer`, and `Registry` concurrency (§6.1-6.4, §6.6-6.7)

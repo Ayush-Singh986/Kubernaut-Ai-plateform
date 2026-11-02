@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/cache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/cache"
 )
 
 // Unit Test: TTLCache implementation correctness

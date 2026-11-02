@@ -47,8 +47,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // Config controls TracerProvider construction for one service process.

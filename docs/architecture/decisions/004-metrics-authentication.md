@@ -134,7 +134,7 @@ import (
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/metrics"
+    "github.com/Ayush-Singh986/kubernaut/pkg/metrics"
 )
 
 func main() {

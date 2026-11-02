@@ -3,7 +3,7 @@ package datastorage_test
 import (
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

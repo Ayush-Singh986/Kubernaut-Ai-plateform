@@ -11,9 +11,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
 )
 
 // IPLimiter provides per-IP token bucket rate limiting (pre-authentication tier).

@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 // DD-KA-2496 / BR-KA-016: defaults are independent of model-context truncation.

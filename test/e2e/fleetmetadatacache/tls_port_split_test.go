@@ -16,7 +16,7 @@ limitations under the License.
 
 package fleetmetadatacache
 
-import "github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
+import "github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
 
 // E2E-FMC-1683-016. See shared.TLSPortSplit for the scenario body -- 100%
 // portable, shared verbatim with the EAIGW lane (this journey exercises

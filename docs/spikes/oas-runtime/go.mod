@@ -1,4 +1,4 @@
-module github.com/jordigilh/kubernaut/spikes/oas-runtime
+module github.com/Ayush-Singh986/kubernaut/spikes/oas-runtime
 
 go 1.23.0
 

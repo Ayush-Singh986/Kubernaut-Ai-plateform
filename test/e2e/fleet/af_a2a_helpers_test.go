@@ -36,7 +36,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // afA2AAuthToken caches the Keycloak token across calls within a process (mirrors

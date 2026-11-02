@@ -27,11 +27,11 @@ delete permission, retain the named old node **stopped** instead of deleting it;
 do not make its restart a prerequisite by interfering with that unrelated work.
 The original container, volume, source snapshot and evidence remain preserved.
 
-**PR:** [#2493](https://github.com/jordigilh/kubernaut/pull/2493)
+**PR:** [#2493](https://github.com/Ayush-Singh986/kubernaut/pull/2493)
 
 **Starting published head:** `2dafdc9ce4f714604cf690bac0a9fd9aaf268f98`
 
-**Failure:** [E2E Fleet, job 114486586154](https://github.com/jordigilh/kubernaut/actions/runs/38144393386/job/114486586154)
+**Failure:** [E2E Fleet, job 114486586154](https://github.com/Ayush-Singh986/kubernaut/actions/runs/38144393386/job/114486586154)
 
 **Format:** IEEE 829 hybrid; AGENTS.md overrides older template coverage guidance
 

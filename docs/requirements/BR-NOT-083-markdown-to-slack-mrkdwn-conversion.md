@@ -198,7 +198,7 @@ No changes required to upstream services -- they continue to produce standard Ma
 ## Reference
 
 - [Slack mrkdwn formatting documentation](https://docs.slack.dev/messaging/formatting-message-text/)
-- GitHub Issue: [#48](https://github.com/jordigilh/kubernaut/issues/48)
+- GitHub Issue: [#48](https://github.com/Ayush-Singh986/kubernaut/issues/48)
 - Implementation: `pkg/notification/formatting/markdown_to_mrkdwn.go`
 - Tests: `test/unit/notification/markdown_to_mrkdwn_test.go`
 - Integration: `pkg/notification/delivery/slack_blocks.go`, `pkg/notification/formatting/slack.go`

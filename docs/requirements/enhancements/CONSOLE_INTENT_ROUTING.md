@@ -2,8 +2,8 @@
 
 **Status**: Proposed ModernBERT-based approach; implementation and runtime not approved
 **Updated**: 2026-10-24
-**Tracking**: [#856](https://github.com/jordigilh/kubernaut/issues/856)
-**Parent**: [Standalone Console](STANDALONE_CONSOLE.md), [#855](https://github.com/jordigilh/kubernaut/issues/855)
+**Tracking**: [#856](https://github.com/Ayush-Singh986/kubernaut/issues/856)
+**Parent**: [Standalone Console](STANDALONE_CONSOLE.md), [#855](https://github.com/Ayush-Singh986/kubernaut/issues/855)
 
 ## Goal and Initial Boundary
 

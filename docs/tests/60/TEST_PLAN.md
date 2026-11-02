@@ -434,7 +434,7 @@ go test ./test/integration/notification/... -ginkgo.v -ginkgo.focus="PagerDuty"
 go test ./test/unit/notification/delivery/... -ginkgo.focus="UT-NOT-060-001"
 
 # Coverage
-go test ./test/unit/notification/delivery/... -coverprofile=coverage_pd_ut.out -coverpkg=github.com/jordigilh/kubernaut/pkg/notification/delivery/...
+go test ./test/unit/notification/delivery/... -coverprofile=coverage_pd_ut.out -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery/...
 go tool cover -func=coverage_pd_ut.out
 ```
 

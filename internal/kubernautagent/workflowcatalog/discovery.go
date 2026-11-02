@@ -19,7 +19,7 @@ package workflowcatalog
 import (
 	"context"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // ========================================

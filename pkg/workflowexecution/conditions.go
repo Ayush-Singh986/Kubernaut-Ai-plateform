@@ -19,8 +19,8 @@ package workflowexecution
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/conditions"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/conditions"
 )
 
 // ========================================

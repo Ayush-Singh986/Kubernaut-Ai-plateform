@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server/helpers"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/validation"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/helpers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/validation"
 )
 
 // ============================================================================

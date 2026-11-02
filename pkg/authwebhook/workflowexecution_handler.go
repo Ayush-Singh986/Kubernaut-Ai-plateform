@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"strings"
 
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"

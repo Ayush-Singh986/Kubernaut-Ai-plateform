@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 // keycloakHostPortFMC is the Kind extraPortMappings host port for Keycloak in

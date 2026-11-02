@@ -49,7 +49,7 @@ data:
                 3. Check Gateway logs: `kubectl logs -n kubernaut-system deployment/gateway --tail=100`
                 4. Estimate alert backlog: `gateway_alerts_queued_estimate` metric
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-redis-unavailable.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-redis-unavailable.md
 
           - alert: GatewayPrometheusRetryExhaustion
             expr: gateway_consecutive_503_responses > 30
@@ -76,7 +76,7 @@ data:
                 3. Verify Prometheus AlertManager retry config
                 4. Consider manual alert replay if Redis recovery takes >15 min
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-prometheus-retry-exhaustion.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-prometheus-retry-exhaustion.md
 
           - alert: GatewaySentinelQuorumLost
             expr: count(gateway_redis_sentinel_health == 1) < 2
@@ -100,7 +100,7 @@ data:
                 3. Verify Sentinel configuration: `kubectl get cm redis-sentinel-config -n kubernaut-system`
                 4. Restart unhealthy Sentinel pods if needed
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-sentinel-quorum-lost.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-sentinel-quorum-lost.md
 
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # WARNING ALERTS (Investigate during business hours)
@@ -130,7 +130,7 @@ data:
                 3. Check for recent failovers: `gateway_redis_master_changes_total` metric
                 4. Review Redis logs for errors
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-redis-connection-failures.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-redis-connection-failures.md
 
           - alert: GatewayRedisFailoverDetected
             expr: increase(gateway_redis_master_changes_total[5m]) > 0
@@ -154,7 +154,7 @@ data:
                 3. Verify all replicas are synced with new master
                 4. Review Sentinel logs for failover cause
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-redis-failover.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-redis-failover.md
 
           - alert: GatewayAlertBacklogEstimate
             expr: gateway_alerts_queued_estimate > 100
@@ -176,6 +176,6 @@ data:
                 4. Monitor Gateway resource usage during recovery
                 5. Prepare for a surge of retried alerts after recovery
 
-                **Runbook**: https://github.com/jordigilh/kubernaut/blob/main/docs/runbooks/gateway-alert-backlog.md
+                **Runbook**: https://github.com/Ayush-Singh986/kubernaut/blob/main/docs/runbooks/gateway-alert-backlog.md
 
 

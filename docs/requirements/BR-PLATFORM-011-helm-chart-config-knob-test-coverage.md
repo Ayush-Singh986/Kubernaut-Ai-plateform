@@ -19,7 +19,7 @@
 
 `charts/kubernaut/values.schema.json` declares 202 schema-defaulted/map leaf fields across the
 chart's 11 config-bearing services. A cross-service consistency audit performed while fixing
-Issues #2216-#2221 (see [PR #2225](https://github.com/jordigilh/kubernaut/pull/2225)) found that
+Issues #2216-#2221 (see [PR #2225](https://github.com/Ayush-Singh986/kubernaut/pull/2225)) found that
 **63 of those 202 fields have no `helm-unittest` assertion proving they are actually wired** —
 i.e. that setting the field in `values.yaml` observably changes the rendered manifest. Of those
 63, 22 were confirmed by direct template inspection to be genuinely correctly wired already (no
@@ -68,7 +68,7 @@ TLS verification is never skippable) and was removed from the schema rather than
 seeded allowlist (`charts/kubernaut/.helm-coverage-allowlist.yaml`) therefore has 243 entries
 (265 gaps − 22 backfilled in this PR), not the originally-estimated ~41.
 
-**Addendum (2026-08-21, [PR #2225 review](https://github.com/jordigilh/kubernaut/pull/2225#issuecomment-5371062661))**:
+**Addendum (2026-08-21, [PR #2225 review](https://github.com/Ayush-Singh986/kubernaut/pull/2225#issuecomment-5371062661))**:
 a related but distinct failure mode was flagged during that PR's review. For a config knob that
 carries a real Go-side default in addition to its schema-declared one
 (`apifrontend.config.mcp.sessionIdleTimeout`/`toolTimeout`/`toolTimeouts`), the same conceptual
@@ -76,7 +76,7 @@ value now exists in two independently-authored places — `pkg/apifrontend/confi
 `DefaultConfig()` (Go literal) and `values.schema.json`'s `"default"` (JSON literal) — kept in
 sync only by `make generate-helm-defaults` plus human code review, with no automated cross-check.
 This is structurally the same drift class that caused
-[kubernaut-operator#374](https://github.com/jordigilh/kubernaut-operator/pull/374): a
+[kubernaut-operator#374](https://github.com/Ayush-Singh986/kubernaut-operator/pull/374): a
 hand-maintained copy of this exact `ToolTimeouts` map silently fell 2-of-4 entries out of date
 when AF's own binary default gained two new tools. Unlike #374, deleting the schema-side copy is
 not the right fix here — issue #2221 deliberately made these fields user-overridable via
@@ -206,10 +206,10 @@ lower-priority gap.
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #2226](https://github.com/jordigilh/kubernaut/issues/2226) (Helm
+- **Tracked in**: [Issue #2226](https://github.com/Ayush-Singh986/kubernaut/issues/2226) (Helm
   config-knob test-coverage gate + 22-field backfill).
 - **Follows from**: Issues #2216-#2221 /
-  [PR #2225](https://github.com/jordigilh/kubernaut/pull/2225), whose cross-service audit
+  [PR #2225](https://github.com/Ayush-Singh986/kubernaut/pull/2225), whose cross-service audit
   surfaced this coverage gap (and, separately, a real wiring bug in #2219 — the motivating example
   for why this class of gap matters).
 - **Complements**: [BR-PLATFORM-010](BR-PLATFORM-010-helm-chart-schema-level-input-validation.md)
@@ -218,7 +218,7 @@ lower-priority gap.
 - **Reusable component**: `hack/internal/helmschema` (`ParseSchema`, `ResolveNode`, `IsMap`,
   `IsObjectWithProperties`, `HasDefault`, `SortedKeys`), already shared by `hack/gen-helm-defaults`
   and `hack/gen-helm-config-docs`; this tool is a third consumer.
-- **FR-6 precedent**: [kubernaut-operator#374](https://github.com/jordigilh/kubernaut-operator/pull/374)
+- **FR-6 precedent**: [kubernaut-operator#374](https://github.com/Ayush-Singh986/kubernaut-operator/pull/374)
   (the same `mcp.toolTimeouts` drift class, previously caused by an operator-side hand-maintained
   copy — fixed there by deleting the redundant copy, which isn't viable for the chart's
   deliberately user-overridable schema default, hence FR-6's detection-based approach instead).

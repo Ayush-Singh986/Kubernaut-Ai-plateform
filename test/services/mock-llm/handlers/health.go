@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/fault"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/fault"
 )
 
 func (h *handler) handleHealth(w http.ResponseWriter, _ *http.Request) {

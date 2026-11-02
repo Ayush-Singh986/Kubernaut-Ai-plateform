@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"strings"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 // usageFor returns the scenario-scripted Usage when cfg carries a Usage

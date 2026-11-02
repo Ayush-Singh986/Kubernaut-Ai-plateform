@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // BufferedDSAuditStore wraps pkg/audit.BufferedAuditStore to implement KA's

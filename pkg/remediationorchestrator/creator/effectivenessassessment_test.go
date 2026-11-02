@@ -35,10 +35,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 )
 
 // Note: RunSpecs is invoked once per package by TestClusterIDPropagation in

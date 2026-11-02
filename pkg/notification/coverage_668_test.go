@@ -25,10 +25,10 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification"
-	notificationcfg "github.com/jordigilh/kubernaut/pkg/notification/config"
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification"
+	notificationcfg "github.com/Ayush-Singh986/kubernaut/pkg/notification/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
 )
 
 // Phase 2 coverage (BR-NOT-069, BR-NOT-104, ADR-030): helpers previously uncovered by unit tests.

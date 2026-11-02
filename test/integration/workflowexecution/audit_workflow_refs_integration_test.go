@@ -44,7 +44,7 @@ import (
 	"net/http"
 	"time"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -52,9 +52,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	weaudit "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
 )
 
 // ========================================

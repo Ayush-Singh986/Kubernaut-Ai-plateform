@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // InvestigationMetrics accumulates LLM interaction counts across all

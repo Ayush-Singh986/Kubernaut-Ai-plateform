@@ -16,7 +16,7 @@
 
 ### 1.1 Purpose
 
-Issue [#1899](https://github.com/jordigilh/kubernaut/issues/1899) reported AF auto-proceeding into a phase transition the user never explicitly confirmed while in interactive mode. Investigation confirmed three independent, compounding root causes (see [DD-AF-011](../../architecture/decisions/DD-AF-011-phase-transition-consent-guard.md) for full analysis):
+Issue [#1899](https://github.com/Ayush-Singh986/kubernaut/issues/1899) reported AF auto-proceeding into a phase transition the user never explicitly confirmed while in interactive mode. Investigation confirmed three independent, compounding root causes (see [DD-AF-011](../../architecture/decisions/DD-AF-011-phase-transition-consent-guard.md) for full analysis):
 
 1. `prompt.txt`'s "Alert Prioritization" section unconditionally directed auto-investigation, contradicting "Observation Mode".
 2. `NeedsReinvocationCtx` blindly nudged continuation on any text-only turn end, with no awareness of whether an investigation had legitimately started — the literal #1899 repro.

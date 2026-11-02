@@ -1,6 +1,6 @@
 # Test Plan — #1374: SyncSignalFromRCA GVK Sync for Cross-Resource RCA
 
-**IEEE 829 Compliant** | **Issue**: [#1374](https://github.com/jordigilh/kubernaut/issues/1374) | **Depends on**: #1051 (GVK component matching), #1064 (label override consistency)
+**IEEE 829 Compliant** | **Issue**: [#1374](https://github.com/Ayush-Singh986/kubernaut/issues/1374) | **Depends on**: #1051 (GVK component matching), #1064 (label override consistency)
 
 ## 1. Test Plan Identifier
 

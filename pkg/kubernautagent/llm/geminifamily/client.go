@@ -59,7 +59,7 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // gcpAuthScope is the OAuth2 scope requested for Vertex AI credentials,

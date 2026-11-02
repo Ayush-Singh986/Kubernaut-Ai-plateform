@@ -27,7 +27,7 @@ package phase
 import (
 	"fmt"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 // Phase is an alias for the API-exported phase type.

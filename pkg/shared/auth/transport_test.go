@@ -27,8 +27,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

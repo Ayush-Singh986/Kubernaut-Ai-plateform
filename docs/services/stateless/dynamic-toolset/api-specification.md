@@ -128,9 +128,9 @@ import (
 
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/dynamictoolset/models"
-    "github.com/jordigilh/kubernaut/pkg/dynamictoolset/services"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/dynamictoolset/models"
+    "github.com/Ayush-Singh986/kubernaut/pkg/dynamictoolset/services"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 type ToolsetHandler struct {
@@ -331,9 +331,9 @@ import (
 
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/dynamictoolset/models"
-    "github.com/jordigilh/kubernaut/pkg/dynamictoolset/services"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/dynamictoolset/models"
+    "github.com/Ayush-Singh986/kubernaut/pkg/dynamictoolset/services"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 type DiscoveryHandler struct {

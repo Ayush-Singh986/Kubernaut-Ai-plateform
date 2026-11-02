@@ -31,17 +31,17 @@ import (
 	"github.com/go-logr/logr"                                       // BR-GATEWAY-093: Circuit breaker detection
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp" // GAP-14 / Issue #1519: inbound/outbound tracing
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 
-	"github.com/jordigilh/kubernaut/pkg/audit" // DD-AUDIT-003: Audit integration
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit" // DD-AUDIT-003: Audit integration
 	// Ogen generated audit types
 	// BR-AUDIT-005 Gap #7: Standardized error details
-	"github.com/jordigilh/kubernaut/pkg/shared/auth" // BR-GATEWAY-036/037: Shared auth middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth" // BR-GATEWAY-036/037: Shared auth middleware
 	// ADR-052 Addendum 001: Exponential backoff with jitter
 	// Issue #753: Dedicated health server
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"      // #1553: fail-closed Fleet readiness gate
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"     // Issue #756: FileWatcher for cert rotation
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls" // Issue #493/#678: Conditional TLS
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"      // #1553: fail-closed Fleet readiness gate
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"     // Issue #756: FileWatcher for cert rotation
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls" // Issue #493/#678: Conditional TLS
 
 	// BR-GATEWAY-190: Lease resources for distributed locking
 	corev1 "k8s.io/api/core/v1" // BR-GATEWAY-036/037: K8s clientset for TokenReview/SAR
@@ -49,16 +49,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	// ADR-068: Federated scope checking factory
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/k8s"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
-	kubecors "github.com/jordigilh/kubernaut/pkg/http/cors" // BR-HTTP-015: Shared CORS library
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
+	kubecors "github.com/Ayush-Singh986/kubernaut/pkg/http/cors" // BR-HTTP-015: Shared CORS library
 
 	// DD-005: Shared sanitization library
-	"github.com/jordigilh/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
 )
 
 // Gateway Audit Event Type Constants (from OpenAPI spec)

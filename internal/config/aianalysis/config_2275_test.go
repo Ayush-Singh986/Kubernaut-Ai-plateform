@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jordigilh/kubernaut/internal/config/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/internal/config/aianalysis"
 )
 
 // BR-PLATFORM-012, Issue #2275: extend the shared Debug.PprofEnabled toggle

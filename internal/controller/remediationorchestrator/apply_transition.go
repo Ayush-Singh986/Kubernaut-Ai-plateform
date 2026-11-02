@@ -22,9 +22,9 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/routing"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/routing"
 )
 
 // ApplyTransition is the centralized bridge between PhaseHandler.Handle() output

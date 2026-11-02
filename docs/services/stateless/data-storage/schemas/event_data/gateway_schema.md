@@ -133,7 +133,7 @@ Storm detected for related signals
 ## Go Builder Usage
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
+import "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
 
 // Prometheus signal
 eventData, err := audit.NewGatewayEvent("signal.received").

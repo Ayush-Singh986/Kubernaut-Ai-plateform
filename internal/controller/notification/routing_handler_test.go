@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 )
 
 // TestCollectAllCredentialRefs is a characterization test for the credential

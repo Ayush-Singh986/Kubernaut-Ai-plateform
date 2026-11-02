@@ -25,7 +25,7 @@ there is no `templates/gateway/ingress.yaml` or `templates/apifrontend/ingress.y
 Helm-chart deployments that need external access to these two machine-facing pipeline entry points
 (e.g. AlertManager running outside the cluster, or an external MCP/API client) have no
 chart-supported way to get it, other than a manually pinned `NodePort` (test/CI-oriented,
-[Issue #1737](https://github.com/jordigilh/kubernaut/issues/1737)) or resources managed entirely
+[Issue #1737](https://github.com/Ayush-Singh986/kubernaut/issues/1737)) or resources managed entirely
 outside the chart.
 
 Separately, `console.ingress.enabled` (BR-PLATFORM-006) defaulted to `true` (opt-out) on the
@@ -115,7 +115,7 @@ services (Gateway, APIFrontend, Console) on a consistent opt-in exposure posture
 
 - **Builds on**: BR-PLATFORM-006 (Console Ingress; this BR flips its default and extends the same
   pattern to Gateway/APIFrontend), BR-PLATFORM-005 (APIFrontend NetworkPolicy parity).
-- **Tracked in**: [Issue #1737](https://github.com/jordigilh/kubernaut/issues/1737) follow-up
+- **Tracked in**: [Issue #1737](https://github.com/Ayush-Singh986/kubernaut/issues/1737) follow-up
   (E2E Helm migration surfaced the need for configurable external exposure alongside the
   NetworkPolicy `ingressCIDRs`/`ingressNamespaceSelectors` work in the same issue).
 

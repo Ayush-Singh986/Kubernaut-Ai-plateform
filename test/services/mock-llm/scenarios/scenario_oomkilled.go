@@ -18,7 +18,7 @@ package scenarios
 import (
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 )
 
 func oomkilledConfig() MockScenarioConfig {

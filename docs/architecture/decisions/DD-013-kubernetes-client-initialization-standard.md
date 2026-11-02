@@ -241,7 +241,7 @@ func TestNewClientset(t *testing.T) {
 
 ```go
 import (
-	"github.com/jordigilh/kubernaut/pkg/k8sutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
 	// ... other imports
 )
 
@@ -427,7 +427,7 @@ func main() {
 
 **Correct Usage (HTTP Service)**:
 ```go
-import "github.com/jordigilh/kubernaut/pkg/k8sutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
 
 clientset, err := k8sutil.NewClientset()
 if err != nil {

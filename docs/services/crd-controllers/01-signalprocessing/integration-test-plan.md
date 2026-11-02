@@ -109,8 +109,8 @@
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| PostgreSQL | `quay.io/jordigilh/pgvector:pg16` | 15432 | Audit persistence |
-| Redis | `quay.io/jordigilh/redis:7-alpine` | 16379 | Caching |
+| PostgreSQL | `quay.io/Ayush-Singh986/pgvector:pg16` | 15432 | Audit persistence |
+| Redis | `quay.io/Ayush-Singh986/redis:7-alpine` | 16379 | Caching |
 | Data Storage | Built locally | 18094 | Audit API |
 
 ### Configuration Files

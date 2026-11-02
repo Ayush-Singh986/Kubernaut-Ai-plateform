@@ -118,6 +118,6 @@ See [Issue #253 Test Plan](../../testing/ISSUE-253/TEST_PLAN.md) — Timing mode
 - [DD-EM-002](../../architecture/decisions/DD-EM-002-canonical-spec-hash.md) — Canonical spec hash algorithm
 - [BR-EM-004] — Spec hash comparison to detect configuration drift
 - [BR-EM-009](BR-EM-009-derived-timing-computation.md) — Derived timing computation pattern
-- [#251](https://github.com/jordigilh/kubernaut/issues/251) — Async hash deferral (foundation)
-- [#253](https://github.com/jordigilh/kubernaut/issues/253) — Timing model correction
-- [#277](https://github.com/jordigilh/kubernaut/issues/277) — HashComputeDelay migration, AlertCheckDelay
+- [#251](https://github.com/Ayush-Singh986/kubernaut/issues/251) — Async hash deferral (foundation)
+- [#253](https://github.com/Ayush-Singh986/kubernaut/issues/253) — Timing model correction
+- [#277](https://github.com/Ayush-Singh986/kubernaut/issues/277) — HashComputeDelay migration, AlertCheckDelay

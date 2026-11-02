@@ -23,7 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 type recordConfigReloadSpyStore struct {

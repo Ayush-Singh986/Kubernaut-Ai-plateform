@@ -67,8 +67,8 @@ and checkpoints at each TDD boundary.
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)
 - [Testing Guidelines](../../development/business-requirements/TESTING_GUIDELINES.md)
 - [Go Coding Standards](../../../.cursor/rules/02-go-coding-standards.mdc)
-- [kubernaut-apifrontend#2](https://github.com/jordigilh/kubernaut-apifrontend/issues/2): KEP-3331 multi-provider OIDC
-- [kubernaut-apifrontend#3](https://github.com/jordigilh/kubernaut-apifrontend/issues/3): MCP-to-MCP proxy
+- [kubernaut-apifrontend#2](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/2): KEP-3331 multi-provider OIDC
+- [kubernaut-apifrontend#3](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/3): MCP-to-MCP proxy
 - [100 Go Mistakes](https://100go.co/) — REFACTOR phase validation checklist
 
 ---
@@ -695,12 +695,12 @@ go test ./test/integration/kubernautagent/auth/... -ginkgo.v -ginkgo.focus="IT-K
 
 # Coverage — unit tier
 go test ./test/unit/shared/auth/... -coverprofile=coverage-unit.out \
-  -coverpkg=github.com/jordigilh/kubernaut/pkg/shared/auth/...
+  -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/shared/auth/...
 go tool cover -func=coverage-unit.out
 
 # Coverage — integration tier
 go test ./test/integration/kubernautagent/auth/... -coverprofile=coverage-int.out \
-  -coverpkg=github.com/jordigilh/kubernaut/pkg/shared/auth/...,github.com/jordigilh/kubernaut/cmd/kubernautagent/...
+  -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/shared/auth/...,github.com/Ayush-Singh986/kubernaut/cmd/kubernautagent/...
 go tool cover -func=coverage-int.out
 
 # Full build validation

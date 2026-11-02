@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Created**: 2026-08-22
-**Status**: 🔄 **PROPOSED** (triage complete, alternative approved by @jordigilh, implementation not yet started)
+**Status**: 🔄 **PROPOSED** (triage complete, alternative approved by @Ayush-Singh986, implementation not yet started)
 **Confidence**: 90% (triage conclusion) / 70% (specific recommended alternative)
 **Related DD**: [DD-GATEWAY-011: Shared Status Ownership for Deduplication & Storm Aggregation](DD-GATEWAY-011-shared-status-deduplication.md)
 **Related ADR**: [ADR-069: Gateway ↔ RO Deduplication Communication](ADR-069-gateway-ro-deduplication-communication.md)

@@ -3,7 +3,7 @@
 **Version**: 1.0.0
 **Created**: 2026-02-17
 **Status**: Active
-**Authority**: [Issue #118](https://github.com/jordigilh/kubernaut/issues/118)
+**Authority**: [Issue #118](https://github.com/Ayush-Singh986/kubernaut/issues/118)
 **Service**: FullPipeline (cross-cutting: SP, AA, RR, WE, NT, EA, RAR)
 **Test Tier**: E2E (End-to-End)
 **Template**: [V1_0_SERVICE_MATURITY_TEST_PLAN_TEMPLATE.md](../../development/testing/V1_0_SERVICE_MATURITY_TEST_PLAN_TEMPLATE.md)
@@ -556,8 +556,8 @@ It("should check that RAR spec fields are non-nil", func() { ... })
 
 ## References
 
-- **Issue**: [#118 - Extend FullPipeline E2E tests to validate CRD status fields](https://github.com/jordigilh/kubernaut/issues/118)
-- **Dependency**: [#113 - Eliminate CRD-to-shared-type duplication](https://github.com/jordigilh/kubernaut/issues/113) (SP KubernetesContext schema change)
+- **Issue**: [#118 - Extend FullPipeline E2E tests to validate CRD status fields](https://github.com/Ayush-Singh986/kubernaut/issues/118)
+- **Dependency**: [#113 - Eliminate CRD-to-shared-type duplication](https://github.com/Ayush-Singh986/kubernaut/issues/113) (SP KubernetesContext schema change)
 - **Current test**: `test/e2e/fullpipeline/01_full_remediation_lifecycle_test.go`
 - **CRD definitions**: `api/*/v1alpha1/*_types.go`
 - **Rego approval policy**: `config/rego/aianalysis/approval.rego`

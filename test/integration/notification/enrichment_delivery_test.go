@@ -28,12 +28,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/notification/enrichment"
-	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
-	notificationstatus "github.com/jordigilh/kubernaut/pkg/notification/status"
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/enrichment"
+	notificationmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
+	notificationstatus "github.com/Ayush-Singh986/kubernaut/pkg/notification/status"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 const itTestUUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"

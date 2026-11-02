@@ -34,8 +34,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/startup"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/startup"
 )
 
 // stubPrometheusClient implements emclient.PrometheusQuerier for testing.

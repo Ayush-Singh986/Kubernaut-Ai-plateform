@@ -33,12 +33,12 @@ import (
 	"google.golang.org/adk/v2/model/gemini"
 	"google.golang.org/genai"
 
-	internaltransport "github.com/jordigilh/kubernaut/internal/kubernautagent/llm/transport"
-	openaimodel "github.com/jordigilh/kubernaut/pkg/apifrontend/launcher/openai"
-	llmtransport "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/transport"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
-	"github.com/jordigilh/kubernaut/pkg/shared/transport"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	internaltransport "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/llm/transport"
+	openaimodel "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher/openai"
+	llmtransport "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/transport"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // gcpAuthScope is the OAuth2 scope requested for Vertex AI credentials,

@@ -1,6 +1,6 @@
 # Test Plan: A2A Progressive Streaming (Issue #1258)
 
-> **Note:** `summarizeCreateRR` output format updated by [#1282](https://github.com/jordigilh/kubernaut/issues/1282).
+> **Note:** `summarizeCreateRR` output format updated by [#1282](https://github.com/Ayush-Singh986/kubernaut/issues/1282).
 > Expected TextPart for `af_create_rr` is now `"Remediation request created: {message}"` or
 > `"Remediation request created."`, not `"Remediation created."`. See `UT-AF-1282-OUT-*`.
 
@@ -40,7 +40,7 @@ Validate that the A2A progressive streaming feature enables external agents to r
 
 ### 1.4 References
 
-- Issue: https://github.com/jordigilh/kubernaut/issues/1258
+- Issue: https://github.com/Ayush-Singh986/kubernaut/issues/1258
 - PR #1193: 4-phase interactive journey (foundation)
 - TP-1189: Interactive remediation test plan
 - a2a-go v0.3.15 eventqueue documentation

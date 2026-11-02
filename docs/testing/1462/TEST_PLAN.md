@@ -1,6 +1,6 @@
 # Test Plan: Fix #1462 AF Tool Does Not Pass Required Parameters to DS Remediation History Endpoint
 
-**Issue**: [#1462](https://github.com/jordigilh/kubernaut/issues/1462)
+**Issue**: [#1462](https://github.com/Ayush-Singh986/kubernaut/issues/1462)
 **Service Type**: [x] Stateless HTTP API (API Frontend)
 **Date**: 2026-06-26
 **Status**: Active

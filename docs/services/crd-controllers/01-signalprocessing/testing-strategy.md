@@ -311,12 +311,12 @@ import (
     "context"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/processor/environment"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/processor/environment"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 
     v1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

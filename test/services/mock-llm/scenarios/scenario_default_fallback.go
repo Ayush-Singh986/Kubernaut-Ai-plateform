@@ -15,7 +15,7 @@ limitations under the License.
 */
 package scenarios
 
-import "github.com/jordigilh/kubernaut/pkg/shared/uuid"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 
 func defaultConfig() MockScenarioConfig {
 	return MockScenarioConfig{

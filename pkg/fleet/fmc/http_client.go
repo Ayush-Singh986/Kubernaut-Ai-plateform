@@ -24,8 +24,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // Issue #54 fleet E2E RCA (CI run 30464667745): FMC's handler distinguishes

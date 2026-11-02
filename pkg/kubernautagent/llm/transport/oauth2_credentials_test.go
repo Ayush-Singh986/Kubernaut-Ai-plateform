@@ -27,9 +27,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	oauth2transport "github.com/jordigilh/kubernaut/internal/kubernautagent/llm/transport"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/transport"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	oauth2transport "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/llm/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // newMockIdPServer returns an httptest.Server that responds to OAuth2 token

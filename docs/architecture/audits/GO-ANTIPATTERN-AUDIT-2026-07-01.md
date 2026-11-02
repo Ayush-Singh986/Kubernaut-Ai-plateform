@@ -1,6 +1,6 @@
 # Go Anti-Pattern & Complexity Audit — GA Readiness
 
-**Tracking issue**: [#1520](https://github.com/jordigilh/kubernaut/issues/1520)
+**Tracking issue**: [#1520](https://github.com/Ayush-Singh986/kubernaut/issues/1520)
 **Date**: 2026-07-01
 **Branch**: `feat/1505-gap-01-cosign-ci-signing` (base: `feature/multi-cluster-federation`)
 **Commit**: `d0bc884f7`
@@ -517,7 +517,7 @@ All five splits are pure structural moves within the same package — zero behav
 | `pkg/datastorage/dlq/client.go` | 973 | `client.go` (trimmed: `Client` struct, producer methods, health check), `client_consumer.go` (Redis consumer-group read/claim/ack), `client_drain.go` (graceful-shutdown DLQ drain) | 403 |
 | `pkg/datastorage/config/config.go` | 814 | `config.go` (trimmed: struct family + `LoadFromFile`), `config_secrets.go` (`LoadSecrets` + per-source loaders), `config_validate.go` (`Validate` + per-section validators), `config_accessors.go` (`Get*` derived-value accessors) | 288 |
 
-Two defects surfaced and fixed during the splits (both caught by the per-file build/vet gate, neither reaching a commit): a missing `net/http` import in the newly created `workflow_duplicate_handlers.go` (the moved duplicate-detection handlers reference `http.StatusOK`/`StatusCreated`/`StatusConflict`), and an unused `github.com/jordigilh/kubernaut/pkg/cert` import left in `server_construction.go` after `loadSigningCertificate` (the import's only consumer) moved to `server_lifecycle.go`.
+Two defects surfaced and fixed during the splits (both caught by the per-file build/vet gate, neither reaching a commit): a missing `net/http` import in the newly created `workflow_duplicate_handlers.go` (the moved duplicate-detection handlers reference `http.StatusOK`/`StatusCreated`/`StatusConflict`), and an unused `github.com/Ayush-Singh986/kubernaut/pkg/cert` import left in `server_construction.go` after `loadSigningCertificate` (the import's only consumer) moved to `server_lifecycle.go`.
 
 ### 7k-4. Verification (Wave 3 exit gate)
 

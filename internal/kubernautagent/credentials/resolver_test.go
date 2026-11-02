@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/credentials"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/credentials"
 )
 
 var _ = Describe("ResolveGCPCredentialIndirection — #686", func() {

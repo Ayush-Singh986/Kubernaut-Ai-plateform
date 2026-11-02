@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 )
 
 var _ = Describe("Shared Types", func() {

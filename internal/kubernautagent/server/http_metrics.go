@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
 )
 
 // HTTPMetricsMiddleware records request duration and in-flight count.

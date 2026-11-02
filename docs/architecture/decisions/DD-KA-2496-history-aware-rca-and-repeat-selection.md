@@ -4,7 +4,7 @@
 **Decision Date**: 2026-10-09<br>
 **Version**: 1.3 — Phase 1/RCA continuation amendment recorded by DD-KA-2511 on 2026-10-15<br>
 **Applies To**: Kubernaut Agent, DataStorage, AIAnalysis, Remediation Orchestrator and existing audit/status paths<br>
-**Issues**: [#2496](https://github.com/jordigilh/kubernaut/issues/2496), [#2498](https://github.com/jordigilh/kubernaut/issues/2498)
+**Issues**: [#2496](https://github.com/Ayush-Singh986/kubernaut/issues/2496), [#2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498)
 
 ### Supersession notice
 

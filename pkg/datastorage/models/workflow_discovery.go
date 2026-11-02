@@ -17,7 +17,7 @@ limitations under the License.
 package models
 
 import (
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ========================================

@@ -1,6 +1,6 @@
 # PROPOSAL-EXT-005: Oracle Agent Spec (PyAgentSpec + LangGraph) as AgenticWorkflow Runtime
 
-**Status**: ❌ SUPERSEDED — see [#1536](https://github.com/jordigilh/kubernaut/issues/1536). Note: the OAS/LangGraph *technique* validated by this spike remains usable inside an opaque agent image — what's dead is the CRD-level `runtime` enum and Kubernaut-side adapter this proposal describes.  
+**Status**: ❌ SUPERSEDED — see [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536). Note: the OAS/LangGraph *technique* validated by this spike remains usable inside an opaque agent image — what's dead is the CRD-level `runtime` enum and Kubernaut-side adapter this proposal describes.  
 **Date**: May 19, 2026  
 **Superseded**: July 5, 2026  
 **Author**: Kubernaut Architecture Team  
@@ -8,7 +8,7 @@
 **Related**: [PROPOSAL-EXT-003](PROPOSAL-EXT-003-goose-runtime-evaluation.md) (superseded), [PROPOSAL-EXT-004](PROPOSAL-EXT-004-goose-recipes.md) (superseded), [PROPOSAL-EXT-006](PROPOSAL-EXT-006-deep-agents.md) (superseded)  
 **Spike Code**: [pyagentspec-langgraph/](../spikes/pyagentspec-langgraph/) (scripts 01-04, all pass)  
 **Spike Summary**: [SPIKE-PYAGENTSPEC-LANGGRAPH](../spikes/SPIKE-PYAGENTSPEC-LANGGRAPH.md), [SPIKE-ACP-ENFORCEMENT](../spikes/SPIKE-ACP-ENFORCEMENT.md), [SPIKE-OCI-RUNTIME-CONTRACT](../spikes/SPIKE-OCI-RUNTIME-CONTRACT.md)  
-**Tracking**: [#1240](https://github.com/jordigilh/kubernaut/issues/1240) (umbrella, closed) → superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536)  
+**Tracking**: [#1240](https://github.com/Ayush-Singh986/kubernaut/issues/1240) (umbrella, closed) → superseded by [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536)  
 **Target**: ~~v1.6 milestone~~ — successor work now tracked under v1.7
 
 ---

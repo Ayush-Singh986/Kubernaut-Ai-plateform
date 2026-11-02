@@ -6,7 +6,7 @@
 **Module**: Dynamic Toolset Configuration (`pkg/ai/holmesgpt/`, `pkg/platform/k8s/`, `pkg/api/context/`)
 **Update**: File-based ConfigMap polling with reconciliation
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > Dynamic Toolset Service designed in detail below was **deferred to V2.0 and never built** —
 > see [DD-016](decisions/DD-016-dynamic-toolset-v2-deferral.md) (authoritative deferral decision,
 > 2025-11-21). None of the Go paths (`pkg/ai/holmesgpt/dynamic_toolset_manager.go`) or Python paths

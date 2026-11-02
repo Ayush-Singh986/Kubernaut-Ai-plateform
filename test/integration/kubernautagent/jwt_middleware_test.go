@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 var _ = Describe("JWT Middleware Pipeline — #1009", func() {

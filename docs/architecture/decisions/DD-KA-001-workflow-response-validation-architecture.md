@@ -118,7 +118,7 @@ gap discovered during Issue #1661 triage: KA's `Validate()` short-circuits (skip
 `HumanReviewNeeded` is already `true`, which is correct for avoiding wasted self-correction retries on a result already
 headed to a human, but had left the door open for an unresolved `workflow_id` to survive un-cleared in exactly that
 short-circuited path. Tracked as a KA-side implementation gap in
-[Issue #1711](https://github.com/jordigilh/kubernaut/issues/1711); the fix mirrors the existing exhaustion-clearing
+[Issue #1711](https://github.com/Ayush-Singh986/kubernaut/issues/1711); the fix mirrors the existing exhaustion-clearing
 pattern already used for the other two "invalid workflow must not propagate" paths (self-correction exhaustion in
 `validator.go`, and the API-version ambiguity gate exhaustion in `investigator_gates.go`).
 

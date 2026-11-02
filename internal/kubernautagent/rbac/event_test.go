@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
+	karbac "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/rbac"
 )
 
 var _ = Describe("UT-KA-891-002: K8s Event emission for interactive mode (#891)", func() {

@@ -8,7 +8,7 @@
 **Date**: March 2, 2026
 **Related ADRs**: ADR-043 (Execution Engine Schema)
 **Related BRs**: BR-WORKFLOW-004 (Schema Format), BR-WE-015 (Ansible Engine)
-**GitHub Issue**: [#45](https://github.com/jordigilh/kubernaut/issues/45)
+**GitHub Issue**: [#45](https://github.com/Ayush-Singh986/kubernaut/issues/45)
 
 ---
 

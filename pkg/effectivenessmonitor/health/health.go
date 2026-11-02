@@ -32,7 +32,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
 )
 
 // TargetStatus represents the health state of a Kubernetes target resource.

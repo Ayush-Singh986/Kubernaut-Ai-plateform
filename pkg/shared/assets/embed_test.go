@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/assets"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/assets"
 )
 
 // DD-4 (Issue #578): Shared assets via Go embed package for the kubernaut-operator.

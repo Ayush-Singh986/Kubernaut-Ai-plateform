@@ -158,7 +158,7 @@ type PhaseTransitionPayload struct {
 
 ### Type 3: AIAnalysisAIAgentCallPayload
 
-> **Corrected (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Was
+> **Corrected (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Was
 > named `HolmesGPTCallPayload` with a `StatusCode` field; renamed to match the real generated type
 > `AIAnalysisAIAgentCallPayload` (`pkg/datastorage/ogen-client/oas_schemas_gen.go`), whose field is
 > `HTTPStatusCode` (JSON `http_status_code`), and whose event type is `aianalysis.aiagent.call`
@@ -723,8 +723,8 @@ type MessageSentEventData struct {
 package notification
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    notificationaudit "github.com/jordigilh/kubernaut/pkg/notification/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    notificationaudit "github.com/Ayush-Singh986/kubernaut/pkg/notification/audit"
 )
 
 func (r *NotificationReconciler) emitMessageSentAudit(notification *Notification) error {

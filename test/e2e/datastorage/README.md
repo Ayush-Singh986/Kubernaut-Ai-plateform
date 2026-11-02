@@ -116,7 +116,7 @@ docker ps
 #### **Parallel Execution** ⚡ (RECOMMENDED - 64% faster!)
 ```bash
 # From workspace root
-cd /Users/jgil/go/src/github.com/jordigilh/kubernaut
+cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut
 
 # Run E2E tests in parallel with 3 processes
 ginkgo -v -p --procs=3 ./test/e2e/datastorage

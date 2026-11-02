@@ -28,8 +28,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ValidBundleRef is a real OCI bundle reference that exists in the test workflow

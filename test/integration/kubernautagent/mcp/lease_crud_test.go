@@ -26,7 +26,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 var _ = Describe("IT-KA-MCP-007: Lease CRUD lifecycle — PR4 BR-INTERACTIVE-005", func() {

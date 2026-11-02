@@ -19,8 +19,8 @@ package config
 import (
 	"fmt"
 
-	pkgconfig "github.com/jordigilh/kubernaut/pkg/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	pkgconfig "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // ResolveEffectiveLLM returns a complete, independently-owned LLMConfig for a

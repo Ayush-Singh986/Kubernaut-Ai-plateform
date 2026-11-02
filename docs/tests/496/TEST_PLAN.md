@@ -17,8 +17,8 @@
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 - [Test Case Specification Template](../testing/TEST_CASE_SPECIFICATION_TEMPLATE.md)
-- [kubernaut-demo-scenarios#170](https://github.com/jordigilh/kubernaut-demo-scenarios/issues/170) — production workflow migration
-- [kubernaut-docs#34](https://github.com/jordigilh/kubernaut-docs/issues/34) — authoring guide
+- [kubernaut-demo-scenarios#170](https://github.com/Ayush-Singh986/kubernaut-demo-scenarios/issues/170) — production workflow migration
+- [kubernaut-docs#34](https://github.com/Ayush-Singh986/kubernaut-docs/issues/34) — authoring guide
 
 ---
 

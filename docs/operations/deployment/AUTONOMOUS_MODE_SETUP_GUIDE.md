@@ -5,7 +5,7 @@
 Prometheus/AlertManager fires, Gateway ingests it as a signal, and Kubernaut investigates
 and (subject to your approval policy) remediates, with no human chat interaction required
 to kick it off.
-**Authority**: [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md),
+**Authority**: [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md),
 Issue #2162.
 
 ---
@@ -54,7 +54,7 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 ## 1. Install Kubernaut with Gateway + monitoring enabled
 
 Install the Kubernaut Operator and apply a `Kubernaut` CR using the
-[operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+[operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 Set the CR's LLM, policy, Gateway, and monitoring fields for this mode; the
 application Helm chart is no longer shipped by this repository.
 
@@ -134,7 +134,7 @@ kubectl logs -n kubernaut-system deployment/gateway --tail=50
 
 For an end-to-end example with a real fault (not just a synthetic test alert), see the
 [Try It Out](../../../README.md#try-it-out) section of the root README —
-[kubernaut-demo-scenarios](https://github.com/jordigilh/kubernaut-demo-scenarios)'
+[kubernaut-demo-scenarios](https://github.com/Ayush-Singh986/kubernaut-demo-scenarios)'
 `crashloop` scenario exercises exactly this path.
 
 ---
@@ -152,7 +152,7 @@ For an end-to-end example with a real fault (not just a synthetic test alert), s
 
 ## References
 
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 - [INTERACTIVE_MODE_SETUP_GUIDE.md](./INTERACTIVE_MODE_SETUP_GUIDE.md) — the complementary chat-driven entry point
 - [FLEET_SETUP_GUIDE.md](./FLEET_SETUP_GUIDE.md) — layering multi-cluster fleet mode on top of this
-- [Issue #2162: Gateway/APIFrontend independent enable toggles](https://github.com/jordigilh/kubernaut/issues/2162)
+- [Issue #2162: Gateway/APIFrontend independent enable toggles](https://github.com/Ayush-Singh986/kubernaut/issues/2162)

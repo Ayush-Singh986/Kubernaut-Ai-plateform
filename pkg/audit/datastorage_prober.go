@@ -24,8 +24,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // DefaultProbeTimeout bounds how long a single Probe call may block waiting

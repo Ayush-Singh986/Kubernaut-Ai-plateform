@@ -19,7 +19,7 @@ package validate_test
 import (
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/validate"
 )
 
 // FuzzRRID and FuzzAlertName exercise validate.RRID and validate.AlertName

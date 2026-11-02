@@ -53,8 +53,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
-    "github.com/jordigilh/kubernaut/pkg/your/business/package"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
+    "github.com/Ayush-Singh986/kubernaut/pkg/your/business/package"
 )
 
 var _ = Describe("BR-YOUR-COMPONENT-001: Comprehensive Business Logic Testing", func() {
@@ -156,7 +156,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    testshared "github.com/jordigilh/kubernaut/test/integration/shared"
+    testshared "github.com/Ayush-Singh986/kubernaut/test/integration/shared"
 )
 
 var _ = Describe("BR-INTEGRATION-001: Critical Component Interactions", func() {

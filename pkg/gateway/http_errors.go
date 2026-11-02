@@ -22,7 +22,7 @@ import (
 
 	// BR-GATEWAY-093: Circuit breaker detection
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 
 	// DD-AUDIT-003: Audit integration
 	// Ogen generated audit types
@@ -39,9 +39,9 @@ import (
 
 	// ADR-068: Federated scope checking factory
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
 	// BR-HTTP-015: Shared CORS library
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization" // DD-005: Shared sanitization library
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization" // DD-005: Shared sanitization library
 	// BR-SCOPE-002: Resource scope management
 )
 

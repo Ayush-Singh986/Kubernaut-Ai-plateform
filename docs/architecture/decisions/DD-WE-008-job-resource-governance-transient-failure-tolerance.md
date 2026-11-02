@@ -667,7 +667,7 @@ approved wiring up `validator.Struct()` to fix it — but that implementation (`
 Phase 1 = "Implement with ADR-043 (WorkflowSchema)") was never done; `pkg/validation/` does not
 exist and `pkg/datastorage/schema/parser.go` never calls `validator.Struct()`. This predates
 DD-WE-008 and affects every field in this file, not just `resources` — tracked separately as
-[issue #1591](https://github.com/jordigilh/kubernaut/issues/1591), not fixed here.
+[issue #1591](https://github.com/Ayush-Singh986/kubernaut/issues/1591), not fixed here.
 
 ---
 
@@ -716,14 +716,14 @@ DD-WE-008 and affects every field in this file, not just `resources` — tracked
 - [DD-WE-006: Schema-Declared Infrastructure Dependencies](./DD-WE-006-schema-declared-dependencies.md) — precedent for on-demand `content` extraction (no dedicated DB column)
 - [BR-WE-014: Kubernetes Job Execution Backend](../../requirements/BR-WE-014-kubernetes-job-execution-backend.md)
 - [BR-WE-016: Engine Config Discriminator](../../requirements/BR-WE-016-engine-config-discriminator.md) — precedent for on-demand `content` extraction (contrast: `EngineConfig` needs `interface{}` + JSON round-trip because its shape genuinely varies per engine; `resources` has a fixed shape and uses a concrete struct instead, see Finding 1)
-- [ADR-046: Struct Validation Standard](../ADR-046-struct-validation-standard.md) — `ResourcesSchema`'s `validate` tags follow this standard's convention but are not currently enforced (Phase 1 gap predates this decision, tracked separately as [issue #1591](https://github.com/jordigilh/kubernaut/issues/1591))
+- [ADR-046: Struct Validation Standard](../ADR-046-struct-validation-standard.md) — `ResourcesSchema`'s `validate` tags follow this standard's convention but are not currently enforced (Phase 1 gap predates this decision, tracked separately as [issue #1591](https://github.com/Ayush-Singh986/kubernaut/issues/1591))
 - [BR-WE-018: Execution Pod Security Hardening](../../requirements/BR-WE-018-execution-pod-security-hardening.md) — contrast: non-configurable hardening vs. this decision's configurable resources
 - [BR-WORKFLOW-008: Runtime Dependency-Failure Observability](../../requirements/BR-WORKFLOW-008-runtime-dependency-failure-observability.md) — `ActiveDeadlineSeconds` safety net this decision relies on
 - [BR-WE-019: Job Resource Governance and Transient-Failure Tolerance](../../requirements/BR-WE-019-job-resource-governance-transient-failure-tolerance.md) — this decision's business requirement
-- [Issue #1564](https://github.com/jordigilh/kubernaut/issues/1564) — originating issue
-- [Issue #1572](https://github.com/jordigilh/kubernaut/issues/1572) — implementation tracking
-- [kubernaut-docs#197](https://github.com/jordigilh/kubernaut-docs/issues/197) — operator-facing `LimitRange`/`ResourceQuota` guidance
-- [kubernaut-operator#210](https://github.com/jordigilh/kubernaut-operator/issues/210) — cross-repo awareness on the no-default decision
+- [Issue #1564](https://github.com/Ayush-Singh986/kubernaut/issues/1564) — originating issue
+- [Issue #1572](https://github.com/Ayush-Singh986/kubernaut/issues/1572) — implementation tracking
+- [kubernaut-docs#197](https://github.com/Ayush-Singh986/kubernaut-docs/issues/197) — operator-facing `LimitRange`/`ResourceQuota` guidance
+- [kubernaut-operator#210](https://github.com/Ayush-Singh986/kubernaut-operator/issues/210) — cross-repo awareness on the no-default decision
 - Follow-up issue: Tekton PipelineRun-timing loose audit assertions (`audit_flow_integration_test.go`) — needs a design decision (force determinism vs. leave loose), not bundled into this PR; **to be opened**
 - Follow-up issue: `RetryOnConflict`-wraps-audit-call ordering gap in `AtomicStatusUpdate` (risk of duplicate audit writes on a retried status-update conflict) — pre-existing, WFE-specific architectural gap discovered during Section 9's audit-count preflight; not fixed here, needs its own design review; **to be opened**
 

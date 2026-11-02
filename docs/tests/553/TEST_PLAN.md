@@ -8,7 +8,7 @@
 **Branch**: `fix/v1.1.0-rc13`
 
 **Authority**:
-- [#553](https://github.com/jordigilh/kubernaut/issues/553): RO notification: workflow UUID shown instead of human-readable workflow name
+- [#553](https://github.com/Ayush-Singh986/kubernaut/issues/553): RO notification: workflow UUID shown instead of human-readable workflow name
 
 **Cross-References**:
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)

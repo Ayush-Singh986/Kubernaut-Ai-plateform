@@ -1,6 +1,6 @@
 ## Security Configuration
 
-> **Rewritten** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): the previous version
+> **Rewritten** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): the previous version
 > of this document described KA authentication via a static API key read from
 > `HOLMESGPT_API_KEY_PATH`/`HOLMESGPT_ENDPOINT`, a Go client at `pkg/aianalysis/client/holmesgpt.go`,
 > and full RBAC ownership of an `aiapprovalrequests` CRD — none of which match the current

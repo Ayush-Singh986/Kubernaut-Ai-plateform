@@ -180,7 +180,7 @@ This is a gap against:
   sub-object silently omitted data that was actually queried and available.
 
 Decision and full pipeline design discussed in
-[issue #193 comment](https://github.com/jordigilh/kubernaut/issues/193#issuecomment-4908176229).
+[issue #193 comment](https://github.com/Ayush-Singh986/kubernaut/issues/193#issuecomment-4908176229).
 
 ### Fix: additive named field pairs (Proposal A), full pipeline
 
@@ -264,7 +264,7 @@ This is a gap against:
   silently carry cross-cluster-contaminated values with no indication in the record itself.
 
 Root cause of why this escaped the fleet E2E lane for as long as it did, and the hardening applied
-to close that gap, are documented in the [Issue #2274](https://github.com/jordigilh/kubernaut/issues/2274)
+to close that gap, are documented in the [Issue #2274](https://github.com/Ayush-Singh986/kubernaut/issues/2274)
 investigation and `test/e2e/fleet/07_em_fleet_metrics_test.go` (E2E-FLEET-019a/b).
 
 ### Fix: `ea.Spec.ClusterID` is the Thanos `cluster` external label

@@ -210,7 +210,7 @@ BeforeEach(func() {
 **After** (All services use `pkg/testutil`):
 ```go
 // Any service - same simple call
-import "github.com/jordigilh/kubernaut/pkg/testutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 
 BeforeEach(func() {
     testNamespace = testutil.UniqueTestName("test-adapter")

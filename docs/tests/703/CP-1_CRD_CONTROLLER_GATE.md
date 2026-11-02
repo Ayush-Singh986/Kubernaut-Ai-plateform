@@ -20,8 +20,8 @@ CP-1 validates that CRD changes (`InteractiveSessionInfo` on `AIAnalysisStatus`)
 - **Framework**: Ginkgo/Gomega BDD
 - **Key Imports**:
   ```go
-  "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-  "github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
+  "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+  "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
   metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
   ```
 - **Mocks**: None required (pure type/logic tests)

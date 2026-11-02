@@ -24,7 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
 )
 
 // SetCacheReadyForTesting allows tests to control the cache-ready state.

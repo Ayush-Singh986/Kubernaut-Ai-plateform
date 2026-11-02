@@ -532,7 +532,7 @@ go test -race ./test/integration/[service]/...
 
 ## Amendment 1 (2026-08-21): Shared-Envtest + Namespace-Scoping for `aianalysis`
 
-**Context**: PR [#2189](https://github.com/jordigilh/kubernaut/pull/2189) (AgentSession CRD Redesign,
+**Context**: PR [#2189](https://github.com/Ayush-Singh986/kubernaut/pull/2189) (AgentSession CRD Redesign,
 DD-AA-KA-001) roughly doubled the per-process reconciliation load in the `aianalysis` integration
 suite (AA's own controller plus a per-process Kubernaut Agent (KA) instance dispatching
 `AgentSession`s). Under that added load, both CI (GitHub Actions runners) and `helios08` (a shared,
@@ -596,7 +596,7 @@ unamended, by every other integration suite that starts an embedded envtest
 contention shape. Migrating any of those is a separate, per-service preflight (each has its own
 watchers/namespace assumptions to audit, same as AA's controller cache + KA dispatcher above) and
 explicitly out of scope here; tracked in
-[issue #2213](https://github.com/jordigilh/kubernaut/issues/2213) rather than applied
+[issue #2213](https://github.com/Ayush-Singh986/kubernaut/issues/2213) rather than applied
 mechanically.
 
 ### `remediationorchestrator` migrated (2026-08-21, issue #2213)

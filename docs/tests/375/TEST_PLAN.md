@@ -30,7 +30,7 @@
 
 ### Out of Scope
 
-- **Pre-execution stale Job cleanup in `reconcilePending`** — handled by [#374](https://github.com/jordigilh/kubernaut/issues/374) and its [test plan](../../testing/374/TEST_PLAN.md). That fix adds defense-in-depth by detecting and cleaning stale completed/failed Jobs at `AlreadyExists` time. It complements this fix (#375) which addresses the root cause.
+- **Pre-execution stale Job cleanup in `reconcilePending`** — handled by [#374](https://github.com/Ayush-Singh986/kubernaut/issues/374) and its [test plan](../../testing/374/TEST_PLAN.md). That fix adds defense-in-depth by detecting and cleaning stale completed/failed Jobs at `AlreadyExists` time. It complements this fix (#375) which addresses the root cause.
 - Tekton PipelineRun locking mechanics (separate code path with `HandleAlreadyExists`; not affected by #375)
 - `GenerationChangedPredicate` removal or modification (the event filter is correct for its purpose; the fix is in scheduling explicit requeues)
 - Changes to cooldown period defaults or configuration (BR-WE-010 is already working correctly)

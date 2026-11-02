@@ -32,15 +32,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/client-go/rest"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/session"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	auth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/session"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	auth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // ============================================================================

@@ -24,10 +24,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/handlers"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/handlers"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 var _ = Describe("Per-Scenario ForceText Override (BR-TESTING-657)", func() {

@@ -19,7 +19,7 @@ package config_test
 import (
 	"time"
 
-	kacfg "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	kacfg "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

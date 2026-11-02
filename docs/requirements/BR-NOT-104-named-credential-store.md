@@ -8,7 +8,7 @@
 **Status**: Approved
 **Related ADRs**: ADR-030 (Configuration Management)
 **Related BRs**: BR-NOT-065 (Channel Routing), BR-NOT-067 (Hot-Reload)
-**Issue**: [#104](https://github.com/jordigilh/kubernaut/issues/104)
+**Issue**: [#104](https://github.com/Ayush-Singh986/kubernaut/issues/104)
 
 ---
 

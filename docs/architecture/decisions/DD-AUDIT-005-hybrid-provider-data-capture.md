@@ -9,9 +9,9 @@
 - [DD-AUDIT-002: Audit Shared Library Design](./DD-AUDIT-002-audit-shared-library-design.md)
 - [DD-AUDIT-003: Service Audit Trace Requirements](./DD-AUDIT-003-service-audit-trace-requirements.md)
 
-> **Note (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **Note (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > decision was originally written (Jan 2026) when the provider service was named HolmesGPT API
-> (HAPI). It was renamed **Kubernaut Agent (KA)** in the v1.3 Go rewrite ([#433](https://github.com/jordigilh/kubernaut/issues/433));
+> (HAPI). It was renamed **Kubernaut Agent (KA)** in the v1.3 Go rewrite ([#433](https://github.com/Ayush-Singh986/kubernaut/issues/433));
 > terminology below has been updated to KA throughout. The decision's substance — hybrid
 > provider (`aiagent.*`) + consumer (`aianalysis.*`) audit events — is unchanged and still
 > current; see the "v1.3 Update" section for what changed in practice.
@@ -143,7 +143,7 @@ WHERE event_type = 'aianalysis.analysis.completed'
 
 > **Historical note**: The code below is illustrative pseudocode from the original (Jan 2026)
 > decision, written when KA was still the pre-rewrite Python service (`kubernaut-agent/src/...`
-> paths, `def`/snake_case). It predates the v1.3 Go rewrite ([#433](https://github.com/jordigilh/kubernaut/issues/433))
+> paths, `def`/snake_case). It predates the v1.3 Go rewrite ([#433](https://github.com/Ayush-Singh986/kubernaut/issues/433))
 > and was never a literal source file — `HAPIResponseEventData` / `HAPIResponseFailedEventData`
 > were never real types in the codebase. It's kept to show the original design intent (per-event
 > Pydantic-style models); the actual current Go payload types live in
@@ -438,7 +438,7 @@ If storage cost becomes a concern in the future, we can:
 
 ## v1.3 Update: Kubernaut Agent Replaces HAPI
 
-Starting in v1.3 ([issue #433](https://github.com/jordigilh/kubernaut/issues/433) — Kubernaut Agent Go rewrite), the **Kubernaut Agent (KA)** replaces **HolmesGPT API (HAPI)** as the emitter of all `aiagent.*` audit events. The hybrid pattern in this document (provider `aiagent.*` plus consumer `aianalysis.*`) remains: **KA** provides the provider-side `aiagent.*` events; **AI Analysis** continues to emit `aianalysis.analysis.completed` / `aianalysis.analysis.failed` for consumer perspective.
+Starting in v1.3 ([issue #433](https://github.com/Ayush-Singh986/kubernaut/issues/433) — Kubernaut Agent Go rewrite), the **Kubernaut Agent (KA)** replaces **HolmesGPT API (HAPI)** as the emitter of all `aiagent.*` audit events. The hybrid pattern in this document (provider `aiagent.*` plus consumer `aianalysis.*`) remains: **KA** provides the provider-side `aiagent.*` events; **AI Analysis** continues to emit `aianalysis.analysis.completed` / `aianalysis.analysis.failed` for consumer perspective.
 
 **Eight enriched event types** (all with fully populated payloads; previously empty or incomplete in prior implementations):
 

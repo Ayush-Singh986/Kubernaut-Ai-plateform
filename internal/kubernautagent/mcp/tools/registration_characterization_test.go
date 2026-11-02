@@ -26,8 +26,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	mcptools "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	mcptools "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
 )
 
 // GO-ANTIPATTERN-AUDIT-2026-07-01 Wave 4 §7l-1: characterization test for

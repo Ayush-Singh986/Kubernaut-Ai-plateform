@@ -151,8 +151,8 @@ Day 5 (Documentation + Production Readiness)
 
    import (
        "context"
-       "github.com/jordigilh/kubernaut/pkg/audit"
-       notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+       "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+       notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
    )
 
    // AuditHelpers provides audit event creation for notification events
@@ -213,8 +213,8 @@ Day 5 (Documentation + Production Readiness)
    import (
        . "github.com/onsi/ginkgo/v2"
        . "github.com/onsi/gomega"
-       "github.com/jordigilh/kubernaut/pkg/audit"
-       notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+       "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+       notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
        metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
    )
 
@@ -526,8 +526,8 @@ go build ./internal/controller/notification/...
    import (
        . "github.com/onsi/ginkgo/v2"
        . "github.com/onsi/gomega"
-       "github.com/jordigilh/kubernaut/pkg/audit"
-       notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+       "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+       notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
    )
 
    var _ = Describe("NotificationRequestReconciler Audit Integration", func() {
@@ -651,8 +651,8 @@ go tool cover -func=coverage.out | grep total
    import (
        . "github.com/onsi/ginkgo/v2"
        . "github.com/onsi/gomega"
-       "github.com/jordigilh/kubernaut/pkg/audit"
-       "github.com/jordigilh/kubernaut/test/integration/testutil"
+       "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+       "github.com/Ayush-Singh986/kubernaut/test/integration/testutil"
    )
 
    var _ = Describe("Notification Audit Integration Tests", func() {
@@ -1112,8 +1112,8 @@ package notification  // White-box testing - same package as code under test
 import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -1205,8 +1205,8 @@ package notification  // White-box testing - same package as code under test
 import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    "github.com/jordigilh/kubernaut/test/integration/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/test/integration/testutil"
 )
 
 var _ = Describe("Notification Audit Integration Tests", func() {

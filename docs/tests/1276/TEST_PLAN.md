@@ -6,7 +6,7 @@ TP-AF-1276-v1.0
 
 ## 2. References
 
-- Issue: https://github.com/jordigilh/kubernaut/issues/1276
+- Issue: https://github.com/Ayush-Singh986/kubernaut/issues/1276
 - BR: BR-API-1276 — AF per-request prompt personalization (role-aware, client-type)
 - FedRAMP Controls: AC-6 (Least Privilege), SC-7 (Boundary Protection), AU-2 (Audit Events)
 - ADK: `google.golang.org/adk v1.2.0` — `llmagent.InstructionProvider`

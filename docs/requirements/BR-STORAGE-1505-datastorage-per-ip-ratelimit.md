@@ -6,7 +6,7 @@
 **Target Version**: **V1.5**
 **Status**: ✅ Implemented
 **Date**: June 30, 2026
-**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-09)
+**GitHub Issues**: [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505) (GAP-09)
 
 > **Superseded (Helm gating only)**: [DD-PLATFORM-006](../architecture/decisions/DD-PLATFORM-006-helm-chart-configuration-surface-reduction.md)
 > Decision Area 6 made `datastorage.config.server.rateLimit` mandatory — the
@@ -62,7 +62,7 @@ Key design choices:
 
 ## Related Documents
 
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md) — configure DataStorage rate limiting through the operator-managed `Kubernaut` CR.
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md) — configure DataStorage rate limiting through the operator-managed `Kubernaut` CR.
 
 ---
 

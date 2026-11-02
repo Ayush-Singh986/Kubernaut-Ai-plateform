@@ -19,8 +19,8 @@ package audit
 import (
 	"strings"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // Enum conversion helpers for SignalProcessing audit payloads

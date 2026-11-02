@@ -29,7 +29,7 @@ import (
 	"context"
 	"fmt"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // QueryAuditEvents queries DataStorage for audit events using the OpenAPI client.

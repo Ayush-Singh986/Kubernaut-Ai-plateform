@@ -27,8 +27,8 @@ import (
 	"knative.dev/pkg/apis"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	wemetrics "github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	wemetrics "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/metrics"
 )
 
 // ========================================

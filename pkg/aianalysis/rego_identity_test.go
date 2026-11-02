@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
 )
 
 var _ = Describe("Rego Identity Input — #774, BR-AI-085, BR-INTERACTIVE-001", func() {

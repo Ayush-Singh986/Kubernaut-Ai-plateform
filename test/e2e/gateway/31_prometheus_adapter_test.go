@@ -30,8 +30,8 @@ import (
 	"go.uber.org/zap"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Business Outcome Testing: Test WHAT Prometheus alert processing enables

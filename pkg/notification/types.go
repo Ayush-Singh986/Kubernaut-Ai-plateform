@@ -17,12 +17,12 @@ limitations under the License.
 package notification
 
 import (
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // Re-export notification API types for convenience
-// This allows users to import "github.com/jordigilh/kubernaut/pkg/notification"
-// instead of the longer "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+// This allows users to import "github.com/Ayush-Singh986/kubernaut/pkg/notification"
+// instead of the longer "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 
 type (
 	// NotificationRequest is the main CRD type

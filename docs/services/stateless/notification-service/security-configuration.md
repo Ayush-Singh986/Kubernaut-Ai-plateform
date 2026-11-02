@@ -332,7 +332,7 @@ spec:
 
       containers:
       - name: notification-service
-        image: quay.io/jordigilh/notification-service:v1.0.0
+        image: quay.io/Ayush-Singh986/notification-service:v1.0.0
 
         args:
         - "--config=/etc/config/config.yaml"

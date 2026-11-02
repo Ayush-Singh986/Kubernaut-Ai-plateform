@@ -21,8 +21,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // ErrToolNotFound is returned when a tool name is not registered.

@@ -50,7 +50,7 @@ import (
 	"net/http"
 	"strings"
 
-	toolseterrors "github.com/jordigilh/kubernaut/pkg/toolset/errors"
+	toolseterrors "github.com/Ayush-Singh986/kubernaut/pkg/toolset/errors"
 )
 
 // ValidateContentType middleware ensures POST/PUT/PATCH requests have application/json Content-Type
@@ -135,7 +135,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/toolset/server/middleware"
+	"github.com/Ayush-Singh986/kubernaut/pkg/toolset/server/middleware"
 )
 
 var _ = Describe("Content-Type Validation Middleware", func() {

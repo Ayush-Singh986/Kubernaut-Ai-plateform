@@ -9,10 +9,10 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/meta"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	sharedK8s "github.com/jordigilh/kubernaut/pkg/shared/k8s"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	sharedK8s "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // ClusterLister lists the IDs of known fleet clusters for scope-refusal

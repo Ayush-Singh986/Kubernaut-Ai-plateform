@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/fault"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/fault"
 )
 
 type faultHandler struct {

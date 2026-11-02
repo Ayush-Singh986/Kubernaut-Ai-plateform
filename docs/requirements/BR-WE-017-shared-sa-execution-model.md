@@ -8,7 +8,7 @@
 **Date**: March 4, 2026
 **Related ADRs**: ADR-044 (Engine Portability), DD-WE-002 (Dedicated Namespace), DD-WE-005 (Workflow-Scoped RBAC), DD-WE-007 (Ansible Playbook RBAC Rules)
 **Related BRs**: BR-WE-015 (Ansible Execution Engine), BR-WE-014 (K8s Job Backend)
-**GitHub Issues**: [#551](https://github.com/jordigilh/kubernaut/issues/551), [#552](https://github.com/jordigilh/kubernaut/issues/552), [#501](https://github.com/jordigilh/kubernaut/issues/501)
+**GitHub Issues**: [#551](https://github.com/Ayush-Singh986/kubernaut/issues/551), [#552](https://github.com/Ayush-Singh986/kubernaut/issues/552), [#501](https://github.com/Ayush-Singh986/kubernaut/issues/501)
 
 ---
 
@@ -94,7 +94,7 @@ WFE Created
 
 ### Tracking
 
-- **Issue**: [#501](https://github.com/jordigilh/kubernaut/issues/501) — Per-workflow SA token via TokenRequest
+- **Issue**: [#501](https://github.com/Ayush-Singh986/kubernaut/issues/501) — Per-workflow SA token via TokenRequest
 - **Design Decision**: [DD-WE-005](../architecture/decisions/DD-WE-005-workflow-scoped-rbac.md) — Schema-declared RBAC
 
 ---

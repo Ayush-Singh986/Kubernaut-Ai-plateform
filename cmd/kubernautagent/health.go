@@ -37,12 +37,12 @@ import (
 	"k8s.io/client-go/restmapper"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
-	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/workflowcatalog"
-	"github.com/jordigilh/kubernaut/internal/version"
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
+	karbac "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/rbac"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/workflowcatalog"
+	"github.com/Ayush-Singh986/kubernaut/internal/version"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 func shutdownTimeout(cfg *kaconfig.Config) time.Duration {

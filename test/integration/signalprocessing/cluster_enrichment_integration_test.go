@@ -29,10 +29,10 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/enricher"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/enricher"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 // IT-SP-1511-001: ClusterRegistry wired at SP startup and reachable through

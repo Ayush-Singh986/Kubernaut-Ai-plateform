@@ -6,7 +6,7 @@ TP-AF-1275-v1.0
 
 ## 2. References
 
-- Issue: https://github.com/jordigilh/kubernaut/issues/1275
+- Issue: https://github.com/Ayush-Singh986/kubernaut/issues/1275
 - BR: BR-API-1275 — AF A2A prompt should be context-aware of deployment namespace and kubernaut.ai CRDs
 - FedRAMP Controls: CM-6 (Configuration Management), SC-7 (Boundary Protection), SI-10 (Information Input Validation)
 - ADR: ADR-021 (SAR-based tool authorization)

@@ -322,8 +322,8 @@ type ExecutionConfig struct {
 ## Related Documents
 
 - [DD-WE-002: Dedicated Execution Namespace](./DD-WE-002-dedicated-execution-namespace.md) -- Establishes `kubernaut-workflows` namespace pattern (SA lives here)
-- [Issue #481: Per-workflow ServiceAccount reference](https://github.com/jordigilh/kubernaut/issues/481) -- Implementation tracking
-- [Issue #185, #186, #187](https://github.com/jordigilh/kubernaut/issues/185) -- Superseded RBAC stanza issues (closed)
+- [Issue #481: Per-workflow ServiceAccount reference](https://github.com/Ayush-Singh986/kubernaut/issues/481) -- Implementation tracking
+- [Issue #185, #186, #187](https://github.com/Ayush-Singh986/kubernaut/issues/185) -- Superseded RBAC stanza issues (closed)
 - [Test Plan](../../tests/481/TEST_PLAN.md) -- 23 test scenarios (16 unit + 7 integration)
 
 ---

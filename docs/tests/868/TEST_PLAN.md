@@ -37,7 +37,7 @@ This test plan validates the CRD-aware engine registration feature introduced by
 
 ## 2. References
 
-- [Issue #868](https://github.com/jordigilh/kubernaut/issues/868) — CRD-aware engine registration with degraded status
+- [Issue #868](https://github.com/Ayush-Singh986/kubernaut/issues/868) — CRD-aware engine registration with degraded status
 - `cmd/workflowexecution/main.go` — `tektonCRDsAvailable`, engine registration logic
 - `pkg/workflowexecution/config/config.go` — `TektonConfig`, `TektonEnabled()`
 - `internal/controller/workflowexecution/workflowexecution_controller.go` — `engineGuidance`

@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
 )
 
 // ========================================

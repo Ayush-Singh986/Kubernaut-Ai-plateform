@@ -3,7 +3,7 @@
 **Status**: ⛔ **SUPERSEDED** by DD-AUTH-014 V2.0 (January 29, 2026)
 **Original Date**: 2025-10-27
 **Superseded Date**: 2026-01-29
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ---
@@ -326,7 +326,7 @@ spec:
 
 **Status**: Approved
 **Date**: 2025-10-27
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ## Context
@@ -619,7 +619,7 @@ spec:
 
 **Status**: Approved
 **Date**: 2025-10-27
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ## Context
@@ -914,7 +914,7 @@ spec:
 
 **Status**: Approved
 **Date**: 2025-10-27
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ## Context
@@ -1207,7 +1207,7 @@ spec:
 
 **Status**: Approved
 **Date**: 2025-10-27
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ## Context
@@ -1500,7 +1500,7 @@ spec:
 
 **Status**: Approved
 **Date**: 2025-10-27
-**Deciders**: @jordigilh
+**Deciders**: @Ayush-Singh986
 **Related**: BR-GATEWAY-066 (Authentication), BR-GATEWAY-069 (Authorization), VULN-GATEWAY-001, VULN-GATEWAY-002
 
 ## Context

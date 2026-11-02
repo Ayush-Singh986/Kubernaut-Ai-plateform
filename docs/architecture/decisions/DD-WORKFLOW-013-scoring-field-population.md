@@ -12,7 +12,7 @@
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.1 | 2026-08-02 | Architecture Team (#1806 correction) | **Partial correction pass**: this is not a blanket-supersede case. The scoring *concept* (a numeric field used internally for sorting, kept out of the LLM's view) survives; the specific transport ("HolmesGPT API → Data Storage Service" as two separate network hops) and the specific formula (pgvector `base_similarity` + SQL-computed `label_boost`/`label_penalty`) do not. See "⚠️ Reading This Document" below for the full breakdown, verified against `internal/kubernautagent/workflowcatalog/cache_filter.go` and `pkg/datastorage/models/workflow.go`. | [#1806](https://github.com/jordigilh/kubernaut/issues/1806) |
+| 1.1 | 2026-08-02 | Architecture Team (#1806 correction) | **Partial correction pass**: this is not a blanket-supersede case. The scoring *concept* (a numeric field used internally for sorting, kept out of the LLM's view) survives; the specific transport ("HolmesGPT API → Data Storage Service" as two separate network hops) and the specific formula (pgvector `base_similarity` + SQL-computed `label_boost`/`label_penalty`) do not. See "⚠️ Reading This Document" below for the full breakdown, verified against `internal/kubernautagent/workflowcatalog/cache_filter.go` and `pkg/datastorage/models/workflow.go`. | [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) |
 | 1.0 | 2025-11-27 | Architecture Team | Initial version. | — |
 
 ---

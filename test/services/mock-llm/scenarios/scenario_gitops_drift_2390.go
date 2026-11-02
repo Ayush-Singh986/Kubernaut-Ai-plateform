@@ -16,7 +16,7 @@ limitations under the License.
 
 package scenarios
 
-import "github.com/jordigilh/kubernaut/pkg/shared/uuid"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 
 // gitopsSelectWorkflow2390Config drives the explicit workflow-selection turn
 // in the Issue #2390 A2A journey. It is registered before broad AF keyword

@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 // SignalAdapter converts source-specific signal formats to NormalizedSignal

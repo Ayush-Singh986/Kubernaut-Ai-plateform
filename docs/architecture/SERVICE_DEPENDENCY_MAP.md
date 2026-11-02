@@ -5,7 +5,7 @@
 **Status**: ⚠️ Partially Verified — HolmesGPT/HAPI naming corrected to Kubernaut Agent (KA); see v1.3 note
 **Scope**: 10 Kubernaut V1 Services (likely stale — the repo now ships 14+ services, e.g. authwebhook, apifrontend, fleetmetadatacache are not listed here)
 
-> **Note (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Renamed
+> **Note (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Renamed
 > "HolmesGPT"/"HAPI" to "Kubernaut Agent (KA)" throughout. While doing so, found the KA node's
 > "Port 8080/9090" label doesn't match the real ports (`charts/kubernaut/templates/kubernaut-agent/kubernaut-agent.yaml`:
 > 8443 API, 8081 health, 9090 metrics) — removed the specific claim rather than leave it wrong.

@@ -15,13 +15,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/severity"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/tools"
-	gatewaytypes "github.com/jordigilh/kubernaut/pkg/gateway/types"
-	sharedscope "github.com/jordigilh/kubernaut/pkg/shared/scope"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/severity"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/tools"
+	gatewaytypes "github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	sharedscope "github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 const hubClusterID = "hub"

@@ -16,9 +16,9 @@
 ### 1.1 Purpose
 
 This is the `main`/v1.6 port of the fix designed, TDD'd, and CI-validated on `release/v1.5` in
-[PR #1896](https://github.com/jordigilh/kubernaut/pull/1896) (branch
+[PR #1896](https://github.com/Ayush-Singh986/kubernaut/pull/1896) (branch
 `fix/1888-restmapper-cache-invalidation`), tracked on `main` by sibling issue
-[#1890](https://github.com/jordigilh/kubernaut/issues/1890). Full root-cause analysis and
+[#1890](https://github.com/Ayush-Singh986/kubernaut/issues/1890). Full root-cause analysis and
 alternatives are documented in
 [DD-K8S-001](../../architecture/decisions/DD-K8S-001-restmapper-cache-invalidation-on-lookup-failure.md),
 ported alongside this test plan — not repeated here.
@@ -45,7 +45,7 @@ change.
 
 ## 2. References
 
-- [PR #1896](https://github.com/jordigilh/kubernaut/pull/1896) — original `release/v1.5` implementation (design authority)
+- [PR #1896](https://github.com/Ayush-Singh986/kubernaut/pull/1896) — original `release/v1.5` implementation (design authority)
 - [DD-K8S-001](../../architecture/decisions/DD-K8S-001-restmapper-cache-invalidation-on-lookup-failure.md) — root cause, alternatives, decision
 - Issue #1888, Issue #1890 (`main`/v1.6 tracking clone)
 

@@ -520,7 +520,7 @@ type MigrationsConfig struct {
 	DBName          string // e.g., "kubernaut"
 	DBUser          string // e.g., "kubernaut"
 	DBPassword      string // e.g., "kubernaut-test-password"
-	MigrationsImage string // e.g., "quay.io/jordigilh/datastorage-migrations:latest"
+	MigrationsImage string // e.g., "quay.io/Ayush-Singh986/datastorage-migrations:latest"
 }
 
 // RunMigrations runs database migrations in a temporary container
@@ -540,7 +540,7 @@ type MigrationsConfig struct {
 //	    DBName: "kubernaut",
 //	    DBUser: "kubernaut",
 //	    DBPassword: "kubernaut-test-password",
-//	    MigrationsImage: "quay.io/jordigilh/datastorage-migrations:latest",
+//	    MigrationsImage: "quay.io/Ayush-Singh986/datastorage-migrations:latest",
 //	}
 //	if err := RunMigrations(cfg, writer); err != nil {
 //	    return fmt.Errorf("failed to run migrations: %w", err)
@@ -824,7 +824,7 @@ func findProjectRoot() (string, error) {
 //           DBName: "action_history",
 //           DBUser: "slm_user",
 //           DBPassword: "test_password",
-//           MigrationsImage: "quay.io/jordigilh/datastorage-migrations:latest",
+//           MigrationsImage: "quay.io/Ayush-Singh986/datastorage-migrations:latest",
 //       }, writer); err != nil {
 //           return err
 //       }

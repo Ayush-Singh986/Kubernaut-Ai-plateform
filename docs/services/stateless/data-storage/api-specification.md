@@ -8,7 +8,7 @@
 > **Note**: The Incidents Read API and Success Rate Analytics API described below are
 > **disabled in V1.0** (routes commented out in `server.go`, not present in the OpenAPI
 > spec). They predate the ADR-034 unified audit events API and have no production
-> consumer. See [#238](https://github.com/jordigilh/kubernaut/issues/238) for the
+> consumer. See [#238](https://github.com/Ayush-Singh986/kubernaut/issues/238) for the
 > evaluation decision (keep, remove, or redesign for post-V1.0).
 >
 > The **authoritative V1.0 API surface** is defined by the OpenAPI spec at
@@ -18,7 +18,7 @@
 
 ## Table of Contents
 
-### Incidents & Analytics (Disabled — under evaluation, see [#238](https://github.com/jordigilh/kubernaut/issues/238))
+### Incidents & Analytics (Disabled — under evaluation, see [#238](https://github.com/Ayush-Singh986/kubernaut/issues/238))
 1. [Incidents Read API](#incidents-read-api-phase-1)
    - [List Incidents](#list-incidents)
    - [Get Incident by ID](#get-incident-by-id)
@@ -61,7 +61,7 @@ Content-Type: application/json
 
 ## Incidents Read API (Phase 1)
 
-**Status**: Disabled in V1.0 — under evaluation ([#238](https://github.com/jordigilh/kubernaut/issues/238))
+**Status**: Disabled in V1.0 — under evaluation ([#238](https://github.com/Ayush-Singh986/kubernaut/issues/238))
 **Business Requirements**: BR-STORAGE-021 through BR-STORAGE-028
 **Test Coverage**: Tests removed from CI (see #238)
 
@@ -228,7 +228,7 @@ All errors follow [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/ht
 
 ## Success Rate Analytics API (ADR-033)
 
-**Status**: Disabled in V1.0 — under evaluation ([#238](https://github.com/jordigilh/kubernaut/issues/238))
+**Status**: Disabled in V1.0 — under evaluation ([#238](https://github.com/Ayush-Singh986/kubernaut/issues/238))
 **Business Requirements**: BR-STORAGE-031-01, BR-STORAGE-031-02, BR-STORAGE-031-05
 **Test Coverage**: 23 integration tests (6 new multi-dimensional tests)
 **OpenAPI Spec**: [v2.yaml](./openapi/v2.yaml)
@@ -793,9 +793,9 @@ import (
     "github.com/go-playground/validator/v10"
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/datastorage/models"
-    "github.com/jordigilh/kubernaut/pkg/datastorage/services"
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+    "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/services"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 type RemediationAuditHandler struct {

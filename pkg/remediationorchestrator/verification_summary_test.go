@@ -22,12 +22,12 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	emconditions "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	emconditions "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 func float64Ptr(f float64) *float64 { return &f }

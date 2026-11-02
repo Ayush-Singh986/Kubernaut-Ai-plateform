@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"

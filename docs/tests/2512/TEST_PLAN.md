@@ -1,6 +1,6 @@
 # Test Plan: Per-WorkflowExecution Job Identity
 
-> IEEE 829-2008 hybrid test plan for [issue #2512](https://github.com/jordigilh/kubernaut/issues/2512).
+> IEEE 829-2008 hybrid test plan for [issue #2512](https://github.com/Ayush-Singh986/kubernaut/issues/2512).
 
 **Test Plan Identifier**: TP-2512-v1  
 **Feature**: Prevent stale Kubernetes Job/Pod reuse across sequential same-target WorkflowExecutions.  

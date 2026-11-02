@@ -29,11 +29,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	gatewaypkg "github.com/jordigilh/kubernaut/pkg/gateway"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	gatewaypkg "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
 )
 
 // unreachableTestEndpoint is a deliberately-unreachable address (port 1 on

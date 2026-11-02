@@ -29,22 +29,22 @@ import (
 
 	"github.com/go-logr/logr"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	actiontypev1 "github.com/jordigilh/kubernaut/api/actiontype/v1alpha1"
-	agentsessionv1alpha1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	remediationworkflowv1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
-	workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	auditclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	actiontypev1 "github.com/Ayush-Singh986/kubernaut/api/actiontype/v1alpha1"
+	agentsessionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	remediationworkflowv1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
+	workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	auditclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 // Test suite for AuthWebhook E2E tests

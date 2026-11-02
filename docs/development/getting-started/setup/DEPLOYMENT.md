@@ -4,7 +4,7 @@
 > **Kubernaut Agent (KA)** and the operator-managed deployment path. The Docker Compose,
 > manual `kubectl apply -f k8s/`, and legacy environment-variable examples below are not
 > supported production installation instructions. Use the
-> [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+> [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ Access (legacy):
 
 ### 3. Kubernetes (Production)
 
-Use the [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+Use the [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 for namespace, dependency, credential, and `Kubernaut` CR setup.
 
 ## Configuration

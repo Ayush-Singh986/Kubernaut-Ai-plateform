@@ -22,8 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
-	sharedcontenthash "github.com/jordigilh/kubernaut/pkg/shared/contenthash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+	sharedcontenthash "github.com/Ayush-Singh986/kubernaut/pkg/shared/contenthash"
 )
 
 // #1661 Change 8a: AW must compute the workflow_id it writes to

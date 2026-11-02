@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Date**: May 2026
 **Status**: Authoritative
-**GitHub Issue**: [#1169](https://github.com/jordigilh/kubernaut/issues/1169)
+**GitHub Issue**: [#1169](https://github.com/Ayush-Singh986/kubernaut/issues/1169)
 **Related BRs**: BR-INTERACTIVE-001, BR-INTERACTIVE-005, BR-INTERACTIVE-009
 
 ---
@@ -92,7 +92,7 @@ Both fields are always emitted as structured objects. When RCA does not override
 | LLM provides null parameters | `"parameters": null` |
 
 - Parameters are `map[string]interface{}` internally but are typically string-valued in LLM output.
-- Parameter keys are **not validated** against the workflow catalog schema in v1.5. See [#1170](https://github.com/jordigilh/kubernaut/issues/1170) for the validation regression tracking.
+- Parameter keys are **not validated** against the workflow catalog schema in v1.5. See [#1170](https://github.com/Ayush-Singh986/kubernaut/issues/1170) for the validation regression tracking.
 - Downstream, AA normalizes `map[string]interface{}` to `map[string]string` via `convertMapToStringMap` before CRD/WFE consumption.
 
 ---
@@ -138,4 +138,4 @@ When `select_workflow` builds the final `InvestigationResult`:
 
 - [BR-INTERACTIVE.md](../requirements/BR-INTERACTIVE.md) — Business requirements for interactive mode
 - [ADR-045](../architecture/decisions/ADR-045-aianalysis-ka-service-contract.md) — AIAnalysis ↔ Kubernaut Agent (KA) service contract
-- [#1170](https://github.com/jordigilh/kubernaut/issues/1170) — Parameter validation regression from HAPI migration
+- [#1170](https://github.com/Ayush-Singh986/kubernaut/issues/1170) — Parameter validation regression from HAPI migration

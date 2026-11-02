@@ -5,11 +5,11 @@
 **Status**: Implementation Plan
 **Purpose**: Design heartbeat monitoring for 20B+ model availability with automatic rule-based fallback
 
-> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This was an
+> **⚠️ HISTORICAL (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This was an
 > implementation *plan* (Status above) and there is no `heartbeat_monitor`/`HeartbeatMonitor` component in current
 > Go source — it does not appear to have been built. Additionally, the `context_api`/`holmesgpt_api` monitor-service
 > choice below is stale: **HolmesGPT** was renamed **Kubernaut Agent (KA)** in the Go rewrite (v1.3, issue
-> [#433](https://github.com/jordigilh/kubernaut/issues/433)), and **Context API** was deprecated and folded into
+> [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433)), and **Context API** was deprecated and folded into
 > Data Storage per [DD-CONTEXT-006](decisions/DD-CONTEXT-006-CONTEXT-API-DEPRECATION.md) — neither exists as
 > described here. Preserved below as historical design record only.
 

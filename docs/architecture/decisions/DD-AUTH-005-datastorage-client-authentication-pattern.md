@@ -379,8 +379,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/client"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // NewOpenAPIClientAdapter creates an OpenAPIClientAdapter with automatic ServiceAccount authentication.

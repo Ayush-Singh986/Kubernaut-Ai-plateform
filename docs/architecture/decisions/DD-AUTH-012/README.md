@@ -1,6 +1,6 @@
 # DD-AUTH-012: ose-oauth-proxy for SAR-Based REST API Authorization - Document Index
 
-**Status**: ⚠️ SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), see note in the core DD document)
+**Status**: ⚠️ SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), see note in the core DD document)
 **Last Updated**: January 26, 2026  
 **Category**: Authentication & Authorization
 
@@ -141,7 +141,7 @@ args:
 
 ## Business Requirements
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**: the "DataStorage Service"
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: the "DataStorage Service"
 > IDs below don't resolve as written. `BR-DATA-STORAGE-040/041` should be `BR-STORAGE-040/041`
 > (workflow catalog search/update APIs) — but both are now `❌ Retired` (workflow catalog CRUD was removed;
 > see `docs/services/stateless/data-storage/BUSINESS_REQUIREMENTS.md`). `BR-DATA-STORAGE-050` doesn't exist
@@ -220,7 +220,7 @@ userID := r.Header.Get("X-Auth-Request-User")
 image: quay.io/oauth2-proxy/oauth2-proxy:v7.5.1
 
 # AFTER (ose-oauth-proxy - authentication + authorization)
-image: quay.io/jordigilh/ose-oauth-proxy:latest  # Dev/E2E (multi-arch)
+image: quay.io/Ayush-Singh986/ose-oauth-proxy:latest  # Dev/E2E (multi-arch)
 image: quay.io/openshift/origin-oauth-proxy:latest  # Production (amd64)
 ```
 
@@ -299,7 +299,7 @@ roleRef:
 
 **Solution**:
 - ✅ Migrate to OpenShift `ose-oauth-proxy`
-- ✅ Custom multi-arch build for dev/E2E: `quay.io/jordigilh/ose-oauth-proxy:latest`
+- ✅ Custom multi-arch build for dev/E2E: `quay.io/Ayush-Singh986/ose-oauth-proxy:latest`
 - ✅ Production: `quay.io/openshift/origin-oauth-proxy:latest`
 
 **Impact**: This finding led to the creation of DD-AUTH-012 as an authoritative document.

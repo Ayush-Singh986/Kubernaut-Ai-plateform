@@ -12,7 +12,7 @@
 - [BR-ORCH-047](../../services/crd-controllers/05-remediationorchestrator/BUSINESS_REQUIREMENTS.md): Signal Description Pass-Through to AIAnalysis
 - [BR-HAPI-213](../../services/stateless/kubernaut-agent/BUSINESS_REQUIREMENTS.md): Signal Description in Investigation Prompt
 - [DD-GATEWAY-017](../../architecture/decisions/DD-GATEWAY-017-normalized-signal-description.md): Normalized Signal Description Design
-- [Issue #462](https://github.com/jordigilh/kubernaut/issues/462): Forward RR.spec.signalAnnotations to HAPI
+- [Issue #462](https://github.com/Ayush-Singh986/kubernaut/issues/462): Forward RR.spec.signalAnnotations to HAPI
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)

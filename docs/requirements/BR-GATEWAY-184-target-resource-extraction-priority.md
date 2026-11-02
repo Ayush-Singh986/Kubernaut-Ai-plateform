@@ -5,7 +5,7 @@
 **Date**: 2026-03-04
 **Owner**: Gateway Service Team
 **Stakeholders**: SRE Team, AI Analysis Team, Demo/QA Team
-**GitHub Issues**: [#178](https://github.com/jordigilh/kubernaut/issues/178), [#191](https://github.com/jordigilh/kubernaut/issues/191) (v2.0: monitoring metadata label filtering), [#303](https://github.com/jordigilh/kubernaut/issues/303) / [#308](https://github.com/jordigilh/kubernaut/issues/308) (v2.1: replicaset + pod label filtering)
+**GitHub Issues**: [#178](https://github.com/Ayush-Singh986/kubernaut/issues/178), [#191](https://github.com/Ayush-Singh986/kubernaut/issues/191) (v2.0: monitoring metadata label filtering), [#303](https://github.com/Ayush-Singh986/kubernaut/issues/303) / [#308](https://github.com/Ayush-Singh986/kubernaut/issues/308) (v2.1: replicaset + pod label filtering)
 
 ---
 
@@ -121,7 +121,7 @@ The fingerprint formula `SHA256(namespace:kind:name)` will produce different has
 
 ### Kubernaut Agent (KA) Prompt (No Changes Required)
 
-> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > section originally referenced the pre-rewrite Python "HAPI" prompt builder. HolmesGPT-API was
 > rewritten in Go as Kubernaut Agent (KA) (Issue #433); the equivalent current component is
 > `internal/kubernautagent/prompt/builder.go`.

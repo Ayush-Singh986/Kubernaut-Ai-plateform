@@ -7,8 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
-	sharedsanitization "github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/sanitization"
+	sharedsanitization "github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 var _ = Describe("Kubernaut Agent K8S-SECRET Sanitizer — #966", func() {

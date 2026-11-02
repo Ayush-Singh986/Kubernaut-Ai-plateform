@@ -192,8 +192,8 @@ import (
     "go.uber.org/zap"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 func TestAuditHelpers(t *testing.T) {
@@ -272,7 +272,7 @@ import (
     . "github.com/onsi/gomega"
     "go.uber.org/zap"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
 )
 
 func TestNotificationAuditIntegration(t *testing.T) {
@@ -344,8 +344,8 @@ package notification
 import (
     "fmt"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // AuditHelpers provides helper functions for creating notification audit events

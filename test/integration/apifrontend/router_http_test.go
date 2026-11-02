@@ -12,9 +12,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/handler"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/httputil"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/streaming"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/handler"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/httputil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/streaming"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"encoding/json"

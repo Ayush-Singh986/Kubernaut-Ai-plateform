@@ -129,9 +129,9 @@ import (
     "k8s.io/client-go/kubernetes/scheme"
     "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    remediationprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    "github.com/jordigilh/kubernaut/pkg/remediationprocessing"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    remediationprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediationprocessing"
 )
 
 var _ = Describe("RemediationProcessing Reconciler", func() {

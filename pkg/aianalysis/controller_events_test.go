@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,15 +34,15 @@ import (
 
 	"github.com/go-logr/logr"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	"github.com/jordigilh/kubernaut/internal/controller/aianalysis"
-	aiaudit "github.com/jordigilh/kubernaut/pkg/aianalysis/audit"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
-	aaStatus "github.com/jordigilh/kubernaut/pkg/aianalysis/status"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/internal/controller/aianalysis"
+	aiaudit "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
+	aaStatus "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/status"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

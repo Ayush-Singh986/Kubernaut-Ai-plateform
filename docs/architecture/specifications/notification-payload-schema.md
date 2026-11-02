@@ -1,7 +1,7 @@
 # Notification Service - Payload Schemas
 
 **Date**: October 5, 2025
-**Status**: ⚠️ **NOT IMPLEMENTED / SUPERSEDED** (flagged [#1880](https://github.com/jordigilh/kubernaut/issues/1880))
+**Status**: ⚠️ **NOT IMPLEMENTED / SUPERSEDED** (flagged [#1880](https://github.com/Ayush-Singh986/kubernaut/issues/1880))
 **Purpose**: Unified notification payload for all CRD controllers
 **Confidence**: 90%
 

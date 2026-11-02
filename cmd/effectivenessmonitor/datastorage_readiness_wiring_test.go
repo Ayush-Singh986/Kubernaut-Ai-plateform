@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
 )
 
 // IT-AUDIT-1985-003: cmd/effectivenessmonitor must wire an independent,

@@ -31,7 +31,7 @@ import (
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	"k8s.io/utils/ptr"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
 )
 
 var _ = Describe("K8s Owner-Chain Adapter — TP-433-WIR Phase 1b", func() {

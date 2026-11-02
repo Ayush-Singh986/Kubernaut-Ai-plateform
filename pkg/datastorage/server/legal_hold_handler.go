@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	dsmiddleware "github.com/jordigilh/kubernaut/pkg/datastorage/server/middleware"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server/response"
+	dsmiddleware "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/middleware"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/response"
 )
 
 // ========================================

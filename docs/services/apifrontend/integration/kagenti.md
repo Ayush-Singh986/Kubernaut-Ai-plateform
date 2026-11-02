@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Last Updated**: 2026-05-02
 **Status**: Planning
-**Tracking Issue**: [#27](https://github.com/jordigilh/kubernaut-apifrontend/issues/27)
+**Tracking Issue**: [#27](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/27)
 
 ---
 
@@ -98,7 +98,7 @@ router.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(ag
 
 ## What's Missing (Gaps)
 
-### Gap 1: Agent Card Content Enrichment — [#28](https://github.com/jordigilh/kubernaut-apifrontend/issues/28)
+### Gap 1: Agent Card Content Enrichment — [#28](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/28)
 
 **Severity**: Required for v1.5
 
@@ -116,7 +116,7 @@ which may miss proxied tools that are not registered as local ADK tools.
 
 ---
 
-### Gap 2: Kagenti Discovery Labels — [#29](https://github.com/jordigilh/kubernaut-apifrontend/issues/29)
+### Gap 2: Kagenti Discovery Labels — [#29](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/29)
 
 **Severity**: Required for v1.5
 
@@ -140,7 +140,7 @@ Without `kagenti.io/type: agent`, the API Frontend is invisible to kagenti.
 
 ---
 
-### Gap 3: Agent Card JWS Signing — [#30](https://github.com/jordigilh/kubernaut-apifrontend/issues/30)
+### Gap 3: Agent Card JWS Signing — [#30](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/30)
 
 **Severity**: Decision needed (may be optional for v1.5)
 
@@ -157,7 +157,7 @@ Kagenti supports JWS-based cryptographic verification of Agent Cards:
 
 ---
 
-### Gap 4: SPIFFE Workload Identity Binding — [#31](https://github.com/jordigilh/kubernaut-apifrontend/issues/31)
+### Gap 4: SPIFFE Workload Identity Binding — [#31](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/31)
 
 **Severity**: Decision needed (depends on OCP environment)
 
@@ -177,7 +177,7 @@ If SPIRE is not present:
 
 ---
 
-### Gap 5: MCP Gateway Tool Registration — [#32](https://github.com/jordigilh/kubernaut-apifrontend/issues/32)
+### Gap 5: MCP Gateway Tool Registration — [#32](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/32)
 
 **Severity**: Decision needed (depends on OCP environment)
 

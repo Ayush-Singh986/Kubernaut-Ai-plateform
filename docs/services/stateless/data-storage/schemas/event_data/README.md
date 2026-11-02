@@ -63,7 +63,7 @@ All event_data follows this base structure:
 ### Example: Gateway Event
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
+import "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
 
 eventData, err := audit.NewGatewayEvent("signal.received").
     WithSignalType("prometheus").

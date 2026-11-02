@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	config "github.com/jordigilh/kubernaut/internal/config/aianalysis"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/aianalysis"
 )
 
 func TestAIAnalysisConfig(t *testing.T) {

@@ -61,7 +61,7 @@ This test plan validates two complementary changes introduced by Issue #462:
 - [Integration/E2E No-Mocks Policy](../../../docs/testing/INTEGRATION_E2E_NO_MOCKS_POLICY.md)
 - Issue #601: Shadow agent (#601) will audit the influence of annotations on LLM reasoning
 - Issue #463: Unified monitoring config (Prometheus toolset enabling disk-pressure investigations)
-- Observed failure: jordigilh/kubernaut-demo-scenarios#101 (PredictedDiskPressure false positive)
+- Observed failure: Ayush-Singh986/kubernaut-demo-scenarios#101 (PredictedDiskPressure false positive)
 
 ---
 

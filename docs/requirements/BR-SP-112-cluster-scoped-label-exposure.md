@@ -6,7 +6,7 @@
 **Category**: Enrichment
 **Priority**: P1 (High)
 **Service**: SignalProcessing
-**GitHub Issue**: [#1110](https://github.com/jordigilh/kubernaut/issues/1110)
+**GitHub Issue**: [#1110](https://github.com/Ayush-Singh986/kubernaut/issues/1110)
 **Related**: BR-SP-001, BR-SP-080, BR-SP-081, BR-SP-102, DD-017
 
 ---
@@ -114,5 +114,5 @@ The `#437 guard` in `reconcileClassifying` MUST NOT treat nil Namespace as "enri
 - [BR-SP-080/081: Business Classification](../services/crd-controllers/01-signalprocessing/BUSINESS_REQUIREMENTS.md)
 - [BR-SP-102: Custom Labels](../services/crd-controllers/01-signalprocessing/BUSINESS_REQUIREMENTS.md)
 - [DD-017: Graceful Degradation Principles](../architecture/decisions/)
-- [Issue #437: Stale cache guard](https://github.com/jordigilh/kubernaut/issues/437)
-- [Issue #1110: SP Multi-Dimension Readiness Audit](https://github.com/jordigilh/kubernaut/issues/1110)
+- [Issue #437: Stale cache guard](https://github.com/Ayush-Singh986/kubernaut/issues/437)
+- [Issue #1110: SP Multi-Dimension Readiness Audit](https://github.com/Ayush-Singh986/kubernaut/issues/1110)

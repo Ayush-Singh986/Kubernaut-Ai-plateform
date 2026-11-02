@@ -24,7 +24,7 @@ import (
 	"sync"
 )
 
-// Deprecated: Use github.com/jordigilh/kubernaut/pkg/shared/tls.CAReloader instead.
+// Deprecated: Use github.com/Ayush-Singh986/kubernaut/pkg/shared/tls.CAReloader instead.
 // This type is retained for backward compatibility with existing EM tests.
 //
 // CAReloader is an http.RoundTripper that supports hot-reloading of

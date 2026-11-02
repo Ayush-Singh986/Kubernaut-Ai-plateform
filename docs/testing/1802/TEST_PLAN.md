@@ -16,7 +16,7 @@
 
 ### 1.1 Purpose
 
-[Issue #1802](https://github.com/jordigilh/kubernaut/issues/1802) reports that `RoutingEngine.CheckIneffectiveRemediationChain` blocks `WorkflowExecution` creation for a target that has never been remediated before, because DataStorage's remediation-history query (`QueryROEventsBySpecHash`) matches purely on `pre_remediation_spec_hash`/`post_remediation_spec_hash` equality with no target-resource scoping. Two unrelated `Deployment`s with identical Pod specs (a common pattern — templated manifests, Helm charts, GitOps repos) collide and are treated as the same remediation target. This test plan provides failing-test evidence of the bug (RED), then proves the fix (GREEN) at all three tiers for both production consumers of the affected endpoint.
+[Issue #1802](https://github.com/Ayush-Singh986/kubernaut/issues/1802) reports that `RoutingEngine.CheckIneffectiveRemediationChain` blocks `WorkflowExecution` creation for a target that has never been remediated before, because DataStorage's remediation-history query (`QueryROEventsBySpecHash`) matches purely on `pre_remediation_spec_hash`/`post_remediation_spec_hash` equality with no target-resource scoping. Two unrelated `Deployment`s with identical Pod specs (a common pattern — templated manifests, Helm charts, GitOps repos) collide and are treated as the same remediation target. This test plan provides failing-test evidence of the bug (RED), then proves the fix (GREEN) at all three tiers for both production consumers of the affected endpoint.
 
 ### 1.2 Objectives
 

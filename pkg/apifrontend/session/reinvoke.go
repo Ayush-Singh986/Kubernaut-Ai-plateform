@@ -22,7 +22,7 @@ import (
 	adksession "google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
 )
 
 const (

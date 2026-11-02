@@ -30,11 +30,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 // IT-FMC-054-001, IT-FMC-054-010, IT-FMC-054-020

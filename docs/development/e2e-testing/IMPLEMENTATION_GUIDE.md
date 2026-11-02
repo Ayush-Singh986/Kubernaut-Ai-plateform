@@ -43,9 +43,9 @@ import (
     "context"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/chaos"
-    "github.com/jordigilh/kubernaut/pkg/load"
-    "github.com/jordigilh/kubernaut/pkg/validation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/chaos"
+    "github.com/Ayush-Singh986/kubernaut/pkg/load"
+    "github.com/Ayush-Singh986/kubernaut/pkg/validation"
 
     "github.com/sirupsen/logrus"
     . "github.com/onsi/ginkgo/v2"
@@ -370,7 +370,7 @@ import (
     "sync"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/llm"
+    "github.com/Ayush-Singh986/kubernaut/pkg/llm"
     "github.com/sirupsen/logrus"
 )
 
@@ -548,9 +548,9 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/test/integration/shared"
-    "github.com/jordigilh/kubernaut/pkg/chaos"
-    "github.com/jordigilh/kubernaut/pkg/validation"
+    "github.com/Ayush-Singh986/kubernaut/test/integration/shared"
+    "github.com/Ayush-Singh986/kubernaut/pkg/chaos"
+    "github.com/Ayush-Singh986/kubernaut/pkg/validation"
 )
 
 var _ = Describe("Use Case #1: AI-Driven Pod Resource Exhaustion Recovery", func() {
@@ -891,7 +891,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/validation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/validation"
 )
 
 type BusinessReportGenerator struct {

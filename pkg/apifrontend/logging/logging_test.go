@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"go.uber.org/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/logging"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/logging"
 )
 
 func TestLoggingSuite(t *testing.T) {

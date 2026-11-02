@@ -8,7 +8,7 @@ The supervisor agent reads your BR documents and orchestrates their implementati
 
 ## 📁 BR Document Structure (Your Format)
 
-Based on `/Users/jgil/go/src/github.com/jordigilh/cursor-swarm-dev/docs/business-requirements/`:
+Based on `/Users/jgil/go/src/github.com/Ayush-Singh986/cursor-swarm-dev/docs/business-requirements/`:
 
 ```
 BR-001-CURSOR-SWARM-VISION.md

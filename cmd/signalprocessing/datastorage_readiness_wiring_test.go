@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/config"
 )
 
 // IT-AUDIT-1985-007: cmd/signalprocessing must wire an independent,

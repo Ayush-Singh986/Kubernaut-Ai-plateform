@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Configuration
 VERSION=${1:-"v1.0.0"}
-REGISTRY=${2:-"quay.io/jordigilh"}
+REGISTRY=${2:-"quay.io/Ayush-Singh986"}
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -143,7 +143,7 @@ build_service() {
         --label "org.opencontainers.image.version=$VERSION" \
         --label "org.opencontainers.image.created=$BUILD_DATE" \
         --label "org.opencontainers.image.revision=$GIT_COMMIT" \
-        --label "org.opencontainers.image.source=https://github.com/jordigilh/kubernaut" \
+        --label "org.opencontainers.image.source=https://github.com/Ayush-Singh986/kubernaut" \
         .; then
         log_success "Successfully built ${service_name} -> ${image_name}"
         return 0
@@ -401,11 +401,11 @@ main() {
             echo ""
             echo "Arguments:"
             echo "  version        Image version tag (default: v1.0.0)"
-            echo "  registry       Container registry (default: quay.io/jordigilh)"
+            echo "  registry       Container registry (default: quay.io/Ayush-Singh986)"
             echo ""
             echo "Examples:"
             echo "  $0 build v1.1.0"
-            echo "  $0 push v1.1.0 quay.io/jordigilh"
+            echo "  $0 push v1.1.0 quay.io/Ayush-Singh986"
             echo "  $0 build-and-push v1.2.0"
             echo "  $0 list"
             ;;

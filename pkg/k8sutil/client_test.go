@@ -20,7 +20,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/k8sutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/k8sutil"
 )
 
 func TestGetConfig(t *testing.T) {

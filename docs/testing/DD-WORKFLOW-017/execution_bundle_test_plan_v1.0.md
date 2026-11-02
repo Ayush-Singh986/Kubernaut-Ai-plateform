@@ -685,7 +685,7 @@ makeCreateRequest := func(schemaImage string) *http.Request {
 
 - [DD-WORKFLOW-017](../../architecture/decisions/DD-WORKFLOW-017-workflow-lifecycle-component-interactions.md) -- Workflow lifecycle and OCI registration flow
 - [BR-WORKFLOW-004](../../requirements/) -- Workflow Schema Format Specification
-- [Issue #89](https://github.com/jordigilh/kubernaut/issues/89) -- Enforce digest-only execution.bundle
+- [Issue #89](https://github.com/Ayush-Singh986/kubernaut/issues/89) -- Enforce digest-only execution.bundle
 - [Test Plan Template](../../development/testing/V1_0_SERVICE_MATURITY_TEST_PLAN_TEMPLATE.md)
 - [TESTING_GUIDELINES.md](../../development/business-requirements/TESTING_GUIDELINES.md)
 - `SchemaValidationError` type: [`pkg/datastorage/models/workflow_schema.go`](../../../pkg/datastorage/models/workflow_schema.go) (lines 239-255)

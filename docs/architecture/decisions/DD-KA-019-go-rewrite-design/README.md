@@ -43,12 +43,12 @@ DD-KA-019-go-rewrite-design/
 
 | Issue | Title |
 |-------|-------|
-| [#433](https://github.com/jordigilh/kubernaut/issues/433) | Reimplement HolmesGPT SDK and HAPI in Go |
-| [#505](https://github.com/jordigilh/kubernaut/issues/505) | kagent evaluation (NO-GO) |
-| [#506](https://github.com/jordigilh/kubernaut/issues/506) | LangChainGo evaluation (SELECTED) |
-| [#507](https://github.com/jordigilh/kubernaut/issues/507) | Eino evaluation (VIABLE, deferred) |
-| [#508](https://github.com/jordigilh/kubernaut/issues/508) | Kubernetes toolset scope |
-| [#509](https://github.com/jordigilh/kubernaut/issues/509) | Prometheus toolset scope |
+| [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433) | Reimplement HolmesGPT SDK and HAPI in Go |
+| [#505](https://github.com/Ayush-Singh986/kubernaut/issues/505) | kagent evaluation (NO-GO) |
+| [#506](https://github.com/Ayush-Singh986/kubernaut/issues/506) | LangChainGo evaluation (SELECTED) |
+| [#507](https://github.com/Ayush-Singh986/kubernaut/issues/507) | Eino evaluation (VIABLE, deferred) |
+| [#508](https://github.com/Ayush-Singh986/kubernaut/issues/508) | Kubernetes toolset scope |
+| [#509](https://github.com/Ayush-Singh986/kubernaut/issues/509) | Prometheus toolset scope |
 
 ---
 

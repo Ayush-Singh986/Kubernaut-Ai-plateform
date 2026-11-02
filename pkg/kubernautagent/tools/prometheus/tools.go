@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // AllToolNames lists the 8 Prometheus tool names matching KA parity.

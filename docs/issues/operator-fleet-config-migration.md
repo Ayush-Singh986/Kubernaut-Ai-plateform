@@ -29,7 +29,7 @@ Fleet credential reference to preserve least privilege.
 
 See:
 
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 - [Fleet setup guide](../operations/deployment/FLEET_SETUP_GUIDE.md)
 - [ADR-068: Fleet Federation Architecture](../architecture/decisions/ADR-068-fleet-federation-architecture.md)
 

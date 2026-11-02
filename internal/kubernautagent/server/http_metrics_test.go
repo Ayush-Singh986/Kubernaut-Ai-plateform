@@ -8,8 +8,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	kametrics "github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
+	kametrics "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
 )
 
 var _ = Describe("HTTP Metrics Middleware — BR-KA-OBSERVABILITY-001.5", func() {

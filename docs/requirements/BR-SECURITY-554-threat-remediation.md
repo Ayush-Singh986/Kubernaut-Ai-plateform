@@ -6,8 +6,8 @@
 **Target Version**: TBD after product discovery
 **Status**: Proposed; not approved or shipped
 **Date**: September 15, 2026
-**GitHub Issue**: [#554](https://github.com/jordigilh/kubernaut/issues/554)
-**Related domain**: Compliance Continuous Remediation ([#669](https://github.com/jordigilh/kubernaut/issues/669))
+**GitHub Issue**: [#554](https://github.com/Ayush-Singh986/kubernaut/issues/554)
+**Related domain**: Compliance Continuous Remediation ([#669](https://github.com/Ayush-Singh986/kubernaut/issues/669))
 
 ---
 
@@ -312,7 +312,7 @@ Before implementation begins:
 - [LLM Input Sanitization](./BR-KA-211-llm-input-sanitization.md)
 
 The companion product-discovery record and multi-pillar data-contract
-proposal are reviewed separately in [PR #2406](https://github.com/jordigilh/kubernaut/pull/2406).
+proposal are reviewed separately in [PR #2406](https://github.com/Ayush-Singh986/kubernaut/pull/2406).
 
 ## Source and Confidentiality Note
 

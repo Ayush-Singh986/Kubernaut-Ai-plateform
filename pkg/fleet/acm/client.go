@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 const graphQLPath = "/searchapi/graphql"

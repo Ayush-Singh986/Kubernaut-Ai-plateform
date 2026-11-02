@@ -5,7 +5,7 @@
 **Issue**: #542  
 **Parent ADR**: ADR-055 (LLM-Driven Context Enrichment)
 
-> **Historical Context (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **Historical Context (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > Layer 1 below documents PR #543 as it landed in March 2026, against the **pre-Go-rewrite Python**
 > `kubernaut-agent`/HAPI implementation (`prompt_builder.py`, `result_parser.py`, `llm_integration.py`,
 > `enrichment_service.py`, and a "HolmesGPT OAS client"). None of those Python files exist in the

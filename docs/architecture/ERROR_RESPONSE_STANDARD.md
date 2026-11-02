@@ -68,7 +68,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/jordigilh/kubernaut/pkg/correlation"
+    "github.com/Ayush-Singh986/kubernaut/pkg/correlation"
 )
 
 // ErrorResponse represents a standardized API error response

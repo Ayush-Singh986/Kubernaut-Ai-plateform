@@ -4,7 +4,7 @@
 **Version**: 1.0.0
 **Created**: 2026-06-27
 **Status**: Draft
-**Issue**: [#1507](https://github.com/jordigilh/kubernaut/issues/1507)
+**Issue**: [#1507](https://github.com/Ayush-Singh986/kubernaut/issues/1507)
 **Business Requirement**: BR-KA-TOOLSET-001
 **Design Decision**: DD-TOOLSET-002
 

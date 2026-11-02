@@ -1,9 +1,9 @@
 # Test Plan: #783 SDK Config Hot-Reload
 
-**Issue**: [#783](https://github.com/jordigilh/kubernaut/issues/783)
+**Issue**: [#783](https://github.com/Ayush-Singh986/kubernaut/issues/783)
 **Service**: Kubernaut Agent (KA)
 **Date**: 2026-04-15
-**Status**: Active — amended 2026-07-06 for [#1599](https://github.com/jordigilh/kubernaut/issues/1599) / [DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md) (see below)
+**Status**: Active — amended 2026-07-06 for [#1599](https://github.com/Ayush-Singh986/kubernaut/issues/1599) / [DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md) (see below)
 
 > **2026-07-06 amendment**: `model` moved from "In Scope" to "Out of Scope" per #1599 —
 > LLM identity (provider+model, base and per-phase) now requires a restart to change.

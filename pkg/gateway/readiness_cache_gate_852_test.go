@@ -27,8 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	gwpkg "github.com/jordigilh/kubernaut/pkg/gateway"
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwpkg "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 )
 
 // BR-GATEWAY-185: Gateway readiness probe must gate on K8s informer cache sync

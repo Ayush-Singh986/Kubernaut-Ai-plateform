@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 // BR-PLATFORM-012, Issue #2275: rename Runtime.Server.DisableProfiling

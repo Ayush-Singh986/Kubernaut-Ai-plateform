@@ -1,6 +1,6 @@
 # DD-AUTH-011: Granular RBAC & SAR Verb Mapping - Document Index
 
-**Status**: ⚠️ SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), see note in the core DD document)
+**Status**: ⚠️ SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), see note in the core DD document)
 **Last Updated**: January 26, 2026  
 **Category**: Authentication & Authorization
 
@@ -221,7 +221,7 @@ Session summaries from January 26, 2026.
 
 **Solution**:
 - ✅ OpenShift `origin-oauth-proxy` natively supports `--openshift-sar` for SAR validation
-- ✅ Custom multi-arch build for dev/E2E: `quay.io/jordigilh/ose-oauth-proxy:latest` (arm64+amd64)
+- ✅ Custom multi-arch build for dev/E2E: `quay.io/Ayush-Singh986/ose-oauth-proxy:latest` (arm64+amd64)
 - ✅ Production: `quay.io/openshift/origin-oauth-proxy:latest` (official amd64)
 
 **Impact**: This critical finding led to the creation of DD-AUTH-012 (authoritative document for ose-oauth-proxy decision).

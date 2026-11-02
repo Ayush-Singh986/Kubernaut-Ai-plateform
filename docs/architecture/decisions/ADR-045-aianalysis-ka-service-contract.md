@@ -6,7 +6,7 @@
 **Decision Makers**: Kubernaut Agent (KA) Team, AIAnalysis Team
 
 **Last Updated**: 2026-08-01 — Rewritten against the actual Go implementation
-([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). The original document described
+([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). The original document described
 a Python FastAPI service with a single synchronous `POST /api/v1/investigate` endpoint and
 `oapi-codegen`-generated Go client. That endpoint was superseded by an **async, session-based**
 API before this contract was fully implemented — the actual endpoint set, schemas, and generated
@@ -233,7 +233,7 @@ resilience mechanism today.
 - **[BR-ORCH-036](../../requirements/BR-ORCH-036-manual-review-notification.md)**: Manual Review & Escalation Notification (actual escalation path for KA-call failures)
 - **DD-RECOVERY-002**: Direct AIAnalysis recovery flow
 - **DD-RECOVERY-003**: Recovery prompt design with DetectedLabels
-- **BR-KA-192**: Recovery Context Consumption (no standalone doc; tracked for the KA service doc set, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) PR4)
+- **BR-KA-192**: Recovery Context Consumption (no standalone doc; tracked for the KA service doc set, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) PR4)
 - **[BR-KA-193](../../requirements/BR-KA-193-execution-outcome-reporting.md)**: Execution Outcome Reporting
 - `pkg/shared/types/enrichment.go` — authoritative `DetectedLabels` schema (Go)
 - `internal/kubernautagent/api/openapi.json` — authoritative API contract (source of truth)

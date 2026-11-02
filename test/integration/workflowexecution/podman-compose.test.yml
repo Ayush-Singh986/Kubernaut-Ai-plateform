@@ -7,9 +7,9 @@ version: '3.8'
 services:
   # Database migration service
   # NOTE: Commented out - migrations run manually due to goose image availability
-  # TODO: Mirror goose:3.18.0 to quay.io/jordigilh/ to avoid rate limits
+  # TODO: Mirror goose:3.18.0 to quay.io/Ayush-Singh986/ to avoid rate limits
   # migrate:
-  #   image: quay.io/jordigilh/goose:3.18.0
+  #   image: quay.io/Ayush-Singh986/goose:3.18.0
   #   volumes:
   #     - ../../../migrations:/migrations:ro
   #   environment:
@@ -43,7 +43,7 @@ services:
   # Redis for WE integration tests
   # Port: 16389 (WE-specific, +10 from DS baseline 16379)
   redis:
-    image: quay.io/jordigilh/redis:7-alpine
+    image: quay.io/Ayush-Singh986/redis:7-alpine
     ports:
       - "16389:6379"
     networks:

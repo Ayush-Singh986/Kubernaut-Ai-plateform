@@ -153,7 +153,7 @@ status:
 ### **Go Client Example**
 ```go
 import (
-    kubernautv1 "github.com/jordigilh/kubernaut/api/v1"
+    kubernautv1 "github.com/Ayush-Singh986/kubernaut/api/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

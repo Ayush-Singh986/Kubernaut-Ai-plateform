@@ -7,10 +7,10 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 const fleetClusterLabelKey = "cluster"

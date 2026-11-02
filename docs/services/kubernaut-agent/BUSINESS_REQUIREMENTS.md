@@ -37,8 +37,8 @@ BR-to-test-file traceability).
 | [BR-AUDIT-011](../../requirements/BR-AUDIT-011-kubernautagent-secret-read-audit.md) | KubernautAgent Secret Read Audit (Detective Control) | ✅ Implemented | Every Kubernetes Secret Get/List by KA's tools emits a dedicated `aiagent.secret.accessed` audit event (detective control, RBAC intentionally not narrowed — see [security-configuration.md](./security-configuration.md)). |
 
 **Not yet formalized as a standalone BR** (tracked elsewhere): confidence-band configurability is
-tracked directly by [Issue #1826](https://github.com/jordigilh/kubernaut/issues/1826) (KA-side) and
-[Issue #1828](https://github.com/jordigilh/kubernaut/issues/1828) (AIAnalysis-side) rather than a BR
+tracked directly by [Issue #1826](https://github.com/Ayush-Singh986/kubernaut/issues/1826) (KA-side) and
+[Issue #1828](https://github.com/Ayush-Singh986/kubernaut/issues/1828) (AIAnalysis-side) rather than a BR
 document, as of this writing.
 
 ---

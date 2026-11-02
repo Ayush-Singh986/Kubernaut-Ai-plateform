@@ -29,8 +29,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/sanitization"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/sanitization"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 	"gopkg.in/yaml.v3"
 )
 

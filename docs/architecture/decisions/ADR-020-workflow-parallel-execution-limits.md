@@ -264,7 +264,7 @@ package workflowexecution
 import (
     "fmt"
 
-    workflowv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    workflowv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 // GetParallelExecutableSteps returns steps that can be executed in parallel

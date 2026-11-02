@@ -11,7 +11,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.2 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)): BR-AI-075 corrected — `executionBundle` (not `containerImage`) resolved by KA's in-process discovery cache (DD-WORKFLOW-019), not an MCP search. BR-AI-076 corrected to Rego policy decision language. Marked BR-AI-080–083 (Recovery Flow) `DEPRECATED` per the authoritative note already in `02-aianalysis/BUSINESS_REQUIREMENTS.md` — never implemented, `DD-RECOVERY-002`/`003` no longer exist, and the ID range was reused for graceful-shutdown requirements. |
+| 1.2 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): BR-AI-075 corrected — `executionBundle` (not `containerImage`) resolved by KA's in-process discovery cache (DD-WORKFLOW-019), not an MCP search. BR-AI-076 corrected to Rego policy decision language. Marked BR-AI-080–083 (Recovery Flow) `DEPRECATED` per the authoritative note already in `02-aianalysis/BUSINESS_REQUIREMENTS.md` — never implemented, `DD-RECOVERY-002`/`003` no longer exist, and the ID range was reused for graceful-shutdown requirements. |
 | 1.1 | 2025-11-30 | Added BR-AI-075-076 (Workflow Selection), BR-AI-080-083 (Recovery Flow) |
 | 1.0 | 2025-01-15 | Initial version |
 
@@ -171,7 +171,7 @@ The AI & Machine Learning components provide intelligent decision-making capabil
   - **Reference**: DD-CONTRACT-001 v2.0, DD-WORKFLOW-019
 - **BR-AI-076**: MUST provide rich approval context when policy requires approval
   - **Approval Context Fields**: `investigationSummary`, `rootCauseEvidence`, `recommendationRationale`, `riskAssessment`
-  - **Threshold**: Rego policy decision (default 80%, operator-configurable — see [Issue #1828](https://github.com/jordigilh/kubernaut/issues/1828)), sets `approvalRequired=true` when not met
+  - **Threshold**: Rego policy decision (default 80%, operator-configurable — see [Issue #1828](https://github.com/Ayush-Singh986/kubernaut/issues/1828)), sets `approvalRequired=true` when not met
   - **Flow**: AIAnalysis sets `approvalRequired`, RemediationOrchestrator orchestrates notification + `RemediationApprovalRequest` CRD (ADR-040)
   - **Reference**: ADR-040, ADR-018, DD-CONTRACT-002
 

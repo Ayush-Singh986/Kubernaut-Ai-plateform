@@ -23,7 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/query"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/query"
 )
 
 // ========================================

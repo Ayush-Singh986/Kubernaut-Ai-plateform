@@ -49,7 +49,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
+	aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
 )
 
 // Plain (non-Synchronized) BeforeSuite/AfterSuite: Ginkgo runs these once per

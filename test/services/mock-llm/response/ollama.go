@@ -16,8 +16,8 @@ limitations under the License.
 package response
 
 import (
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 // BuildOllamaResponse creates an Ollama-compatible chat response.

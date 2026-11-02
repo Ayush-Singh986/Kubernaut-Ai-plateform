@@ -78,7 +78,7 @@ const (
 **Test Import Path**:
 ```go
 import (
-    holmesgpt "github.com/jordigilh/kubernaut/pkg/holmesgpt/client"
+    holmesgpt "github.com/Ayush-Singh986/kubernaut/pkg/holmesgpt/client"
 )
 ```
 

@@ -20,9 +20,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
 )
 
 // ============================================================================

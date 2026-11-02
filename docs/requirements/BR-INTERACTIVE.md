@@ -7,7 +7,7 @@
 **Date**: April 29, 2026 (Updated: May 15, 2026 — SEC-TAKEOVER-001 clarification on BR-INTERACTIVE-004 #5; Updated: August 24, 2026 — BR-INTERACTIVE-004 #2/#3 corrected to match production's in-place upgrade mechanism, see DD-INTERACTIVE-002 v1.2 amendment)
 **Related ADRs**: ADR-038 (Async Buffered Audit Ingestion)
 **Related DDs**: DD-AUTH-MCP-001 (MCP Endpoint Security), DD-INTERACTIVE-002 (Dynamic Takeover Model)
-**GitHub Issue**: [#703](https://github.com/jordigilh/kubernaut/issues/703)
+**GitHub Issue**: [#703](https://github.com/Ayush-Singh986/kubernaut/issues/703)
 
 ---
 
@@ -181,7 +181,7 @@ Interactive mode must be additive. Failures in interactive infrastructure must n
 **Business Requirement ID**: BR-INTERACTIVE-009
 **Priority**: P1
 **Status**: Implemented
-**GitHub Issue**: [#1169](https://github.com/jordigilh/kubernaut/issues/1169)
+**GitHub Issue**: [#1169](https://github.com/Ayush-Singh986/kubernaut/issues/1169)
 
 ### Business Need
 
@@ -206,7 +206,7 @@ See [docs/mcp/discover-workflows-contract.md](../mcp/discover-workflows-contract
 **Business Requirement ID**: BR-INTERACTIVE-011
 **Priority**: P1
 **Status**: Implemented
-**GitHub Issue**: [#1855](https://github.com/jordigilh/kubernaut/issues/1855)
+**GitHub Issue**: [#1855](https://github.com/Ayush-Singh986/kubernaut/issues/1855)
 
 ### Business Need
 

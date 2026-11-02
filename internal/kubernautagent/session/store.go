@@ -27,7 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // Status represents the lifecycle state of an investigation session.

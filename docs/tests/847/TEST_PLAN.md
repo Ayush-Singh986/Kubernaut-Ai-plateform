@@ -43,8 +43,8 @@ This test plan validates the adversarial due diligence and hierarchy-aware targe
 
 ### 2.1 Authoritative Documents
 
-- [Issue #847](https://github.com/jordigilh/kubernaut/issues/847) — Adversarial due diligence
-- [Issue #851](https://github.com/jordigilh/kubernaut/issues/851) — `aiagent.rca.complete` audit event
+- [Issue #847](https://github.com/Ayush-Singh986/kubernaut/issues/847) — Adversarial due diligence
+- [Issue #851](https://github.com/Ayush-Singh986/kubernaut/issues/851) — `aiagent.rca.complete` audit event
 - BR-HAPI-847 — Adversarial due diligence framework
 - BR-HAPI-261 — Hierarchy-aware target resolution (AC#4, AC#5, AC#7)
 - DD-HAPI-847 — Design decision for due diligence dimensions

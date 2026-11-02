@@ -23,7 +23,7 @@ spec:
   
   execution:
     engine: ansible
-    bundle: https://github.com/jordigilh/kubernaut-test-playbooks.git
+    bundle: https://github.com/Ayush-Singh986/kubernaut-test-playbooks.git
     bundleDigest: 42eadeba052b13e3ec4e113ebc8165efd5497974
     engineConfig:
       playbookPath: "playbooks/test-dep-configmap.yml"

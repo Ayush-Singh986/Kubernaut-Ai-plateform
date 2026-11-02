@@ -31,8 +31,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 var _ = Describe("RemediationHistoryRepository", func() {

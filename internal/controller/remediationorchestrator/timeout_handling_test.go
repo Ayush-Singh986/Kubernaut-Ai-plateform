@@ -25,10 +25,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
 )
 
 // newCRDOnlyRESTMapper builds a REST mapper that only knows about a synthetic

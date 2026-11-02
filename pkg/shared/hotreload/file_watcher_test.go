@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	prodhotreload "github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	prodhotreload "github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

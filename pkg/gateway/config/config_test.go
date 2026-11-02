@@ -7,9 +7,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	config "github.com/jordigilh/kubernaut/pkg/gateway/config"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	config "github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
 )
 
 func TestGatewayConfig(t *testing.T) {

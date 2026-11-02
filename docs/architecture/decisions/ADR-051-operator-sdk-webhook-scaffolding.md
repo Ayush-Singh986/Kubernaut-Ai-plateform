@@ -270,7 +270,7 @@ package authwebhook
 
 import (
     "context"
-    "github.com/jordigilh/kubernaut/internal/client/datastorage/dsgen"
+    "github.com/Ayush-Singh986/kubernaut/internal/client/datastorage/dsgen"
 )
 
 // AuditClient wraps Data Storage API for audit event emission
@@ -320,7 +320,7 @@ package v1alpha1
 import (
     "context"
     "fmt"
-    "github.com/jordigilh/kubernaut/pkg/authwebhook"
+    "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/webhook"
     "sigs.k8s.io/controller-runtime/pkg/webhook/admission"

@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	karbac "github.com/jordigilh/kubernaut/internal/kubernautagent/rbac"
+	karbac "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/rbac"
 )
 
 var _ = Describe("InteractiveReadiness (#1288)", func() {

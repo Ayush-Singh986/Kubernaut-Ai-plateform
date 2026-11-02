@@ -16,7 +16,7 @@ limitations under the License.
 
 package scenarios
 
-import "github.com/jordigilh/kubernaut/pkg/shared/uuid"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 
 // ambiguousKindConfig returns a scenario where the remediation target uses a
 // Kind that exists in multiple API groups (TestWidget in alpha and beta groups).

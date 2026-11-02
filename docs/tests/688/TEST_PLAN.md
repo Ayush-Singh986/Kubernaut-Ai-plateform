@@ -715,7 +715,7 @@ go test ./test/integration/kubernautagent/tools/custom/... -ginkgo.v -timeout=12
 go test ./test/integration/kubernautagent/tools/custom/... -ginkgo.focus="IT-KA-688-401" -timeout=120s
 
 # Coverage (unit tier)
-go test ./test/unit/kubernautagent/tools/custom/... -coverprofile=coverage.out -coverpkg=github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/custom
+go test ./test/unit/kubernautagent/tools/custom/... -coverprofile=coverage.out -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/custom
 go tool cover -func=coverage.out
 ```
 

@@ -20,10 +20,10 @@ import (
 
 	adksession "google.golang.org/adk/v2/session"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/apifrontend"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/apifrontend"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 func newTestScheme() *runtime.Scheme {

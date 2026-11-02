@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/requestid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/requestid"
 )
 
 type loggerKeyType struct{}

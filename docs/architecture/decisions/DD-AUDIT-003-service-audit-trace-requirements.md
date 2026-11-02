@@ -213,7 +213,7 @@ Kubernaut consists of 12 microservices with different responsibilities. Not all 
 
 ### **Service Inventory**
 
-> **⚠️ HISTORICAL SNAPSHOT (corrected [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **⚠️ HISTORICAL SNAPSHOT (corrected [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > This inventory and the "Decision" breakdown below are the **original v1.0 (Nov 2025) snapshot** —
 > "HolmesGPT API Service" (item 5) refers to the pre-Go-rewrite Python service, and the "12 services"
 > / "9 out of 12" counts predate KA's P0 reclassification, Fleet Metadata Cache, API Frontend, and
@@ -297,7 +297,7 @@ Kubernaut consists of 12 microservices with different responsibilities. Not all 
 
 **Audit Events**:
 
-> **⚠️ CORRECTED (2026-08-02, [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **⚠️ CORRECTED (2026-08-02, [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > hyphenated `ai-analysis.*` event types below (an early, pre-implementation naming draft) do not
 > exist anywhere in the codebase — verified via `grep -rn "ai-analysis\." pkg/aianalysis/`, zero
 > matches. The real event types are the unhyphenated `aianalysis.*` ones, defined in
@@ -314,7 +314,7 @@ Kubernaut consists of 12 microservices with different responsibilities. Not all 
 
 > **Updated (2026-08-18, [DD-AA-KA-001](DD-AA-KA-001-agentsession-crd-http-removal.md) /
 > [BR-AA-KA-065](../../requirements/BR-AA-KA-065-agentsession-watch-design.md) / issue
-> [#2170](https://github.com/jordigilh/kubernaut/issues/2170))**: BR-AA-KA-064's async HTTP
+> [#2170](https://github.com/Ayush-Singh986/kubernaut/issues/2170))**: BR-AA-KA-064's async HTTP
 > submit/poll design (and this table's original `BR-AA-KA-064` citation) is superseded by
 > BR-AA-KA-065's `AgentSession` CRD. The event *types* and their firing call sites
 > (`pkg/aianalysis/handlers/investigating.go`) are unchanged, but their meaning shifted:
@@ -328,7 +328,7 @@ Kubernaut consists of 12 microservices with different responsibilities. Not all 
 >   `RecordAIAgentSessionLost`) is **retired, not repurposed**: its sole production caller,
 >   `handleSessionLost`, was deleted along with the regeneration-cap mechanism it audited
 >   (confirmed root cause of
->   [#2080](https://github.com/jordigilh/kubernaut/issues/2080)/[#2081](https://github.com/jordigilh/kubernaut/issues/2081)).
+>   [#2080](https://github.com/Ayush-Singh986/kubernaut/issues/2080)/[#2081](https://github.com/Ayush-Singh986/kubernaut/issues/2081)).
 >   The constant and method were deleted from `pkg/aianalysis/audit/audit.go` (2026-08-18), along
 >   with the now-pointless no-op implementations in three test doubles
 >   (`pkg/aianalysis/investigating_handler_test.go`,
@@ -376,7 +376,7 @@ this extension adds no synchronous audit acknowledgment or retention-policy chan
   (`pkg/aianalysis/audit/audit.go`, DD-AUDIT-004) — fields are `Phase`, `ApprovalRequired`,
   `ApprovalReason`, `DegradedMode`, `WarningsCount`, `Confidence`, `WorkflowID`,
   `TargetInOwnerChain`, `Reason`, `SubReason`. The illustrative JSON below is **stale**
-  (corrected [#1806](https://github.com/jordigilh/kubernaut/issues/1806)): there is no
+  (corrected [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): there is no
   `provider_data`/`provider` wrapper or `analysis_id` field in the real payload — that shape
   predates the actual DD-AUDIT-004 V2.0 implementation. Kept only as a historical illustration
   of the original design intent, not the real schema:
@@ -617,7 +617,7 @@ this extension adds no synchronous audit acknowledgment or retention-policy chan
 
 ---
 
-### **NO Audit Traces Needed (3 of the 4 services below — #11 Kubernaut Agent is P0 MUST, corrected [#1806](https://github.com/jordigilh/kubernaut/issues/1806); kept in this section only to preserve stable numbering with the Related Decisions/cross-links below)**
+### **NO Audit Traces Needed (3 of the 4 services below — #11 Kubernaut Agent is P0 MUST, corrected [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806); kept in this section only to preserve stable numbering with the Related Decisions/cross-links below)**
 
 ---
 
@@ -705,7 +705,7 @@ context_api:
 
 #### 11. Kubernaut Agent (KA) Service ✅
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This
 > subsection previously described the pre-Go-rewrite HolmesGPT API as a thin, stateless **proxy** with
 > **NO audit traces needed**, on the theory that the caller (AI Analysis Controller) was solely
 > responsible for auditing LLM interactions. That was already contradicted elsewhere in this very
@@ -818,7 +818,7 @@ context_api:
 
 ## 🎯 **Implementation Priority**
 
-> **⚠️ HISTORICAL ROADMAP (corrected [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **⚠️ HISTORICAL ROADMAP (corrected [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > This "Implementation Priority" phasing predates Kubernaut Agent (KA)'s P0 reclassification (v1.3)
 > and Fleet Metadata Cache's addition (v2.3) — Phase 1 below is missing KA (should be 9 services, not
 > 8) and Phase 3 wrongly lists "HolmesGPT API Service" among the no-audit services (corrected inline
@@ -1077,7 +1077,7 @@ The reconstruction pipeline (`pkg/datastorage/reconstruction/`) MUST:
 
 DD-AUDIT-003 v2.0 narrative describes KA as P0 MUST (via the `aiagent` category, v1.3 update). The summary table at Section "Summary Table" correctly lists Kubernaut Agent (KA) Service as P0 MUST with `aiagent.*` events emitted by KA (per v1.3 clarification).
 
-**Correction (2026-08-02, [#1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This note's original "No action needed" conclusion only checked the narrative-vs-table wording — it missed that §11 ("HolmesGPT API Service ❌") still had a full "NO audit traces needed" verdict and rationale, directly contradicting the Summary Table it claims to agree with. §11, the Service Inventory / Decision section, the "SOC2 Compliance Event" JSON sample, and the "Implementation Priority" Phase 1/3 roadmap have all now been corrected in place (see their own inline notes). Action **was** needed; it is done as of this pass.
+**Correction (2026-08-02, [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This note's original "No action needed" conclusion only checked the narrative-vs-table wording — it missed that §11 ("HolmesGPT API Service ❌") still had a full "NO audit traces needed" verdict and rationale, directly contradicting the Summary Table it claims to agree with. §11, the Service Inventory / Decision section, the "SOC2 Compliance Event" JSON sample, and the "Implementation Priority" Phase 1/3 roadmap have all now been corrected in place (see their own inline notes). Action **was** needed; it is done as of this pass.
 
 ## API Frontend (AF) Event Catalog
 
@@ -1113,7 +1113,7 @@ Fleet cluster provenance: events emitted during RR creation (`rr.created`, `rr.d
 > This DD remains authoritative for the system-wide MUST/SHOULD/NO audit
 > decision (see Summary Table above), not for KA's individual event names.
 
-In v1.3 (issue [#433](https://github.com/jordigilh/kubernaut/issues/433), Kubernaut Agent Go rewrite), documentation and operational context that referred to **HolmesGPT API (HAPI)** as the runtime for `aiagent.*` events should be read as **Kubernaut Agent (KA)** unless the text explicitly describes the legacy Python HAPI service. KA is the **authoritative emitter** for the `aiagent` category in v1.3.
+In v1.3 (issue [#433](https://github.com/Ayush-Singh986/kubernaut/issues/433), Kubernaut Agent Go rewrite), documentation and operational context that referred to **HolmesGPT API (HAPI)** as the runtime for `aiagent.*` events should be read as **Kubernaut Agent (KA)** unless the text explicitly describes the legacy Python HAPI service. KA is the **authoritative emitter** for the `aiagent` category in v1.3.
 
 **Actor fields (KA)**:
 

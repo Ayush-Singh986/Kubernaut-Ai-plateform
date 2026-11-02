@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-12
-**Issue**: [#1415](https://github.com/jordigilh/kubernaut/issues/1415)
+**Issue**: [#1415](https://github.com/Ayush-Singh986/kubernaut/issues/1415)
 **Related**: ADR-022 (AF SA unified security model), ADR-040 (RAR architecture)
 
 ## Context
@@ -86,7 +86,7 @@ Rejected: Console needs the MCP path for legitimate human-driven approvals. Remo
 
 - A2A tool count drops from 24 to 23 (test assertions updated)
 - Users cannot approve via chat — must use Console UI buttons
-- Console team must implement MCP routing for Approve/Reject (tracked in `jordigilh/kubernaut-demo-console#2`)
+- Console team must implement MCP routing for Approve/Reject (tracked in `Ayush-Singh986/kubernaut-demo-console#2`)
 
 ### Stale Documentation Identified
 

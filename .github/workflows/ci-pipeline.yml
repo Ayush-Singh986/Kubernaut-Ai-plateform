@@ -247,7 +247,7 @@ jobs:
         run: |
           echo "Scanning dependency licenses..."
           go-licenses check ./... \
-            --ignore=github.com/jordigilh/kubernaut \
+            --ignore=github.com/Ayush-Singh986/kubernaut \
             --ignore=github.com/segmentio/asm \
             --ignore=github.com/Alcova-AI/adk-anthropic-go \
             --logtostderr=false
@@ -257,7 +257,7 @@ jobs:
         if: always()
         run: |
           go-licenses report ./... \
-            --ignore=github.com/jordigilh/kubernaut \
+            --ignore=github.com/Ayush-Singh986/kubernaut \
             --ignore=github.com/segmentio/asm \
             --ignore=github.com/Alcova-AI/adk-anthropic-go \
             --logtostderr=false \
@@ -719,7 +719,7 @@ jobs:
               *) source_branch="main" ;;
             esac
             ref="${source_branch}"
-            git ls-remote --exit-code "https://github.com/jordigilh/kubernaut-operator.git" "refs/heads/${source_branch}" >/dev/null
+            git ls-remote --exit-code "https://github.com/Ayush-Singh986/kubernaut-operator.git" "refs/heads/${source_branch}" >/dev/null
           fi
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
           echo "requested_ref=${ref}" >> "$GITHUB_OUTPUT"
@@ -729,7 +729,7 @@ jobs:
       - name: Checkout operator at resolved ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: jordigilh/kubernaut-operator
+          repository: Ayush-Singh986/kubernaut-operator
           ref: ${{ steps.resolve.outputs.ref }}
           path: kubernaut-operator
           fetch-depth: 0
@@ -763,7 +763,7 @@ jobs:
       - name: Checkout operator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: jordigilh/kubernaut-operator
+          repository: Ayush-Singh986/kubernaut-operator
           ref: ${{ needs.resolve-operator.outputs.operator_sha }}
           path: kubernaut-operator
           fetch-depth: 0
@@ -826,7 +826,7 @@ jobs:
       - name: Checkout operator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: jordigilh/kubernaut-operator
+          repository: Ayush-Singh986/kubernaut-operator
           ref: ${{ needs.resolve-operator.outputs.operator_sha }}
           path: kubernaut-operator
           fetch-depth: 0
@@ -859,13 +859,13 @@ jobs:
           AMD64_DIGEST="sha256:$(cut -d ' ' -f1 kubernaut-operator-amd64.tar.sha256)"
           ARM64_DIGEST="sha256:$(cut -d ' ' -f1 kubernaut-operator-arm64.oci.sha256)"
           cat > operator-provenance.json <<EOF
-          {"repository":"jordigilh/kubernaut-operator","requestedRef":"${{ needs.resolve-operator.outputs.requested_ref }}","resolvedSHA":"${{ needs.resolve-operator.outputs.operator_sha }}","sourceBranch":"${{ needs.resolve-operator.outputs.source_branch }}","imageRef":"${{ needs.resolve-operator.outputs.operator_image }}","imageDigests":{"amd64":"$AMD64_DIGEST","arm64":"$ARM64_DIGEST"},"profile":"generic-kind-v1.6","workflowURL":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+          {"repository":"Ayush-Singh986/kubernaut-operator","requestedRef":"${{ needs.resolve-operator.outputs.requested_ref }}","resolvedSHA":"${{ needs.resolve-operator.outputs.operator_sha }}","sourceBranch":"${{ needs.resolve-operator.outputs.source_branch }}","imageRef":"${{ needs.resolve-operator.outputs.operator_image }}","imageDigests":{"amd64":"$AMD64_DIGEST","arm64":"$ARM64_DIGEST"},"profile":"generic-kind-v1.6","workflowURL":"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
           EOF
           cp operator-provenance.json operator-artifacts/
           cp operator-bootstrap-rendered.yaml operator-dependencies-rendered.yaml kubernaut-operator-amd64.tar kubernaut-operator-amd64.tar.sha256 kubernaut-operator-arm64.oci kubernaut-operator-arm64.oci.sha256 operator-artifacts/
           cat > operator-artifacts/candidate-manifest.yaml <<EOF
           schemaVersion: 1
-          repository: jordigilh/kubernaut-operator
+          repository: Ayush-Singh986/kubernaut-operator
           sha: ${{ needs.resolve-operator.outputs.operator_sha }}
           image:
             ref: ${{ needs.resolve-operator.outputs.operator_image }}
@@ -1861,7 +1861,7 @@ jobs:
     if: always() && needs.detect-changes.outputs.code_changed == 'true' && needs.summary.result == 'failure'
     continue-on-error: true
     runs-on: ubuntu-latest
-    container: quay.io/jordigilh/engram:latest
+    container: quay.io/Ayush-Singh986/engram:latest
     permissions:
       actions: read
       contents: read

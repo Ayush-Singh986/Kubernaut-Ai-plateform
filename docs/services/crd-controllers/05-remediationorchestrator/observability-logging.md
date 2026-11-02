@@ -20,10 +20,10 @@ import (
     "context"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    alertprocessorv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    alertprocessorv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -424,7 +424,7 @@ package controller
 import (
     "context"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
 
     "go.opentelemetry.io/otel"
     "go.opentelemetry.io/otel/attribute"
@@ -846,8 +846,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/log/zap"
     "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-    remediationv1 "github.com/jordigilh/kubernaut/pkg/apis/remediation/v1"
-    "github.com/jordigilh/kubernaut/pkg/remediationorchestrator"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediation/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator"
 )
 
 var (

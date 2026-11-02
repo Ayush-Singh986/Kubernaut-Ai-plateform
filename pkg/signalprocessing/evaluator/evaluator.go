@@ -27,9 +27,9 @@ import (
 	rego "github.com/open-policy-agent/opa/v1/rego"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 const (

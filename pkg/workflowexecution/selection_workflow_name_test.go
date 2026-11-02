@@ -25,8 +25,8 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	weaudit "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
 )
 
 var _ = Describe("Issue #1033 Gap 2: workflow_name in selection audit (BR-AUDIT-005)", func() {

@@ -56,7 +56,7 @@ pkg/cache/redis/
 **Usage Example**:
 ```go
 // Data Storage embedding cache
-import rediscache "github.com/jordigilh/kubernaut/pkg/cache/redis"
+import rediscache "github.com/Ayush-Singh986/kubernaut/pkg/cache/redis"
 
 // Create Redis client
 client := rediscache.NewClient(opts, logger)

@@ -29,9 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fleettest"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fleettest"
 )
 
 var _ = Describe("EM Fleet Routing Integration (BR-FLEET-054)", func() {

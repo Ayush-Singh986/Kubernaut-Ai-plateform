@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository/txretry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/txretry"
 )
 
 var _ = Describe("Serializable Transaction Retry [BR-WORKFLOW-007]", func() {

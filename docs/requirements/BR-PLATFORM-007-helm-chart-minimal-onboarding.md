@@ -4,7 +4,7 @@
 **Category**: Platform
 **Priority**: P2
 **Target Version**: V1.5
-**Status**: ✅ Implemented (merged via [PR #1790](https://github.com/jordigilh/kubernaut/pull/1790),
+**Status**: ✅ Implemented (merged via [PR #1790](https://github.com/Ayush-Singh986/kubernaut/pull/1790),
 2026-07-31)
 **Date**: 2026-07-25 (lean reconstruction 2026-07-29 — see Document Note below)
 
@@ -141,12 +141,12 @@ security/stability-relevant opt-out gaps identified during this effort.
   design and PR-by-PR implementation plan for every Functional Requirement above.
 - **Interacts with**: BR-PLATFORM-009 (Helm Chart Gateway/APIFrontend Ingress Parity) — see
   DD-PLATFORM-006 Decision Area 9.
-- **Tracked in**: [Issue #1743](https://github.com/jordigilh/kubernaut/issues/1743).
+- **Tracked in**: [Issue #1743](https://github.com/Ayush-Singh986/kubernaut/issues/1743).
 
 ---
 
 **Document Status**: ✅ Implemented — merged to `main` via
-[PR #1790](https://github.com/jordigilh/kubernaut/pull/1790), tracking issue
-[#1743](https://github.com/jordigilh/kubernaut/issues/1743) closed. FR-12 superseded per the note
+[PR #1790](https://github.com/Ayush-Singh986/kubernaut/pull/1790), tracking issue
+[#1743](https://github.com/Ayush-Singh986/kubernaut/issues/1743) closed. FR-12 superseded per the note
 above; all other Functional Requirements implemented as designed in DD-PLATFORM-006.
 **Priority**: P2

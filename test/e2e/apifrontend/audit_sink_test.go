@@ -19,10 +19,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 var _ = Describe("DS Audit Sink (G8)", Label("e2e", "phase4", "g8"), func() {

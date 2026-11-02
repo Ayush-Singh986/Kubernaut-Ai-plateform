@@ -13,8 +13,8 @@ import (
 
 	"google.golang.org/adk/v2/model"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 var _ = Describe("Model Factory", func() {

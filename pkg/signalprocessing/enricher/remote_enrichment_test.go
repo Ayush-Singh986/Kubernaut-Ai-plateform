@@ -31,10 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fleettest"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/enricher"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fleettest"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/enricher"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 var _ = Describe("K8sEnricher Remote Enrichment (BR-INTEGRATION-054)", func() {

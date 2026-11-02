@@ -7,7 +7,7 @@
 
 ---
 
-> **⚠️ NEVER BUILT / DEFERRED (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not
+> **⚠️ NEVER BUILT / DEFERRED (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not
 > corrected here)**: This entire proposal (`ValidateAndCorrectDependencies`, `dependency_validator_ai.go`,
 > `CycleCorrectionAttempts`, `AnalyzeWithCorrection`) was never implemented — repo-wide search finds zero
 > matches for any of these symbols outside this document. Per `BR_MAPPING.md` v1.3 and `DD-AIANALYSIS-005`,

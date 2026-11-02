@@ -28,8 +28,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
-	llmclient "github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	llmclient "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 var _ = Describe("Auth Headers Integration — #417", func() {

@@ -29,8 +29,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
-	"github.com/jordigilh/kubernaut/pkg/shared/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/transport"
 )
 
 // BR-GATEWAY-190: Inter-service HTTP clients need retry/circuit-breaker

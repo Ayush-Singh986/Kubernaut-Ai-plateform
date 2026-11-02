@@ -9,7 +9,7 @@ TP-KA-1329-V1
 ## 2. References
 
 - **Business Requirement**: BR-PLATFORM-1329
-- **Issue**: https://github.com/jordigilh/kubernaut/issues/1329
+- **Issue**: https://github.com/Ayush-Singh986/kubernaut/issues/1329
 - **Operator Issue**: kubernaut-operator#142
 - **Related**: AF implementation in `pkg/apifrontend/config/config.go` (ShutdownConfig)
 

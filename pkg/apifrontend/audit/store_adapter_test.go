@@ -8,9 +8,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 type capturingStore struct {

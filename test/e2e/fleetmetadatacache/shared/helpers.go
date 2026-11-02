@@ -31,7 +31,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
 )
 
 // ScopeCheck queries FMC's real /api/v1/scope/check endpoint and returns the

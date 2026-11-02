@@ -57,7 +57,7 @@ This test plan validates the structural removal of `kubernaut_approve` from the 
 ### 2.3 Cross-References
 
 - [DD-AF-006](../../architecture/decisions/DD-AF-006-approval-consent-guard.md)
-- Console sub-issue: `jordigilh/kubernaut-demo-console#2`
+- Console sub-issue: `Ayush-Singh986/kubernaut-demo-console#2`
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 
 ---

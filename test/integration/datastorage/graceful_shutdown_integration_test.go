@@ -31,11 +31,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/config"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	"github.com/jordigilh/kubernaut/pkg/shared/health"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/health"
 )
 
 // TDD RED PHASE: These tests define DD-007 graceful shutdown requirements
@@ -1071,7 +1071,7 @@ func createTestServerWithAccess() (*httptest.Server, *httptest.Server, *server.S
 func createTestServerWithBackends() (*httptest.Server, *httptest.Server, *server.Server, *shutdownBackend) {
 	provisionCtx, provisionCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer provisionCancel()
-	backend, err := newShutdownBackend(provisionCtx, "quay.io/jordigilh/redis:7-alpine")
+	backend, err := newShutdownBackend(provisionCtx, "quay.io/Ayush-Singh986/redis:7-alpine")
 	Expect(err).ToNot(HaveOccurred(), "provisioning owned shutdown backends")
 	DeferCleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)

@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository/sqlutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/sqlutil"
 )
 
 func TestSqlutil(t *testing.T) {

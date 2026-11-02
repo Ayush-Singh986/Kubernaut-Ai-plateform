@@ -27,8 +27,8 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Issue #1600 / BR-AI-086: Azure OpenAI support wiring — end-to-end from

@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/response"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/response"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 func (h *handler) handleOpenAI(w http.ResponseWriter, r *http.Request) {

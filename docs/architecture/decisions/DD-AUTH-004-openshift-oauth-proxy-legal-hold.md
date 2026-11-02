@@ -139,7 +139,7 @@ spec:
       # MAIN APPLICATION CONTAINER
       # ========================================
       - name: datastorage
-        image: quay.io/jordigilh/kubernaut-datastorage:v1.0.0
+        image: quay.io/Ayush-Singh986/kubernaut-datastorage:v1.0.0
         ports:
         - containerPort: 8080
           name: http

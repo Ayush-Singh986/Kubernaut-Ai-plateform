@@ -456,7 +456,7 @@ import (
     "encoding/json"
     
     "github.com/google/go-containerregistry/pkg/crane"
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/v1alpha1"
     ctrl "sigs.k8s.io/controller-runtime"
 )
 

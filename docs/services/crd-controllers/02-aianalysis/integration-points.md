@@ -4,7 +4,7 @@
 **Last Updated**: August 2026
 **Status**: ✅ Implemented and in production (V1.0)
 
-> **Rewritten** ([#1806](https://github.com/jordigilh/kubernaut/issues/1806)): the previous version
+> **Rewritten** ([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): the previous version
 > of this document (v2.2, dated December 2025) described a synchronous `POST /api/v1/incident/analyze`
 > call to "HolmesGPT-API" on port 8080 with a flat JSON body, a `pkg/clients/holmesgpt/` Go client,
 > and an internal `search_workflow_catalog` toolkit call to Data Storage — none of which reflect the
@@ -158,7 +158,7 @@ AIAnalysis calls Kubernaut Agent through a generated OpenAPI client, not a hand-
 ```go
 // pkg/agentclient — ogen-generated from internal/kubernautagent/api/openapi.json.
 // NOT pkg/clients/holmesgpt/ (that package does not exist in this repository).
-import "github.com/jordigilh/kubernaut/pkg/agentclient"
+import "github.com/Ayush-Singh986/kubernaut/pkg/agentclient"
 ```
 
 `pkg/aianalysis/handlers.AgentClientInterface` (`pkg/aianalysis/handlers/interfaces.go`) is the
@@ -431,7 +431,7 @@ for the authentication pattern.
 
 ```go
 // pkg/agentclient — ogen-generated from internal/kubernautagent/api/openapi.json
-import "github.com/jordigilh/kubernaut/pkg/agentclient"
+import "github.com/Ayush-Singh986/kubernaut/pkg/agentclient"
 ```
 
 Regenerate with the project's standard ogen invocation against

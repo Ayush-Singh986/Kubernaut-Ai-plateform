@@ -1,7 +1,7 @@
 # Spike: PyAgentSpec + LangGraph Adapter Validation
 
 **Date**: May 19, 2026 (initial), May 23, 2026 (follow-up)
-**Status**: COMPLETED — technique validated; the CRD-level runtime-selection model it targeted is superseded by [#1536](https://github.com/jordigilh/kubernaut/issues/1536)
+**Status**: COMPLETED — technique validated; the CRD-level runtime-selection model it targeted is superseded by [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536)
 **Duration**: 2 sessions
 **Relates to**: [PROPOSAL-EXT-005](../proposals/PROPOSAL-EXT-005-oracle-agent-spec.md) (superseded)
 **Code**: [pyagentspec-langgraph/](pyagentspec-langgraph/)

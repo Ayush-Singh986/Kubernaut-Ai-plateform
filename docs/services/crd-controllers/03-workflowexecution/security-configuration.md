@@ -300,7 +300,7 @@ import (
     "fmt"
     "regexp"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
 )
 
 var (
@@ -354,7 +354,7 @@ package controller
 import (
     "fmt"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
 
     "k8s.io/client-go/tools/record"
 )
@@ -395,7 +395,7 @@ package controller
 import (
     "context"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
 
     "github.com/go-logr/logr"
 )
@@ -444,7 +444,7 @@ import (
     "context"
     "fmt"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
     tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -619,7 +619,7 @@ spec:
 
 ### Spawned Execution Pod Security Context (BR-WE-018)
 
-The section above hardens the **WE controller's own pod**. This section covers the pods the controller *spawns* to execute remediation workflows — Kubernetes Jobs (`JobExecutor.buildJob`) and Tekton PipelineRuns (`TektonExecutor.BuildPipelineRun`) — which carry the same restricted profile as of **BR-WE-018** (closing GAP-03 from the GA Readiness Audit, [#1505](https://github.com/jordigilh/kubernaut/issues/1505)).
+The section above hardens the **WE controller's own pod**. This section covers the pods the controller *spawns* to execute remediation workflows — Kubernetes Jobs (`JobExecutor.buildJob`) and Tekton PipelineRuns (`TektonExecutor.BuildPipelineRun`) — which carry the same restricted profile as of **BR-WE-018** (closing GAP-03 from the GA Readiness Audit, [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505)).
 
 **This profile is intentionally non-configurable.** There is no CRD field to relax it to a "baseline" profile. See [BR-WE-018](../../../requirements/BR-WE-018-execution-pod-security-hardening.md) for the full rationale, including why a configurable escape hatch was deliberately rejected (an AI/LLM-driven `WorkflowExecution` creation pipeline should not have a runtime lever to weaken pod hardening).
 

@@ -1,6 +1,6 @@
 # Test Plan — #1477: Strip Namespace for Cluster-Scoped Resources
 
-**IEEE 829 Compliant** | **Issue**: [#1477](https://github.com/jordigilh/kubernaut/issues/1477) | **Milestone**: v1.6
+**IEEE 829 Compliant** | **Issue**: [#1477](https://github.com/Ayush-Singh986/kubernaut/issues/1477) | **Milestone**: v1.6
 
 ## 1. Test Plan Identifier
 

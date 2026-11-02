@@ -80,7 +80,7 @@ Following `TESTING_GUIDELINES.md` defense-in-depth strategy:
 **Implementation Hint**:
 ```go
 import (
-    holmesgpt "github.com/jordigilh/kubernaut/pkg/holmesgpt/client"
+    holmesgpt "github.com/Ayush-Singh986/kubernaut/pkg/holmesgpt/client"
 )
 
 It("should extract needs_human_review=true from HAPI response", func() {
@@ -173,7 +173,7 @@ It("should extract needs_human_review=true from HAPI response", func() {
 **Implementation Hint**:
 ```go
 import (
-    holmesgpt "github.com/jordigilh/kubernaut/pkg/holmesgpt/client"
+    holmesgpt "github.com/Ayush-Singh986/kubernaut/pkg/holmesgpt/client"
 )
 
 DescribeTable("should map all human_review_reason enum values",
@@ -236,7 +236,7 @@ DescribeTable("should map all human_review_reason enum values",
 **Implementation Hint**:
 ```go
 import (
-    holmesgpt "github.com/jordigilh/kubernaut/pkg/holmesgpt/client"
+    holmesgpt "github.com/Ayush-Singh986/kubernaut/pkg/holmesgpt/client"
 )
 
 It("should emit human_review_required metric with reason label", func() {

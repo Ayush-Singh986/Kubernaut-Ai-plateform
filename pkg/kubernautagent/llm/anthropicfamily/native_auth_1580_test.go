@@ -28,8 +28,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
 )
 
 // Issue #1580 / BR-AI-086 M2: native Anthropic API-key auth mode, alongside

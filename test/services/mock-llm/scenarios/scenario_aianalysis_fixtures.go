@@ -20,7 +20,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 )
 
 var rePromptSeverity = regexp.MustCompile(`(?i)(?:^|[^a-z0-9_])["']?severity["']?\s*[:=]\s*["']?([a-z0-9_-]+)`)

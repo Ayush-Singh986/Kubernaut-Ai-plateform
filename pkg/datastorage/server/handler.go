@@ -23,9 +23,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/oci"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/oci"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // RemediationHistoryQuerier defines the data access interface for remediation

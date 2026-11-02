@@ -269,8 +269,8 @@ type MCPServerConfig struct {
 
 ## References
 
-- [#508](https://github.com/jordigilh/kubernaut/issues/508): Kubernetes toolset scope
-- [#509](https://github.com/jordigilh/kubernaut/issues/509): Prometheus toolset scope
+- [#508](https://github.com/Ayush-Singh986/kubernaut/issues/508): Kubernetes toolset scope
+- [#509](https://github.com/Ayush-Singh986/kubernaut/issues/509): Prometheus toolset scope
 - [DD-KA-017](../DD-KA-017-three-step-workflow-discovery-integration.md): Three-step workflow discovery
 
 ---

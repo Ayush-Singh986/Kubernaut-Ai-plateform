@@ -28,7 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
 )
 
 // RateLimitConfig configures per-IP rate limiting.

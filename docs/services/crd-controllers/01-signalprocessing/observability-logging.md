@@ -91,7 +91,7 @@ import (
     "context"
     "time"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -233,7 +233,7 @@ package controller
 import (
     "context"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     "go.opentelemetry.io/otel"
     "go.opentelemetry.io/otel/attribute"
@@ -629,8 +629,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/metrics/server"
     "sigs.k8s.io/controller-runtime/pkg/healthz"
 
-    remediationprocessingv1 "github.com/jordigilh/kubernaut/pkg/apis/remediationprocessing/v1"
-    "github.com/jordigilh/kubernaut/pkg/signalprocessing"
+    remediationprocessingv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/remediationprocessing/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing"
 )
 
 var (

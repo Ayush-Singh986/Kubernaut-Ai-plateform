@@ -18,8 +18,8 @@ Detected at:
   >  sigs.k8s.io/controller-runtime/pkg/log.(*delegatingLogSink).WithName(0x14000279400, {0x10658b373, 0x14})
   >  sigs.k8s.io/controller-runtime/pkg/client.newClient(0x1400095fcd8?, {0x0, 0x1400012a070, {0x0, 0x0}, 0x0, 0x0})
   >  sigs.k8s.io/controller-runtime/pkg/client.New(0x10730ca30?, {0x0, 0x1400012a070, {0x0, 0x0}, 0x0, 0x0})
-  >  github.com/jordigilh/kubernaut/test/integration/gateway.SetupK8sTestClient({0x1072faff8?, 0x140003afb90?})
-  >       /Users/jgil/go/src/github.com/jordigilh/kubernaut/test/integration/gateway/helpers.go:171 +0x84
+  >  github.com/Ayush-Singh986/kubernaut/test/integration/gateway.SetupK8sTestClient({0x1072faff8?, 0x140003afb90?})
+  >       /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut/test/integration/gateway/helpers.go:171 +0x84
 ```
 
 ### **Root Cause**

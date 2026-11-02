@@ -6,7 +6,7 @@ TP-FLEET-1511
 
 ## 2. References
 
-- **Issue**: [#1511](https://github.com/jordigilh/kubernaut/issues/1511)
+- **Issue**: [#1511](https://github.com/Ayush-Singh986/kubernaut/issues/1511)
 - **Business Requirement**: [BR-FLEET-003](../../requirements/BR-FLEET-003-cluster-scoped-workflow-targeting.md)
 - **Design Decision**: [DD-FLEET-002](../../architecture/decisions/DD-FLEET-002-cluster-scoped-workflow-targeting.md) (Alternative 3, approved)
 - **Related**: DD-FLEET-001, ADR-068, BR-FLEET-002, BR-FLEET-054

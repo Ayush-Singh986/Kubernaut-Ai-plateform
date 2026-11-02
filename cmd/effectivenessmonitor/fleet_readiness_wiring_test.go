@@ -24,9 +24,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/effectivenessmonitor"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	mockgw "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/effectivenessmonitor"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	mockgw "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 type testClusterRegistry struct {

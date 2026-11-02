@@ -51,8 +51,8 @@ ambiguous monitoring endpoints.
 
 - [BR-PLATFORM-005](../../requirements/BR-PLATFORM-005-helm-chart-operator-security-parity.md): Helm chart security and NetworkPolicy parity
 - [BR-PLATFORM-009](../../requirements/BR-PLATFORM-009-helm-chart-gateway-apifrontend-ingress-parity.md): Gateway/APIFrontend ingress parity
-- [Issue #2432](https://github.com/jordigilh/kubernaut/issues/2432): Gateway NetworkPolicy AlertManager namespace derivation
-- [Issue #2162](https://github.com/jordigilh/kubernaut/issues/2162): `gateway.enabled` component toggle
+- [Issue #2432](https://github.com/Ayush-Singh986/kubernaut/issues/2432): Gateway NetworkPolicy AlertManager namespace derivation
+- [Issue #2162](https://github.com/Ayush-Singh986/kubernaut/issues/2162): `gateway.enabled` component toggle
 
 ### 2.2 Cross-References
 

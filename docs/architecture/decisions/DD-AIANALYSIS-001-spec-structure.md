@@ -30,7 +30,7 @@
 - Replaced generic `map[string]string` with typed structs
 - Aligned with RemediationRequest and RemediationProcessing data flow
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: The
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: The
 > "Decision" section's `AIAnalysisSpec`/`SignalData` code sample below was never updated to match either (a)
 > this document's own Version 1.1 changelog entry above, which says `LLMProvider`, `LLMModel`, `MaxTokens`,
 > `Temperature`, and `IncludeHistory` were removed, or (b) the real current spec. Verified against
@@ -40,7 +40,7 @@
 > in the CRD types. Rewriting the "Decision" example to match the real, current CRD shape is out of scope
 > for this terminology-only sweep.
 >
-> **Superseded field name** (2026-08, [Issue #2176](https://github.com/jordigilh/kubernaut/issues/2176) /
+> **Superseded field name** (2026-08, [Issue #2176](https://github.com/Ayush-Singh986/kubernaut/issues/2176) /
 > [DD-TIMEOUT-002](DD-TIMEOUT-002-child-crd-timeout-self-enforcement.md)): the dead-schema `TimeoutConfig
 > *AIAnalysisTimeoutConfig` referenced above (never populated by RO, never read by any handler) was
 > replaced outright by `TimesOutAt *metav1.Time`, a single absolute deadline uniformly referencable

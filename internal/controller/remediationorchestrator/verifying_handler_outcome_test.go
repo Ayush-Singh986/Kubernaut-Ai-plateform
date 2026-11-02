@@ -32,14 +32,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	prodaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	prodcontroller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	prodaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 var _ = Describe("Issue #1033 Gap 1: VerifyingHandler completion audit outcome (BR-AUDIT-005)", func() {

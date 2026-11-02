@@ -1,6 +1,6 @@
 # Test Plan — #1309: Auto-Detect Auth Mode from JWT Provider Presence
 
-**IEEE 829 Compliant** | **Issue**: [#1309](https://github.com/jordigilh/kubernaut/issues/1309)
+**IEEE 829 Compliant** | **Issue**: [#1309](https://github.com/Ayush-Singh986/kubernaut/issues/1309)
 
 ## 1. Test Plan Identifier
 

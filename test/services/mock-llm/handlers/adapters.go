@@ -19,9 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/response"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/response"
 )
 
 const (

@@ -19,8 +19,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // paramValidationSelfcorrectScenario is a stateful scenario that simulates

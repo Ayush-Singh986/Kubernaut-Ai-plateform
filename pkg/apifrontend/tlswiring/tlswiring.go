@@ -24,8 +24,8 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // ConfigureServer sets up required TLS on the API server based on certDir.

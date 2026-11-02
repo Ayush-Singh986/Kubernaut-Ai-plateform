@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-24
 **Status**: ACCEPTED
-**Issue**: [#176](https://github.com/jordigilh/kubernaut/issues/176)
+**Issue**: [#176](https://github.com/Ayush-Singh986/kubernaut/issues/176)
 **Supersedes**: BR-GATEWAY-020 (CRD Namespace Handling), DD-GATEWAY-007 (Fallback Namespace Strategy)
 
 ## Context

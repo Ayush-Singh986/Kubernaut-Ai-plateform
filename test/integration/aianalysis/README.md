@@ -71,7 +71,7 @@ podman-compose -f test/integration/aianalysis/podman-compose.yml down -v
 The `test/infrastructure/aianalysis.go` package provides programmatic helpers that are **automatically called** in `suite_test.go`:
 
 ```go
-import "github.com/jordigilh/kubernaut/test/infrastructure"
+import "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 // Called automatically in SynchronizedBeforeSuite (process 1 only)
 err := infrastructure.StartAIAnalysisIntegrationInfrastructure(GinkgoWriter)

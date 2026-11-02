@@ -25,16 +25,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/config"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/helpers"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/status"
-	"github.com/jordigilh/kubernaut/pkg/remediationrequest"
+	aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/helpers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/status"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationrequest"
 )
 
 const processingRequeueInterval = 10 * time.Second

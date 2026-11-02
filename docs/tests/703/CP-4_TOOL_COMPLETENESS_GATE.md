@@ -20,9 +20,9 @@ CP-4 validates that all three MCP tools (`kubernaut_investigate`, `kubernaut_enr
 - **Framework**: Ginkgo/Gomega BDD
 - **Key Imports**:
   ```go
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/session"
-  "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/session"
+  "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
   ```
 - **Mocks**:
   - `MockEnrichmentPipeline`: Returns configurable enrichment results

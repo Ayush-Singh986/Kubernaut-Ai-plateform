@@ -20,14 +20,14 @@ Kubernaut uses two Quay.io organizations for container image storage. Confusion 
 
 | Registry | Purpose | Usage | Access |
 |---|---|---|---|
-| **`quay.io/jordigilh/`** | Development & Testing | Local development, integration tests, CI builds | Public/Private (development team) |
+| **`quay.io/Ayush-Singh986/`** | Development & Testing | Local development, integration tests, CI builds | Public/Private (development team) |
 | **`quay.io/kubernaut/`** | Staging & Production | Staging environments, production deployments, releases | Under Kubernaut control |
 
 ---
 
 ## 📋 **Registry Specifications**
 
-### **Registry 1: `quay.io/jordigilh/` (Development)**
+### **Registry 1: `quay.io/Ayush-Singh986/` (Development)**
 
 **Purpose**: Development and testing
 
@@ -40,12 +40,12 @@ Kubernaut uses two Quay.io organizations for container image storage. Confusion 
 
 **Image Naming Convention**:
 ```
-quay.io/jordigilh/<service-name>:<tag>
+quay.io/Ayush-Singh986/<service-name>:<tag>
 
 Examples:
-quay.io/jordigilh/gateway:dev-feature-123
-quay.io/jordigilh/datastorage:test-abc123
-quay.io/jordigilh/must-gather:dev-latest
+quay.io/Ayush-Singh986/gateway:dev-feature-123
+quay.io/Ayush-Singh986/datastorage:test-abc123
+quay.io/Ayush-Singh986/must-gather:dev-latest
 ```
 
 **Access Control**:
@@ -99,7 +99,7 @@ quay.io/kubernaut/must-gather:v1.0.0
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Step 1: Development Build                                    │
-│ Registry: quay.io/jordigilh/                                │
+│ Registry: quay.io/Ayush-Singh986/                                │
 │ Tag: dev-feature-123, dev-abc123, test-xyz                  │
 │ Purpose: Local testing, CI validation                       │
 └───────────────────────┬─────────────────────────────────────┘
@@ -149,8 +149,8 @@ jobs:
     steps:
       - name: Build and push to development registry
         run: |
-          docker build -t quay.io/jordigilh/${SERVICE}:dev-${GITHUB_SHA:0:7} .
-          docker push quay.io/jordigilh/${SERVICE}:dev-${GITHUB_SHA:0:7}
+          docker build -t quay.io/Ayush-Singh986/${SERVICE}:dev-${GITHUB_SHA:0:7} .
+          docker push quay.io/Ayush-Singh986/${SERVICE}:dev-${GITHUB_SHA:0:7}
 ```
 
 ### **Production Releases** (Release Pipeline)
@@ -180,10 +180,10 @@ jobs:
 
 ```
 Is this image for...
-├─ Local development? → quay.io/jordigilh/
-├─ Integration testing? → quay.io/jordigilh/
-├─ CI/CD pipeline? → quay.io/jordigilh/
-├─ Feature branch? → quay.io/jordigilh/
+├─ Local development? → quay.io/Ayush-Singh986/
+├─ Integration testing? → quay.io/Ayush-Singh986/
+├─ CI/CD pipeline? → quay.io/Ayush-Singh986/
+├─ Feature branch? → quay.io/Ayush-Singh986/
 │
 ├─ Staging environment? → quay.io/kubernaut/
 ├─ Production deployment? → quay.io/kubernaut/
@@ -195,12 +195,12 @@ Is this image for...
 
 ## 🔒 **Security & Access Control**
 
-### **`quay.io/jordigilh/` (Development)**
+### **`quay.io/Ayush-Singh986/` (Development)**
 
 **Access Levels**:
 - **Read**: Public (all developers, CI/CD)
 - **Write**: Development team members
-- **Admin**: Repository owner (@jordigilh)
+- **Admin**: Repository owner (@Ayush-Singh986)
 
 **Robot Accounts**:
 - `ci-builder`: Write access for CI/CD pipelines
@@ -221,7 +221,7 @@ Is this image for...
 
 ## 📝 **Image Tagging Strategy**
 
-### **Development Registry** (`quay.io/jordigilh/`)
+### **Development Registry** (`quay.io/Ayush-Singh986/`)
 
 | Tag Pattern | Example | Purpose |
 |---|---|---|

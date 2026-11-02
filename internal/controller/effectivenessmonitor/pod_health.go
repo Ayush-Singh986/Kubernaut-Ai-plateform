@@ -20,7 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/health"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/health"
 )
 
 // FilterActivePods returns only pods that are active workload members:

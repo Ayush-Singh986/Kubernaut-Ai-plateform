@@ -23,8 +23,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	reconstructionpkg "github.com/jordigilh/kubernaut/pkg/datastorage/reconstruction"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	reconstructionpkg "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/reconstruction"
 )
 
 // BR-AUDIT-006: RemediationRequest Reconstruction from Audit Traces

@@ -17,7 +17,7 @@ limitations under the License.
 package response
 
 import (
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
 )
 
 // ========================================

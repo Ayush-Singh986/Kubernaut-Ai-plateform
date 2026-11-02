@@ -6,7 +6,7 @@
 **Category**: Kubernaut Agent (KA) Integration
 **Priority**: P1 (High)
 **Service**: AIAnalysis + KA
-**GitHub Issue**: [#55](https://github.com/jordigilh/kubernaut/issues/55)
+**GitHub Issue**: [#55](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 **Related**: BR-SP-106, DD-WORKFLOW-001, ADR-045
 
 ---
@@ -120,7 +120,7 @@ RO copies sp.Status.SignalMode → aa.Spec.SignalContext.SignalMode
 
 ## Implementation Points
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: The "Go client regen" row's path (`pkg/holmesgpt/client/oas_schemas_gen.go`) and make target (`make generate-holmesgpt-client`) no longer match the codebase — the generated OpenAPI client now lives under `pkg/agentclient/`, and the real make target is `generate-agentclient` (verified against `Makefile`).
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: The "Go client regen" row's path (`pkg/holmesgpt/client/oas_schemas_gen.go`) and make target (`make generate-holmesgpt-client`) no longer match the codebase — the generated OpenAPI client now lives under `pkg/agentclient/`, and the real make target is `generate-agentclient` (verified against `Makefile`).
 >
 > **Additionally verified**: this entire requirements document predates the Kubernaut Agent Go rewrite
 > (`DD-KA-019`, decided 2026-03-04). The "KA Python model", "KA prompt builder", and "KA LLM integration"
@@ -193,6 +193,6 @@ This is a **future enhancement** — v1.0 uses the same approval thresholds rega
 ### Related Documents
 
 - [BR-SP-106: Proactive Signal Mode Classification](BR-SP-106-proactive-signal-mode-classification.md)
-- [Issue #55: Proactive remediation pipeline](https://github.com/jordigilh/kubernaut/issues/55)
+- [Issue #55: Proactive remediation pipeline](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 - [ADR-045: AIAnalysis ↔ Kubernaut Agent Contract](../architecture/decisions/ADR-045-aianalysis-kubernaut-agent-contract.md)
 - [AA Business Requirements](../services/crd-controllers/02-aianalysis/BUSINESS_REQUIREMENTS.md)

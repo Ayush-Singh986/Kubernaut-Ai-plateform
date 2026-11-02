@@ -1,8 +1,8 @@
 # Test Plan: Gateway Discards/Never Captures `apiVersion` for Webhook-Originated Signals
 
-**Issue**: [#2066](https://github.com/jordigilh/kubernaut/issues/2066) (`v1.5.6`, `release/v1.5`)
-**Clone**: [#2067](https://github.com/jordigilh/kubernaut/issues/2067) (`v1.6`, `main`)
-**Related**: [#2061](https://github.com/jordigilh/kubernaut/issues/2061) (Track 1), [#2064](https://github.com/jordigilh/kubernaut/issues/2064) (Track 2 — the AA→KA wire contract this fix now has real data to carry)
+**Issue**: [#2066](https://github.com/Ayush-Singh986/kubernaut/issues/2066) (`v1.5.6`, `release/v1.5`)
+**Clone**: [#2067](https://github.com/Ayush-Singh986/kubernaut/issues/2067) (`v1.6`, `main`)
+**Related**: [#2061](https://github.com/Ayush-Singh986/kubernaut/issues/2061) (Track 1), [#2064](https://github.com/Ayush-Singh986/kubernaut/issues/2064) (Track 2 — the AA→KA wire contract this fix now has real data to carry)
 **Branch**: `fix/2061-2064-ka-apiversion-propagation` (off `origin/release/v1.5`)
 **Created**: 2026-08-10
 **Status**: Implementation complete — build/vet/targeted UT+IT suites green
@@ -221,7 +221,7 @@ $ KUBEBUILDER_ASSETS="$(setup-envtest use -p path)" \
   existence-check is inconclusive, `apiVersion` is deliberately left empty (matches DD-KA-006's
   "absence is not an error" philosophy) with an audit trail, rather than guessing.
 - **Backport/cherry-pick to `main`/`v1.6`**: tracked separately via the cloned issue
-  [#2067](https://github.com/jordigilh/kubernaut/issues/2067), not performed in this branch.
+  [#2067](https://github.com/Ayush-Singh986/kubernaut/issues/2067), not performed in this branch.
 
 ## 10. Sign-off
 

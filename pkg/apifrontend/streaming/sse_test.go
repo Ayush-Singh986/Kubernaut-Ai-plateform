@@ -12,7 +12,7 @@ import (
 	adksession "google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/streaming"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/streaming"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

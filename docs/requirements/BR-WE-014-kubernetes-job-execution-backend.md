@@ -8,7 +8,7 @@
 **Date**: February 5, 2026
 **Related ADRs**: ADR-043 (Execution Engine Schema), ADR-044 (Engine Portability), DD-WE-006 (Schema-Declared Dependencies)
 **Related BRs**: BR-WE-002 (PipelineRun Creation), BR-WE-003 (Status Monitoring), BR-WE-009 (Resource Locking), BR-WORKFLOW-004 (Schema Format)
-**GitHub Issue**: [#44](https://github.com/jordigilh/kubernaut/issues/44)
+**GitHub Issue**: [#44](https://github.com/Ayush-Singh986/kubernaut/issues/44)
 
 ---
 
@@ -186,7 +186,7 @@ type JobExecutor struct {
 
 ### TR-5: Controller Dispatch
 
-Engine dispatch uses a `Registry` (strategy pattern) populated at startup based on infrastructure availability ([Issue #868](https://github.com/jordigilh/kubernaut/issues/868)):
+Engine dispatch uses a `Registry` (strategy pattern) populated at startup based on infrastructure availability ([Issue #868](https://github.com/Ayush-Singh986/kubernaut/issues/868)):
 
 - **`job`**: Always registered (core `batch/v1` API).
 - **`tekton`**: Registered if Tekton CRDs are discovered via `RESTMapper` (auto-discovery), or explicitly disabled via `tekton.enabled: false` in config.

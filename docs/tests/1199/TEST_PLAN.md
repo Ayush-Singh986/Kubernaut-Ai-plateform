@@ -13,7 +13,7 @@
 **Author**: AI Assistant
 **Status**: Draft
 **Branch**: `feat/1199-ds-bidirectional-correlation`
-**Parent Issue**: [#1189](https://github.com/jordigilh/kubernaut/issues/1189) — AC 13
+**Parent Issue**: [#1189](https://github.com/Ayush-Singh986/kubernaut/issues/1189) — AC 13
 
 ---
 
@@ -66,9 +66,9 @@ This issue addresses three concerns:
 
 ### 2.1 Authoritative Documents
 
-- [Issue #1199](https://github.com/jordigilh/kubernaut/issues/1199) — Bidirectional correlation query
-- [Issue #1189](https://github.com/jordigilh/kubernaut/issues/1189) — 4-Phase Interactive Remediation Journey (parent)
-- [PR #1193](https://github.com/jordigilh/kubernaut/pull/1193) — AF-side audit enrichment
+- [Issue #1199](https://github.com/Ayush-Singh986/kubernaut/issues/1199) — Bidirectional correlation query
+- [Issue #1189](https://github.com/Ayush-Singh986/kubernaut/issues/1189) — 4-Phase Interactive Remediation Journey (parent)
+- [PR #1193](https://github.com/Ayush-Singh986/kubernaut/pull/1193) — AF-side audit enrichment
 - [ADR-034](docs/architecture/decisions/ADR-034-unified-audit-table-design.md) — Unified audit table design
 - [DD-STORAGE-010](docs/architecture/decisions/) — Query API pagination strategy
 - [TESTING_GUIDELINES.md](docs/development/business-requirements/TESTING_GUIDELINES.md) — Per-tier coverage >=80%

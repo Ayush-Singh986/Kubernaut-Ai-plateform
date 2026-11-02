@@ -31,8 +31,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/llm/openaicompat"
 )
 
 // Client implements llm.Client for OpenAI-protocol-compatible endpoints.

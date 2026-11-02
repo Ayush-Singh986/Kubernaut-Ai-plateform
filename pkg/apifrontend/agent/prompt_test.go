@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
 )
 
 var _ = Describe("System Prompt", func() {

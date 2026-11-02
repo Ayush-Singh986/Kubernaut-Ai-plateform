@@ -18,7 +18,7 @@ package scenarios
 import (
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // afFleetKubectlE2EKeyword is the distinctive phrase the E2E test's A2A

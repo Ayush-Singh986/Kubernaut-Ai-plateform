@@ -26,9 +26,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/alertmanager"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/alertmanager"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 var _ = Describe("Kubernaut Agent Alertmanager Tools Integration — #1507", func() {

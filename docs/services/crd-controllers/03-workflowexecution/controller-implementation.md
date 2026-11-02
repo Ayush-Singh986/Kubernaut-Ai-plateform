@@ -83,8 +83,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/log"
 
     tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 const (

@@ -2,7 +2,7 @@
 
 **AIOps Platform for Intelligent Kubernetes Remediation**
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/jordigilh/kubernaut.svg)](https://pkg.go.dev/github.com/jordigilh/kubernaut)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Ayush-Singh986/kubernaut.svg)](https://pkg.go.dev/github.com/Ayush-Singh986/kubernaut)
 [![Go Version](https://img.shields.io/badge/Go-1.26-blue.svg)](https://golang.org/dl/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.32+-blue.svg)](https://kubernetes.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -12,7 +12,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/Ayush-Singh986/Kubernaut-Ai-plateform)](https://github.com/Ayush-Singh986/Kubernaut-Ai-plateform/releases/latest)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-> This repository is a fork of [Jordi Gil's Kubernaut project](https://github.com/jordigilh/kubernaut). The upstream Go module path and copyright notices are retained.
+> This repository is a fork of [Jordi Gil's Kubernaut project](https://github.com/Ayush-Singh986/kubernaut). The upstream Go module path and copyright notices are retained.
 
 Kubernaut closes the loop from Kubernetes alert to automated remediation. It operates in two modes: **autonomously** — detecting signals, investigating root causes, and executing fixes end-to-end without human involvement — and **interactively** — letting operators join an in-progress investigation via MCP or A2A, guide the agent, and approve remediations in real time. The LLM-powered agent uses native Go client-go bindings against the Kubernetes API, Prometheus, and log endpoints to investigate, select a remediation workflow, and execute the fix — or escalate to a human with a full RCA when it can't. See the **[full documentation](https://Ayush-Singh986.github.io/kubernaut-docs/)** for architecture, installation, and usage guides.
 
@@ -249,8 +249,8 @@ Security posture is tracked continuously via [OpenSSF Scorecard](https://scoreca
 
 ### v1.6 — Fleet Operations (release candidate)
 
-- **Fleet operations** — Multi-cluster remediation orchestration through a pluggable scope-checking adapter: Red Hat ACM/OCM for ACM shops, or a control-plane-free mode backed by the built-in Fleet Metadata Cache (FMC) for GitOps and standalone clusters — with Rancher and Clusterpedia adapters architected for other vendor fleet platforms ([#54](https://github.com/jordigilh/kubernaut/issues/54))
-- **ServiceNow incident triage** (v1.6.1) — Consume ServiceNow incidents as signals through the API Frontend, enabling Kubernaut to investigate and remediate ITSM tickets alongside Kubernetes alerts ([#1338](https://github.com/jordigilh/kubernaut/issues/1338))
+- **Fleet operations** — Multi-cluster remediation orchestration through a pluggable scope-checking adapter: Red Hat ACM/OCM for ACM shops, or a control-plane-free mode backed by the built-in Fleet Metadata Cache (FMC) for GitOps and standalone clusters — with Rancher and Clusterpedia adapters architected for other vendor fleet platforms ([#54](https://github.com/Ayush-Singh986/kubernaut/issues/54))
+- **ServiceNow incident triage** (v1.6.1) — Consume ServiceNow incidents as signals through the API Frontend, enabling Kubernaut to investigate and remediate ITSM tickets alongside Kubernetes alerts ([#1338](https://github.com/Ayush-Singh986/kubernaut/issues/1338))
 
 **[Full roadmap](docs/roadmap/ROADMAP.md)** — for released features, see the [CHANGELOG](CHANGELOG.md).
 

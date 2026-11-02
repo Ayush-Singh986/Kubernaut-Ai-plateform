@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Date**: 2026-06-13
-**Issue**: [#1421](https://github.com/jordigilh/kubernaut/issues/1421)
+**Issue**: [#1421](https://github.com/Ayush-Singh986/kubernaut/issues/1421)
 **Design**: Kubernetes-native parent-manages-children cascade (inline in plan)
 **Business Requirements**: BR-ORCH-1421
 

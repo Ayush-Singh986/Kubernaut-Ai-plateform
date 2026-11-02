@@ -1,8 +1,8 @@
 # Test Plan: MCP Interactive-Session CRD-Fallback Drops ResourceAPIVersion
 
-**Issue**: [#2061](https://github.com/jordigilh/kubernaut/issues/2061) (`v1.5.6`, `release/v1.5`)
-**Clone**: [#2063](https://github.com/jordigilh/kubernaut/issues/2063) (`v1.6`, `main`)
-**Related** (same root class, different layer): [#2064](https://github.com/jordigilh/kubernaut/issues/2064) (Track 2), [#2066](https://github.com/jordigilh/kubernaut/issues/2066) (Track 3)
+**Issue**: [#2061](https://github.com/Ayush-Singh986/kubernaut/issues/2061) (`v1.5.6`, `release/v1.5`)
+**Clone**: [#2063](https://github.com/Ayush-Singh986/kubernaut/issues/2063) (`v1.6`, `main`)
+**Related** (same root class, different layer): [#2064](https://github.com/Ayush-Singh986/kubernaut/issues/2064) (Track 2), [#2066](https://github.com/Ayush-Singh986/kubernaut/issues/2066) (Track 3)
 **Branch**: `fix/2061-2064-ka-apiversion-propagation` (off `origin/release/v1.5`)
 **Created**: 2026-08-10
 **Status**: Implementation complete — build/vet/targeted UT+IT suites green
@@ -130,7 +130,7 @@ $ go test ./test/integration/kubernautagent/mcp/...                      # PASS 
   (`apiVersionValidationGate`, #1044/#1051) — no gap found, no new work needed; Track 1/2/3 fix the
   *input* to this already-correct machinery.
 - **Backport/cherry-pick to `main`/`v1.6`**: tracked separately via the cloned issue
-  [#2063](https://github.com/jordigilh/kubernaut/issues/2063), not performed in this branch.
+  [#2063](https://github.com/Ayush-Singh986/kubernaut/issues/2063), not performed in this branch.
 
 ## 10. Sign-off
 

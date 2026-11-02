@@ -402,7 +402,7 @@ func TestLockRetryExponentialBackoff(t *testing.T) {
 ### For Gateway Service (COMPLETED)
 
 **Changes**:
-- ✅ **Added**: `import "github.com/jordigilh/kubernaut/pkg/shared/backoff"`
+- ✅ **Added**: `import "github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"`
 - ✅ **Replaced**: Recursive `ProcessSignal` call with iterative loop
 - ✅ **Added**: Exponential backoff configuration with jitter
 - ✅ **Added**: Max retry limit (10 attempts)

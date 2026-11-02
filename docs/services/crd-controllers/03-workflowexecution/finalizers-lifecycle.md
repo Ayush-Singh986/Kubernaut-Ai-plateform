@@ -41,7 +41,7 @@ import (
     "context"
     "fmt"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -131,7 +131,7 @@ import (
     "fmt"
     "time"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
 )
 
 func (r *WorkflowExecutionReconciler) cleanupWorkflowExecution(
@@ -204,8 +204,8 @@ import (
     "context"
     "fmt"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
-    "github.com/jordigilh/kubernaut/pkg/workflow/execution/controller"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/workflow/execution/controller"
 
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
@@ -364,8 +364,8 @@ import (
     "context"
     "fmt"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -418,7 +418,7 @@ import (
     "context"
     "time"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -501,7 +501,7 @@ import (
     "fmt"
     "time"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflow/execution/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/execution/v1"
 
     "k8s.io/client-go/tools/record"
 )

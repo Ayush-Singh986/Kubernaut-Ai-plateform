@@ -35,12 +35,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/signalprocessing"
-	spaudit "github.com/jordigilh/kubernaut/pkg/signalprocessing/audit"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
-	spstatus "github.com/jordigilh/kubernaut/pkg/signalprocessing/status"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/signalprocessing"
+	spaudit "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/audit"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
+	spstatus "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/status"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

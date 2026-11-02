@@ -28,7 +28,7 @@ cluster shown in every notification is the cluster attached to the request.
 - [BR-ORCH-001](../../requirements/BR-ORCH-001-approval-notification-creation.md): approval NotificationRequest creation
 - [BR-ORCH-045](../../requirements/BR-ORCH-045-completion-notification.md): completion NotificationRequest creation
 - [ADR-065](../../architecture/decisions/ADR-065-fleet-cluster-identity-on-rr.md): `ClusterID` is the sole supported cluster identifier
-- Issue [#2449](https://github.com/jordigilh/kubernaut/issues/2449)
+- Issue [#2449](https://github.com/Ayush-Singh986/kubernaut/issues/2449)
 - FedRAMP `AU-3` and `SI-4`: complete, attributable monitoring records
 - SOC 2 `CC7.2`: incident monitoring and reconstruction evidence
 - OWASP ASVS `V7.1.1`/`V7.2.1`: security-relevant actions are observable without false attribution

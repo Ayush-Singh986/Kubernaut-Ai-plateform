@@ -13,8 +13,8 @@ package scenarios
 import (
 	"strings"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 )
 
 // recurrentRCA2511Scenario is intentionally remediation-type agnostic. The

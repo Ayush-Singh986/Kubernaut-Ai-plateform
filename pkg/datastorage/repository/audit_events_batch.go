@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository/sqlutil"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository/txretry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/sqlutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository/txretry"
 )
 
 // CreateBatch inserts multiple audit events in a single transaction

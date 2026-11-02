@@ -23,9 +23,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // DSClientAdapter wraps the ogen-generated Data Storage client to implement

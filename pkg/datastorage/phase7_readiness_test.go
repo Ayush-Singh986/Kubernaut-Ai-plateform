@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
 )
 
 // ========================================

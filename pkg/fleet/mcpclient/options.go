@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 // Option configures an MCPResourceClient.

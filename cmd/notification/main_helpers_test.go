@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	notificationconfig "github.com/jordigilh/kubernaut/pkg/notification/config"
+	notificationconfig "github.com/Ayush-Singh986/kubernaut/pkg/notification/config"
 )
 
 // TestBuildAuditStore_ValidConfig is a characterization test for

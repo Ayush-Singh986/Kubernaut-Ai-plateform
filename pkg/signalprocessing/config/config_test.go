@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	spconfig "github.com/jordigilh/kubernaut/pkg/signalprocessing/config"
+	spconfig "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/config"
 )
 
 var _ = Describe("UT-SP-054-CFG-001 [IA-5]: SP FleetOAuth2 config parses, validates, and defaults correctly at startup (BR-INTEGRATION-054)", func() {

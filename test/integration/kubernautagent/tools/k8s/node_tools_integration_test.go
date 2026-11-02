@@ -27,8 +27,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	k8stools "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/k8s"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/registry"
+	k8stools "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/registry"
 )
 
 // mockNodeProxyClient implements k8stools.NodeProxyClientInterface for IT tests,

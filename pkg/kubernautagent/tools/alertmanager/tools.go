@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools"
 )
 
 // Tool is an alias for the shared tool interface.

@@ -31,7 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 func CreateAIAnalysisClusterHybrid(clusterName, kubeconfigPath string, writer io.Writer) error {

@@ -3,7 +3,7 @@
 **Applies to**: `v1.5.2` only. Kubernaut Agent's (KA) LLM client stack changed
 materially in 1.6.0 (`langchaingo` removal, shared `openaicompat` client,
 [DD-LLM-008](../../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md)
-identity lock, [#1604](https://github.com/jordigilh/kubernaut/issues/1604)
+identity lock, [#1604](https://github.com/Ayush-Singh986/kubernaut/issues/1604)
 reasoning-effort knob) — none of that exists at this tag. If you're running
 `main`/1.6.0+, this doc's *architecture* section doesn't apply to you (though
 the vLLM server-side recommendations still do); check
@@ -48,7 +48,7 @@ cloud credential separately from `agent.llm` (the two are independently
 configurable — `severityTriage.llm` falls back to `agent.llm` only if unset,
 per `triageLLMSource` in `cmd/apifrontend/main.go`). This is a tracked gap,
 not a deliberate design decision — see
-[#1618](https://github.com/jordigilh/kubernaut/issues/1618) — and is present
+[#1618](https://github.com/Ayush-Singh986/kubernaut/issues/1618) — and is present
 on `main` too, not just this release.
 
 ---
@@ -123,24 +123,24 @@ against the `v1.5.2` tag directly, not assumed from `main`):
   single timeout and **no retry at all** — a transient error or timeout
   aborts the whole investigation immediately. Set `timeoutSeconds`
   generously; there's no safety net if you guess too low. (Tracked for a
-  fix in 1.6.0: [#1612](https://github.com/jordigilh/kubernaut/issues/1612).)
+  fix in 1.6.0: [#1612](https://github.com/Ayush-Singh986/kubernaut/issues/1612).)
 - `maxTotalToolCalls` hits a **hard abort with no chance for the model to
   summarize** what it already found. Raising the ceiling is your only lever
-  today. (Tracked: [#1613](https://github.com/jordigilh/kubernaut/issues/1613).)
+  today. (Tracked: [#1613](https://github.com/Ayush-Singh986/kubernaut/issues/1613).)
 - A truncated (`finish_reason=length`) response gets exactly one escalated
   retry (`2× completion_tokens`, capped at 16384); if truncated again, the
   partial/possibly-empty content is silently accepted as final. Reasoning
   models at high effort are more likely to double-truncate than a plain
-  chat model. (Tracked: [#1614](https://github.com/jordigilh/kubernaut/issues/1614).)
+  chat model. (Tracked: [#1614](https://github.com/Ayush-Singh986/kubernaut/issues/1614).)
 - Conversation history is never trimmed/summarized across turns — a long,
   many-turn investigation can silently exceed a smaller-context model's
   window with no detection. Balance `maxTurns` against this: raising it to
   avoid premature give-up (per the point above) increases exposure here.
-  (Tracked: [#1615](https://github.com/jordigilh/kubernaut/issues/1615).)
+  (Tracked: [#1615](https://github.com/Ayush-Singh986/kubernaut/issues/1615).)
 - No reasoning-effort config knob exists at v1.5.2 either way (that's the
-  1.6.0-era [#1604](https://github.com/jordigilh/kubernaut/issues/1604)
+  1.6.0-era [#1604](https://github.com/Ayush-Singh986/kubernaut/issues/1604)
   feature, and even there it doesn't yet recognize gpt-oss's model name —
-  see [#1604](https://github.com/jordigilh/kubernaut/issues/1604) follow-on
+  see [#1604](https://github.com/Ayush-Singh986/kubernaut/issues/1604) follow-on
   discussion). Effort is controlled entirely at the vLLM server (§2).
 - `langchaingo`'s response parsing silently drops any `reasoning_content`
   field a self-hosted reasoning model returns — you get **zero visibility**
@@ -148,7 +148,7 @@ against the `v1.5.2` tag directly, not assumed from `main`):
   transcript, logs, or audit trace on this version.
 - `provider`/`model` changes via hot-reload of `llm-runtime.yaml` take
   effect **live, with no restart requirement or identity-consistency check**
-  (the [#1599](https://github.com/jordigilh/kubernaut/issues/1599)/
+  (the [#1599](https://github.com/Ayush-Singh986/kubernaut/issues/1599)/
   [DD-LLM-008](../../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md)
   protection is 1.6.0-only). Treat "restart after changing the model" as a
   manual operational discipline for this version, not something the
@@ -178,7 +178,7 @@ severityTriage:
   # If you need severity triage locally, either leave it disabled, or set an
   # explicit severityTriage.llm block pointing at a real vertex_ai/gemini/anthropic
   # credential — it does not have to match agent.llm. This is a known gap
-  # (https://github.com/jordigilh/kubernaut/issues/1618), not a documented
+  # (https://github.com/Ayush-Singh986/kubernaut/issues/1618), not a documented
   # design decision — AF's own ADR-002 states local-model support for
   # air-gapped deployments as an explicit goal, so this is expected to close
   # eventually. Tracked on `main` first; backport to release branches is a
@@ -230,9 +230,9 @@ exactly what that number is before leaning on it as a pilot safety lever:
   of error precisely because it clears any threshold you pick. Worse, the
   same weak agentic reliability that motivates using a higher threshold in
   the first place (missed evidence, premature investigation abort per
-  [#1613](https://github.com/jordigilh/kubernaut/issues/1613), truncated
+  [#1613](https://github.com/Ayush-Singh986/kubernaut/issues/1613), truncated
   output silently accepted per
-  [#1614](https://github.com/jordigilh/kubernaut/issues/1614)) is exactly
+  [#1614](https://github.com/Ayush-Singh986/kubernaut/issues/1614)) is exactly
   what undermines the model's ability to *recognize* those same gaps when
   self-scoring its confidence. Leaning on self-reported confidence to
   compensate for unreliable self-assessment is circular.
@@ -255,7 +255,7 @@ this pilot. Instead:
   use it to measure the model's actual confidence-vs-correctness calibration
   first, and only then decide whether any threshold value buys real
   precision — and what that value should be. (Tracked:
-  [#1622](https://github.com/jordigilh/kubernaut/issues/1622).)
+  [#1622](https://github.com/Ayush-Singh986/kubernaut/issues/1622).)
 - Relax to threshold-based auto-approval only after that comparison shows
   the model's self-reported confidence is a meaningfully predictive signal
   for your workload, not before.
@@ -276,12 +276,12 @@ this pilot. Instead:
 
 | Issue | Gap | Generic beyond gpt-oss/vLLM? |
 |---|---|---|
-| [#1612](https://github.com/jordigilh/kubernaut/issues/1612) | No retry on LLM call errors/timeouts in KA's streaming/interactive path | Yes — any provider, any hosting mechanism |
-| [#1613](https://github.com/jordigilh/kubernaut/issues/1613) | `maxTotalToolCalls` hard-aborts with no wrap-up turn | Yes — any less tool-call-efficient model |
-| [#1614](https://github.com/jordigilh/kubernaut/issues/1614) | Second `max_tokens` truncation silently accepted as final content | Yes — any verbose/reasoning-heavy model |
-| [#1615](https://github.com/jordigilh/kubernaut/issues/1615) | No context-window/history trimming for long investigations | Yes — any smaller-context or high-verbosity model |
-| [#1616](https://github.com/jordigilh/kubernaut/issues/1616) | `phaseModels` doesn't support per-phase reasoning/effort overrides | 1.6.0-only feature gap (reasoning config doesn't exist at v1.5.2 at all) |
-| [#1618](https://github.com/jordigilh/kubernaut/issues/1618) | AF severity triage doesn't support `openai`/`openai_compatible` provider | Yes — present on both v1.5.2 and `main`; not backend-version-specific |
+| [#1612](https://github.com/Ayush-Singh986/kubernaut/issues/1612) | No retry on LLM call errors/timeouts in KA's streaming/interactive path | Yes — any provider, any hosting mechanism |
+| [#1613](https://github.com/Ayush-Singh986/kubernaut/issues/1613) | `maxTotalToolCalls` hard-aborts with no wrap-up turn | Yes — any less tool-call-efficient model |
+| [#1614](https://github.com/Ayush-Singh986/kubernaut/issues/1614) | Second `max_tokens` truncation silently accepted as final content | Yes — any verbose/reasoning-heavy model |
+| [#1615](https://github.com/Ayush-Singh986/kubernaut/issues/1615) | No context-window/history trimming for long investigations | Yes — any smaller-context or high-verbosity model |
+| [#1616](https://github.com/Ayush-Singh986/kubernaut/issues/1616) | `phaseModels` doesn't support per-phase reasoning/effort overrides | 1.6.0-only feature gap (reasoning config doesn't exist at v1.5.2 at all) |
+| [#1618](https://github.com/Ayush-Singh986/kubernaut/issues/1618) | AF severity triage doesn't support `openai`/`openai_compatible` provider | Yes — present on both v1.5.2 and `main`; not backend-version-specific |
 
 #1612-#1616 are scoped to `main`/1.6.0 — none apply as "fixes" to v1.5.2,
 since the underlying code (`openaicompat` client, reasoning config) doesn't
@@ -307,7 +307,7 @@ the model-selection decision regardless of which KA release is running.
 All 91 golden transcripts in `kubernaut-demo-scenarios/golden-transcripts/` — every
 scenario, every archived rerun back to v1.3.2 — were captured on `claude-sonnet-4-6`.
 None were captured on gpt-oss-120b or any other model. No eval harness exists yet
-(tracked: [#1622](https://github.com/jordigilh/kubernaut/issues/1622)) that would let a
+(tracked: [#1622](https://github.com/Ayush-Singh986/kubernaut/issues/1622)) that would let a
 candidate model be scored against these scenarios. Everything below is evidence-based
 inference from analogous benchmarks, not a direct measurement of gpt-oss-120b on
 Kubernaut's own workload — that remains the only way to get a certain answer.

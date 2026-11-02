@@ -464,7 +464,7 @@ Workflows without `dependencies` in their schema continue to work unchanged. The
 - [DD-WORKFLOW-012: Workflow Immutability](./DD-WORKFLOW-012-workflow-immutability-constraints.md) -- Rationale for on-demand query
 - [BR-WORKFLOW-004: Workflow Schema Format](../../requirements/BR-WORKFLOW-004-workflow-schema-format.md) -- Schema specification
 - [BR-WE-014: Job Execution Backend](../../requirements/BR-WE-014-kubernetes-job-execution-backend.md) -- Acceptance criteria
-- [Issue #233](https://github.com/jordigilh/kubernaut/issues/233) -- Implementation tracking
+- [Issue #233](https://github.com/Ayush-Singh986/kubernaut/issues/233) -- Implementation tracking
 
 ---
 

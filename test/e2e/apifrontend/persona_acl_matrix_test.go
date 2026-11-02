@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kinfra "github.com/jordigilh/kubernaut/test/infrastructure"
+	kinfra "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // persona ACL-matrix E2E coverage (#1827).

@@ -42,9 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
 )
 
 var _ = Describe("Config-Disabled Reconciler (BR-EM-006, BR-EM-007, BR-EM-008)", func() {

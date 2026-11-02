@@ -7,7 +7,7 @@
 **Date**: May 26, 2026
 **Related BRs**: BR-INTERACTIVE-001, BR-INTERACTIVE-004, BR-INTERACTIVE-008
 **Related DDs**: DD-INTERACTIVE-002 (Dynamic Takeover Model)
-**GitHub Issue**: [#1293](https://github.com/jordigilh/kubernaut/issues/1293)
+**GitHub Issue**: [#1293](https://github.com/Ayush-Singh986/kubernaut/issues/1293)
 
 ---
 

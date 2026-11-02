@@ -1,6 +1,6 @@
 # Test Plan: apifrontend Helm chart interactive-timeout defaults must match Go code defaults
 
-**Issue**: [#1803](https://github.com/jordigilh/kubernaut/issues/1803)
+**Issue**: [#1803](https://github.com/Ayush-Singh986/kubernaut/issues/1803)
 **Authority**: DD-PLATFORM-006 Decision Area 14 (schema-materialized Helm defaults, `kubernaut.mergedValues`)
 **Business Requirements**: None directly (operational-correctness bug fix; see Section 2)
 **Branch**: `fix/1803-apifrontend-interactive-timeout-defaults`

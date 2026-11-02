@@ -26,7 +26,7 @@ authorization role, separate from per-tool RBAC, so operators can grant
 "console access" and "tool access" as two explicit, separately-auditable
 steps. The issue's own 3-part proposal spans a new AF endpoint, RBAC
 convention/manifests, and `kubernaut-console` frontend gating
-(`jordigilh/kubernaut-console#48`, a different repo — explicitly out of scope
+(`Ayush-Singh986/kubernaut-console#48`, a different repo — explicitly out of scope
 here).
 
 During planning, a critical architectural gap was identified and resolved
@@ -93,7 +93,7 @@ UX convenience layered on top of a real, unbypassable server-side gate.
 ### 2.1 Authority
 
 - Issue #1919: this feature request (backend scope only).
-- `jordigilh/kubernaut-console#48`: companion frontend issue (separate repo,
+- `Ayush-Singh986/kubernaut-console#48`: companion frontend issue (separate repo,
   out of scope; will be informed of the actual chosen path once this merges).
 - ADR-021 / ADR-022: existing SAR-based `kubernaut.ai/tools` authorization
   model this feature extends by one coarse-grained resource.
@@ -128,7 +128,7 @@ UX convenience layered on top of a real, unbypassable server-side gate.
 
 ### 3.2 Out of Scope
 
-- `kubernaut-console` frontend gating (`jordigilh/kubernaut-console#48`) — separate repo.
+- `kubernaut-console` frontend gating (`Ayush-Singh986/kubernaut-console#48`) — separate repo.
 - `ResilienceConfig.TokenRefreshTimeout` being dead/unwired (unrelated #1934-adjacent finding) — not touched.
 - Any change to `ADR-022`'s "AF SA does all K8s I/O" model — this is just
   another `subjectaccessreviews create` call by the existing AF ServiceAccount.

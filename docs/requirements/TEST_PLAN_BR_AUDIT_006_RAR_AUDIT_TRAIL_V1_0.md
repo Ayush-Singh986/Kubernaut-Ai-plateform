@@ -819,7 +819,7 @@ Context("E2E-RO-AUD006-003: Expired Path with Audit Trail", func() {
 
 ## Approval
 
-**Reviewed By**: User (jordigilh)
+**Reviewed By**: User (Ayush-Singh986)
 **Date**: February 1, 2026
 **Status**: ✅ **APPROVED for Execution**
 

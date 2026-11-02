@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	notificationconfig "github.com/jordigilh/kubernaut/pkg/notification/config"
+	notificationconfig "github.com/Ayush-Singh986/kubernaut/pkg/notification/config"
 )
 
 var _ = Describe("Notification Config Credential Settings (BR-NOT-104)", func() {

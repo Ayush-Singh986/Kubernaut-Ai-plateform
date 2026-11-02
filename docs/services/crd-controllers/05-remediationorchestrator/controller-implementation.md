@@ -20,11 +20,11 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
-    kubernetesexecutionv1 "github.com/jordigilh/kubernaut/api/kubernetesexecution/v1" // DEPRECATED - ADR-025
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
+    kubernetesexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/kubernetesexecution/v1" // DEPRECATED - ADR-025
 )
 
 type RemediationRequestReconciler struct {
@@ -1103,9 +1103,9 @@ func TestRecoveryInitiation_Success(t *testing.T) {
 package remediationorchestrator
 
 import (
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/handler"
     "sigs.k8s.io/controller-runtime/pkg/source"
@@ -1211,9 +1211,9 @@ import (
     "fmt"
     "strings"
 
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-    aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+    aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

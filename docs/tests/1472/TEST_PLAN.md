@@ -1,6 +1,6 @@
 # Test Plan — #1472: Validate RR Existence Before Session Reactivation
 
-**IEEE 829 Compliant** | **Issue**: [#1472](https://github.com/jordigilh/kubernaut/issues/1472) | **Milestone**: v1.5.1
+**IEEE 829 Compliant** | **Issue**: [#1472](https://github.com/Ayush-Singh986/kubernaut/issues/1472) | **Milestone**: v1.5.1
 
 ## 1. Test Plan Identifier
 

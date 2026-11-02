@@ -135,5 +135,5 @@ UT-RO-251-008 through UT-RO-251-013 cover the RO reconciler's async detection lo
 - [BR-RO-103](../../requirements/BR-RO-103-async-target-detection.md) — RO async target detection
 - [DD-EM-004](../../architecture/decisions/DD-EM-004-async-hash-deferral.md) — Design document
 - [DD-EM-002](../../architecture/decisions/DD-EM-002-canonical-spec-hash.md) — Canonical spec hash
-- [#251](https://github.com/jordigilh/kubernaut/issues/251) — Implementation issue
-- [#133](https://github.com/jordigilh/kubernaut/issues/133) — Demo: cert-manager Certificate failure
+- [#251](https://github.com/Ayush-Singh986/kubernaut/issues/251) — Implementation issue
+- [#133](https://github.com/Ayush-Singh986/kubernaut/issues/133) — Demo: cert-manager Certificate failure

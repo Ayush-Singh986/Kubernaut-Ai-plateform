@@ -17,7 +17,7 @@ limitations under the License.
 package audit
 
 import (
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // REFACTOR-RO-AUD-001: Approval decision mapping type to eliminate triple switch statements

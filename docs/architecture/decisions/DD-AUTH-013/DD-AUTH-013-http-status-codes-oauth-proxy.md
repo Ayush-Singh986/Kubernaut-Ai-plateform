@@ -5,7 +5,7 @@
 **Version**: 1.0  
 **Authority**: Defines HTTP status codes returned by ose-oauth-proxy sidecar
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Since
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Since
 > this document was written, [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md) removed
 > the `ose-oauth-proxy` sidecar from both DataStorage and Kubernaut Agent (KA) — they now perform
 > authentication/authorization via in-process Go middleware calling the Kubernetes TokenReview/

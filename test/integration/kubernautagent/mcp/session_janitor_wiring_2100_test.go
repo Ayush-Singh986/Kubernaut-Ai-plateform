@@ -27,7 +27,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 )
 
 // #2100: IT-KA-DES-005/006 (disconnect_handler_test.go) already prove

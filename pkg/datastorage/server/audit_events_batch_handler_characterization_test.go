@@ -32,10 +32,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-	dsmetrics "github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+	dsmetrics "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // ========================================

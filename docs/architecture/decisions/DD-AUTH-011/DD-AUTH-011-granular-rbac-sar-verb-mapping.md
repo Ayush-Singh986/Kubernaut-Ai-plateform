@@ -1,7 +1,7 @@
 # DD-AUTH-011: Granular RBAC & SAR Verb Mapping for DataStorage
 
 **Date**: January 26, 2026
-**Status**: ⚠️ **SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md)** (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806))
+**Status**: ⚠️ **SUPERSEDED by [DD-AUTH-014](../DD-AUTH-014-middleware-based-sar-authentication.md)** (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 **Authority**: Supersedes DD-AUTH-009 (wildcard verbs), DD-AUTH-010 (E2E authentication)
 **Priority**: CRITICAL (RBAC security)
 **Related**: DD-AUTH-004 (OAuth-proxy design), DD-AUTH-009 (OAuth2-proxy migration)

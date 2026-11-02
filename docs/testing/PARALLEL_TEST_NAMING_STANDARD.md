@@ -43,7 +43,7 @@ Tests fail with "already exists" errors because multiple parallel processes crea
 
 ```go
 // ✅ GOOD - Guaranteed unique in parallel execution
-import "github.com/jordigilh/kubernaut/pkg/testutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 
 func TestSomething() {
     name := fmt.Sprintf("integration-test-%s", testutil.UniqueTestSuffix())
@@ -104,7 +104,7 @@ name := fmt.Sprintf("test-resource-%s", randomSuffix())
 
 **After** (parallel-safe):
 ```go
-import "github.com/jordigilh/kubernaut/pkg/testutil"
+import "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 
 name := testutil.UniqueTestName("test-resource")
 // Or:
@@ -174,7 +174,7 @@ package myservice_test
 import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
     corev1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -198,7 +198,7 @@ var _ = Describe("MyService Integration", func() {
 package e2e_test
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("E2E Workflow", func() {

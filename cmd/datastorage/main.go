@@ -37,19 +37,19 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/internal/version"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	dsaudit "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/config"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	"github.com/jordigilh/kubernaut/pkg/shared/health"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	"github.com/jordigilh/kubernaut/pkg/shared/telemetry"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/version"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	dsaudit "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/health"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/telemetry"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // ========================================

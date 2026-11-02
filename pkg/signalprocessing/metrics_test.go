@@ -30,7 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 var _ = Describe("BR-SP-008: SignalProcessing Metrics", func() {

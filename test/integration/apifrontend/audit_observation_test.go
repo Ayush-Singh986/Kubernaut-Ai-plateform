@@ -8,10 +8,10 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 	"github.com/lib/pq"
 )
 

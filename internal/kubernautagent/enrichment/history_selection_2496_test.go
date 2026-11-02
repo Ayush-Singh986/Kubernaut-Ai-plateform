@@ -26,8 +26,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/enrichment"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/enrichment"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 var _ = Describe("DD-KA-2496 history adapter (BR-KA-016, SI-10, AC-4)", func() {

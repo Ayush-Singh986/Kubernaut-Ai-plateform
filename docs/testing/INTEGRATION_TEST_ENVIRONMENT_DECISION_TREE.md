@@ -346,7 +346,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/envtest"
 
     // Import your CRD types
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
 )
 
 var (
@@ -566,7 +566,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/jordigilh/kubernaut/pkg/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/metrics"
 )
 
 func TestMetricsIntegration(t *testing.T) {
@@ -687,7 +687,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	"github.com/jordigilh/kubernaut/pkg/monitor"
+	"github.com/Ayush-Singh986/kubernaut/pkg/monitor"
 )
 
 func TestMonitorIntegration(t *testing.T) {
@@ -907,8 +907,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/testutil/kind"
-	"github.com/jordigilh/kubernaut/pkg/myservice"
+	"github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
+	"github.com/Ayush-Singh986/kubernaut/pkg/myservice"
 )
 
 func TestMyServiceIntegration(t *testing.T) {

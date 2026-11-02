@@ -43,7 +43,7 @@ Use mock LLM responses during development, validate with real LLM only for final
 
 ## Implementation
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: This
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: This
 > document predates the Kubernaut Agent Go rewrite (`DD-KA-019`, decided 2026-03-04, ~3 months after this
 > document). `workflow_catalog.py` and the `pytest kubernaut-agent/tests/...` commands below refer to the
 > pre-rewrite Python KA test suite, which no longer exists. The structural analog to "HolmesGPT SDK

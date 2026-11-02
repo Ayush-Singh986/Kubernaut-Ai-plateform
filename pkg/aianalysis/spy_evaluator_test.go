@@ -21,7 +21,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
 )
 
 // spyEvaluator wraps a real rego.Evaluator to capture inputs for test

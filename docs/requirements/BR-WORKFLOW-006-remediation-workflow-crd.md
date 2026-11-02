@@ -20,7 +20,7 @@
 - [DD-WORKFLOW-012](../architecture/decisions/DD-WORKFLOW-012-workflow-immutability-constraints.md) -- Immutability constraints
 - [ADR-034](../architecture/decisions/ADR-034-unified-audit-table-design.md) -- Unified audit table
 
-**GitHub Issue**: [#299](https://github.com/jordigilh/kubernaut/issues/299)
+**GitHub Issue**: [#299](https://github.com/Ayush-Singh986/kubernaut/issues/299)
 
 ---
 

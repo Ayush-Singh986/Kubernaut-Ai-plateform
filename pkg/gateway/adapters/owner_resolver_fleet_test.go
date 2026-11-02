@@ -26,9 +26,9 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fleettest"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fleettest"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 var _ = Describe("PrometheusAdapter — Fleet remote owner chain (P1)", func() {

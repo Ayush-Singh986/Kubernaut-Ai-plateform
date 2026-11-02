@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // Performance Test Suite for Data Storage Service

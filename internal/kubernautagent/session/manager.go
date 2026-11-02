@@ -22,10 +22,10 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/metrics"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/metrics"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // InvestigateFunc is the function signature for running an investigation.

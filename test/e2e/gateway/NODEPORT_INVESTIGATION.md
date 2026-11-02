@@ -87,4 +87,4 @@ Let me check the current Gateway service:
 
 <function_calls>
 <invoke name="read_file">
-<parameter name="target_file">/Users/jgil/go/src/github.com/jordigilh/kubernaut/test/e2e/gateway/gateway-deployment.yaml
+<parameter name="target_file">/Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut/test/e2e/gateway/gateway-deployment.yaml

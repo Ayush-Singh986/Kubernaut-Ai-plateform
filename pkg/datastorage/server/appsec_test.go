@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 var _ = Describe("AppSec Audit Gap Tests (#1048 Phase 4)", func() {

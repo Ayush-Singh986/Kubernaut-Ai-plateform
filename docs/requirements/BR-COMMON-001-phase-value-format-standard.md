@@ -227,7 +227,7 @@ When consuming phase values from other services, use their typed constants direc
 
 ```go
 // ✅ CORRECT: Use source service's typed constants
-import signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+import signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
 
 switch sp.Status.Phase {
 case string(signalprocessingv1.PhaseCompleted):  // Single source of truth

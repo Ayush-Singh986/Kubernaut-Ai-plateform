@@ -42,22 +42,22 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/jordigilh/kubernaut/internal/version"
+	"github.com/Ayush-Singh986/kubernaut/internal/version"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
-	fmcconfig "github.com/jordigilh/kubernaut/pkg/fleet/fmc/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
-	"github.com/jordigilh/kubernaut/pkg/fleet/readiness"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
+	fmcconfig "github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/readiness"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	sharedhealth "github.com/jordigilh/kubernaut/pkg/shared/health"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	sharedhealth "github.com/Ayush-Singh986/kubernaut/pkg/shared/health"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // fmcDeps bundles the external clients and background components wired at

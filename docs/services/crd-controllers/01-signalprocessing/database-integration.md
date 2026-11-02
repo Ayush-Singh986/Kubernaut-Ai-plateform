@@ -31,7 +31,7 @@ Following the [KUBERNAUT_CRD_ARCHITECTURE.md](../../../architecture/KUBERNAUT_CR
 package controller
 
 import (
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 )
 
 type SignalProcessingReconciler struct {

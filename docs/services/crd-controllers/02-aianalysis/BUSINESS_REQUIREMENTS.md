@@ -484,7 +484,7 @@ The **AIAnalysis Service** is a Kubernetes CRD controller that orchestrates Kube
 #### BR-AI-084: Proactive Signal Mode Prompt Strategy
 
 **Priority**: P1 (High)
-**GitHub Issue**: [#55](https://github.com/jordigilh/kubernaut/issues/55)
+**GitHub Issue**: [#55](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 **Full Document**: [docs/requirements/BR-AI-084-proactive-signal-mode-prompt-strategy.md](../../../requirements/BR-AI-084-proactive-signal-mode-prompt-strategy.md)
 
 **Description**: AIAnalysis MUST pass `SignalMode` (from SP via RO) to KA and KA MUST adapt its prompt strategy based on whether the signal is `reactive` or `proactive`. Proactive signals require environment evaluation instead of RCA.
@@ -541,7 +541,7 @@ The **AIAnalysis Service** is a Kubernetes CRD controller that orchestrates Kube
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.1 | 2026-02-08 | **NEW BR-AI-084**: Proactive Signal Mode Prompt Strategy. Kubernaut Agent (KA) adapts investigation prompt for proactive vs. reactive signals. [Issue #55](https://github.com/jordigilh/kubernaut/issues/55). |
+| 2.1 | 2026-02-08 | **NEW BR-AI-084**: Proactive Signal Mode Prompt Strategy. Kubernaut Agent (KA) adapts investigation prompt for proactive vs. reactive signals. [Issue #55](https://github.com/Ayush-Singh986/kubernaut/issues/55). |
 | 2.0 | 2025-12-20 | **V1.0 COMPLETE**: Added comprehensive BR mapping for all implemented requirements (BR-AI-001 to BR-AI-083). Updated test coverage summary with actual results (178 unit + 53 integration tests passing). |
 | 1.0 | 2025-11-28 | Initial BR document with workflow selection contract requirements |
 

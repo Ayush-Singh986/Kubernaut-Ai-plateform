@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	aiv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	aiv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Cycle 3.1: PostRCAContext CRD type API contract tests

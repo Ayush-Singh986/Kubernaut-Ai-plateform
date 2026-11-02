@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	investigationsessionv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
+	investigationsessionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

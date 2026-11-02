@@ -21,10 +21,10 @@ import (
 	"path/filepath"
 	"time"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	pkgconfig "github.com/jordigilh/kubernaut/pkg/kubernautagent/config"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	pkgconfig "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/config"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 	"gopkg.in/yaml.v3"
 )
 

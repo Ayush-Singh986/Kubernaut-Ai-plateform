@@ -5,8 +5,8 @@
 `sameKindValidationGate`/`apiVersionValidationGate`
 (`internal/kubernautagent/investigator/investigator_gates.go`) set diagnostic/
 outcome fields on `audit.AuditEvent.Data` — `retry_outcome` (added while
-porting [#2119](https://github.com/jordigilh/kubernaut/issues/2119)/
-[#2121](https://github.com/jordigilh/kubernaut/issues/2121)), `ambiguous_kind`,
+porting [#2119](https://github.com/Ayush-Singh986/kubernaut/issues/2119)/
+[#2121](https://github.com/Ayush-Singh986/kubernaut/issues/2121)), `ambiguous_kind`,
 `conflicting_groups` — but none of these ever reached Data Storage/Postgres,
 regardless of the in-process `StoreBestEffort` ordering fix landed alongside
 #2119/#2121 in this same branch.
@@ -31,7 +31,7 @@ in-process `*audit.AuditEvent.Data` map for the duration of a single
 
 Discovered while verifying the audit trail for the #2119/#2121 port (this
 same branch) — pre-dates both and affects the same-kind/API-version gates'
-audit trail in general, likely since [#1044](https://github.com/jordigilh/kubernaut/issues/1044)
+audit trail in general, likely since [#1044](https://github.com/Ayush-Singh986/kubernaut/issues/1044)
 introduced these gates. See `docs/testing/2119-2121/TEST_PLAN.md` for the
 gate-retry fix this schema gap was discovered alongside.
 

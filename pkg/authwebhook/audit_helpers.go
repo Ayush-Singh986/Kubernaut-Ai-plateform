@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )

@@ -33,13 +33,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/k8s"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
-	"github.com/jordigilh/kubernaut/test/shared/mocks"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/mocks"
 )
 
 // ADR-004: Fake Kubernetes Client for Unit Testing

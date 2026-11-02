@@ -28,8 +28,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm/anthropicfamily"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

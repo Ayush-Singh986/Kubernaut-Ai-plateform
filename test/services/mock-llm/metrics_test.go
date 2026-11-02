@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mockmetrics "github.com/jordigilh/kubernaut/test/services/mock-llm/metrics"
+	mockmetrics "github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/metrics"
 )
 
 var _ = Describe("Mock LLM Metrics", func() {

@@ -98,7 +98,7 @@ kubectl exec -n kubernaut-system deploy/<service> -- curl -s -o /dev/null -w "%{
 
 > **History**: `pkg/fleet/acm.Client` originally never sent the `Authorization: Bearer <token>`
 > header the real ACM Search GraphQL API (`stolostron/search-v2-api`) mandatorily requires — a
-> pre-existing gap tracked as **[#1556](https://github.com/jordigilh/kubernaut/issues/1556)**.
+> pre-existing gap tracked as **[#1556](https://github.com/Ayush-Singh986/kubernaut/issues/1556)**.
 > Before #1553, this failed silently (`IsManagedResource` fail-safe-swallowed the 401 into
 > `(false, nil)`). After #1553 and before #1556 landed, it surfaced as a **permanent**
 > `/readyz=NotReady` for every `fleet.backend: "acm"` deployment. **#1556 is now resolved**:

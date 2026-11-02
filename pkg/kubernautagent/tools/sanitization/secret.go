@@ -23,7 +23,7 @@ import (
 	"errors"
 	"io"
 
-	sharedsanitization "github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	sharedsanitization "github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 	"gopkg.in/yaml.v3"
 )
 

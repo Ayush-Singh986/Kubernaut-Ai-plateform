@@ -3,7 +3,7 @@
 **Status**: ✅ Accepted — Tier 3 removal remains active; Tier 2.5 allowance superseded by [DD-AF-016](DD-AF-016-explicit-alert-severity-source.md)
 **Date**: 2026-08-01
 **Author**: AI Assistant
-**Related**: Issue [#1839](https://github.com/jordigilh/kubernaut/issues/1839), issue #92 (original three-tier design), PR #1830
+**Related**: Issue [#1839](https://github.com/Ayush-Singh986/kubernaut/issues/1839), issue #92 (original three-tier design), PR #1830
 
 > **Supersession note (2026-09-27):** DD-AF-016 removes the Tier 2.5 LLM
 > severity-inference allowance described below. The Tier 3 removal and the

@@ -25,8 +25,8 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // #2098: live evidence (RR rr-6a97f7a00ba9-79ad53ed) showed

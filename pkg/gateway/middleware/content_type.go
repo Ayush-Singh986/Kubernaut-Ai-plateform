@@ -5,7 +5,7 @@ import (
 	"mime"
 	"net/http"
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 )
 
 // ValidateContentType is a middleware that validates the Content-Type header

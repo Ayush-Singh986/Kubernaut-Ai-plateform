@@ -8,7 +8,7 @@
 **Created**: December 9, 2025
 
 **Last Updated**: 2026-08-01 — Renamed from `BR-HAPI-211` and rewritten against the actual Go
-implementation ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). The original
+implementation ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). The original
 document specified a Python `llm_sanitizer.py` module and `Tool.invoke()` monkey-patch that were
 never built — KA shipped in Go before this design was implemented as specified. See
 [DD-KA-005](../architecture/decisions/DD-KA-005-llm-input-sanitization.md) for full architecture

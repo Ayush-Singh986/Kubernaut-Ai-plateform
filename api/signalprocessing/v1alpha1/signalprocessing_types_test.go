@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	v1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
+	v1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
 )
 
 // ========================================

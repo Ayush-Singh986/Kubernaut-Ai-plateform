@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
 )
 
 // #1048 Phase 5 / AU-11 / BR-STORAGE-019: DLQ XADD vs MAXLEN~ trimming observability.

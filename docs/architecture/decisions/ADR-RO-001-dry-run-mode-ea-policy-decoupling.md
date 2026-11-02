@@ -2,8 +2,8 @@
 
 **Status**: ACCEPTED
 **Date**: 2026-04-24
-**Issue**: [#712](https://github.com/jordigilh/kubernaut/issues/712), [#736](https://github.com/jordigilh/kubernaut/issues/736)
-**Related**: [#116](https://github.com/jordigilh/kubernaut/issues/116) (v1.5 interactive dry-run)
+**Issue**: [#712](https://github.com/Ayush-Singh986/kubernaut/issues/712), [#736](https://github.com/Ayush-Singh986/kubernaut/issues/736)
+**Related**: [#116](https://github.com/Ayush-Singh986/kubernaut/issues/116) (v1.5 interactive dry-run)
 
 ## Context
 
@@ -14,7 +14,7 @@ Issue #736 AC-1 requires documenting the EA policy decoupling from the workflow 
 ### Alternatives Considered
 
 1. **Per-workflow dry-run via RAR interactive flow** — Deferred to v1.5 (#116). Requires RAR CRD changes and UI integration.
-2. **Non-K8s target detection as skip condition** — Deferred to the milestone where non-K8s workflow support (`targetSystem` field, [#739](https://github.com/jordigilh/kubernaut/issues/739)) lands. Today all workflows target K8s resources.
+2. **Non-K8s target detection as skip condition** — Deferred to the milestone where non-K8s workflow support (`targetSystem` field, [#739](https://github.com/Ayush-Singh986/kubernaut/issues/739)) lands. Today all workflows target K8s resources.
 3. **Config-driven EA `Enabled` opt-out** — Rejected. Creates temporal coupling between the skip evaluation site and EA creation. Risks silent misconfiguration where an operator disables EA without realizing the feedback loop is broken.
 4. **WFE-level dry-run flag** — Rejected. The WFE CRD has no dry-run concept today. Creating a WFE that doesn't execute is semantically misleading and would require changes to the workflow execution engine.
 
@@ -86,4 +86,4 @@ Future: In OCP deployments, dry-run will be exposed via the Kubernaut CR so the 
 
 - [ADR-EM-001](ADR-EM-001-effectiveness-monitor-service-integration.md) — EA creation and verification pipeline
 - [ADR-062](ADR-062-phase-handler-registry-pattern.md) — Phase handler registry and TransitionIntent pattern
-- Issue [#116](https://github.com/jordigilh/kubernaut/issues/116) — v1.5 interactive dry-run via RAR
+- Issue [#116](https://github.com/Ayush-Singh986/kubernaut/issues/116) — v1.5 interactive dry-run via RAR

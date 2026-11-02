@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	k8sutil "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	k8sutil "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 func TestSharedK8s(t *testing.T) {

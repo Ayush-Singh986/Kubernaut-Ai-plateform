@@ -31,9 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
-	"github.com/jordigilh/kubernaut/pkg/shared/k8s/ownerchain"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s/ownerchain"
 )
 
 // rfc1123LabelRegexp validates a K8s name/namespace against RFC 1123 label rules.

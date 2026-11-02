@@ -20,8 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
 )
 
 // Day 5: Metrics Unit Tests (v1.13 - Business Value Metrics Only)

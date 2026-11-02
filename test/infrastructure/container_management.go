@@ -292,7 +292,7 @@ func StopGenericContainer(instance *ContainerInstance, writer io.Writer) error {
 //
 // Compares the full registry path prefix (not just hostname) because
 // images from the same host but different orgs (e.g. ghcr.io/containers/
-// vs ghcr.io/jordigilh/) are external to each other.
+// vs ghcr.io/Ayush-Singh986/) are external to each other.
 func isExternalImage(image, registry string) bool {
 	if strings.HasPrefix(image, "localhost/") || !strings.Contains(image, "/") {
 		return false

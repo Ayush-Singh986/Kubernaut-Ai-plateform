@@ -6,7 +6,7 @@
 
 ---
 
-## ⚠️ **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**
+## ⚠️ **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**
 
 This document (and the rest of `docs/development/e2e-testing/`) describes a January 2025 proposal for
 a **remote bare-metal hybrid architecture** (dedicated RHEL host, e.g. `helios08`, reached over SSH,

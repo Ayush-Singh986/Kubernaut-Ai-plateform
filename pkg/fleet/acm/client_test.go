@@ -30,8 +30,8 @@ import (
 	"github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/acm"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/acm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope"
 )
 
 var _ = Describe("ACM Search GraphQL Client (BR-INTEGRATION-065, ADR-068)", func() {

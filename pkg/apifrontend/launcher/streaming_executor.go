@@ -24,8 +24,8 @@ import (
 	"github.com/a2aproject/a2a-go/a2asrv/eventqueue"
 	"github.com/go-logr/logr"
 
-	isv1alpha1 "github.com/jordigilh/kubernaut/api/investigationsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	isv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/investigationsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // SessionPhaseUpdater provides the subset of session.CRDSessionService needed

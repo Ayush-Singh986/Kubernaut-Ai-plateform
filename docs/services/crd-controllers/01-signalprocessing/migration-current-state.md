@@ -57,7 +57,7 @@ package signalprocessing
 import (
     "context"
     "time"
-    "github.com/jordigilh/kubernaut/pkg/shared/types"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // SignalProcessingService defines signal processing operations

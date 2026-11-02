@@ -6,7 +6,7 @@
 **Category**: Classification
 **Priority**: P1 (High)
 **Service**: SignalProcessing
-**GitHub Issue**: [#55](https://github.com/jordigilh/kubernaut/issues/55)
+**GitHub Issue**: [#55](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 **Related**: BR-AI-084, DD-WORKFLOW-001, DD-WORKFLOW-015
 
 ---
@@ -223,6 +223,6 @@ groups:
 ### Related Documents
 
 - [BR-AI-084: Proactive Signal Mode Prompt Strategy](BR-AI-084-proactive-signal-mode-prompt-strategy.md)
-- [Issue #55: Proactive remediation pipeline](https://github.com/jordigilh/kubernaut/issues/55)
+- [Issue #55: Proactive remediation pipeline](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 - [DD-WORKFLOW-001: Mandatory Label Schema](../architecture/decisions/DD-WORKFLOW-001-mandatory-label-schema.md)
 - [SP Business Requirements](../services/crd-controllers/01-signalprocessing/BUSINESS_REQUIREMENTS.md)

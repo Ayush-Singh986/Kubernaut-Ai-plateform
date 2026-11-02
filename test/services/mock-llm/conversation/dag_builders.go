@@ -15,7 +15,7 @@ limitations under the License.
 */
 package conversation
 
-import openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+import openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 
 // LegacyDAG returns the two-phase conversation DAG (search_workflow_catalog → final_analysis).
 func LegacyDAG() *DAG {

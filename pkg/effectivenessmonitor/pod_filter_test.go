@@ -25,7 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
 )
 
 var _ = Describe("Pod Filtering and Health Stats (#246, BR-EM-001)", func() {

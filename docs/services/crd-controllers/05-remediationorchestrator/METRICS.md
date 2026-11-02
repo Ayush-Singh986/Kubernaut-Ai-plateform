@@ -116,7 +116,7 @@ func init() {
 ### Usage in Handlers
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+import "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 
 // In handler code - example for NoActionNeededTotal
 metrics.NoActionNeededTotal.WithLabelValues(

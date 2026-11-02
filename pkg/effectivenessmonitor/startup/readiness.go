@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
 )
 
 // ExternalServicesConfig holds the configuration needed for startup readiness checks.

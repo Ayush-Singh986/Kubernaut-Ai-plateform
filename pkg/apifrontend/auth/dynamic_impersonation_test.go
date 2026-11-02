@@ -8,7 +8,7 @@ import (
 
 	"k8s.io/client-go/dynamic"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 var _ = Describe("DynamicClientFactory", func() {

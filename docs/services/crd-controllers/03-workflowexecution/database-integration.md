@@ -128,7 +128,7 @@ import (
     "context"
     "time"
 
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
 )
 
 type WorkflowAuditClient interface {

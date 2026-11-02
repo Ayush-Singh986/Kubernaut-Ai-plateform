@@ -77,7 +77,7 @@ release, and without requiring any live cluster access from `helm template`/`hel
 - **Design rationale**: [DD-018](../architecture/decisions/DD-018-helm-chart-single-install-per-cluster-guard.md)
   (alternatives considered: rename cluster-scoped resources, docs-only, explicit `lookup`-based
   guard — the last was approved).
-- **Tracked in**: [Issue #1589](https://github.com/jordigilh/kubernaut/issues/1589).
+- **Tracked in**: [Issue #1589](https://github.com/Ayush-Singh986/kubernaut/issues/1589).
 
 ---
 

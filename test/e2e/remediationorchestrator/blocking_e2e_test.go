@@ -30,12 +30,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // ========================================

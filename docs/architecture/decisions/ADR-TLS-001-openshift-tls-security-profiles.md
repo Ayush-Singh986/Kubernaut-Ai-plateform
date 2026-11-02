@@ -2,8 +2,8 @@
 
 **Status**: ACCEPTED
 **Date**: 2026-03-04
-**Issue**: [#748](https://github.com/jordigilh/kubernaut/issues/748)
-**Operator Issue**: [kubernaut-operator#3](https://github.com/jordigilh/kubernaut-operator/issues/3)
+**Issue**: [#748](https://github.com/Ayush-Singh986/kubernaut/issues/748)
+**Operator Issue**: [kubernaut-operator#3](https://github.com/Ayush-Singh986/kubernaut-operator/issues/3)
 
 ## Context
 
@@ -143,5 +143,5 @@ authority`.
 
 - [OpenShift TLS Security Profiles](https://docs.openshift.com/container-platform/4.17/security/tls-security-profiles.html)
 - [Mozilla Server-Side TLS](https://wiki.mozilla.org/Security/Server_Side_TLS)
-- [kubernaut-operator#3](https://github.com/jordigilh/kubernaut-operator/issues/3) — Operator-side profile injection
-- [Issue #902](https://github.com/jordigilh/kubernaut/issues/902) — AWX HTTP client does not use TLS_CA_FILE CA
+- [kubernaut-operator#3](https://github.com/Ayush-Singh986/kubernaut-operator/issues/3) — Operator-side profile injection
+- [Issue #902](https://github.com/Ayush-Singh986/kubernaut/issues/902) — AWX HTTP client does not use TLS_CA_FILE CA

@@ -2,8 +2,8 @@
 
 **Identifier:** TP-1234-v1.0
 **Template Version:** 2.0 -- Hybrid IEEE 829-2008 + Kubernaut
-**Issue:** [#1234](https://github.com/jordigilh/kubernaut/issues/1234)
-**Parent Issue:** [#1189](https://github.com/jordigilh/kubernaut/issues/1189)
+**Issue:** [#1234](https://github.com/Ayush-Singh986/kubernaut/issues/1234)
+**Parent Issue:** [#1189](https://github.com/Ayush-Singh986/kubernaut/issues/1189)
 **Status:** Active
 **Author:** AI Agent
 **Date:** 2026-05-22

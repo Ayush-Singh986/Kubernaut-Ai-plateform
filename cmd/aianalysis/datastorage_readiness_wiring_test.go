@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/aianalysis"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/aianalysis"
 )
 
 // IT-AUDIT-1985-004: cmd/aianalysis must wire an independent, always-on

@@ -4,7 +4,7 @@
 **Date**: April 15, 2026
 **Author**: Kubernaut Architecture Team
 **Confidence**: 95% (post design gate mitigation)
-**Related**: [#703](https://github.com/jordigilh/kubernaut/issues/703) (MCP Interactive Mode), [#705](https://github.com/jordigilh/kubernaut/issues/705) (A2A Protocol), [#708](https://github.com/jordigilh/kubernaut/issues/708) (API Frontend Service), [#711](https://github.com/jordigilh/kubernaut/issues/711) (Investigation Prompt Bundles), [#713](https://github.com/jordigilh/kubernaut/issues/713) (Kubernaut Console), [#714](https://github.com/jordigilh/kubernaut/issues/714) (NL Signal Intake), [DD-INTERACTIVE-001](../decisions/DD-INTERACTIVE-001-interactive-mode-crd-placement-and-timeouts.md)
+**Related**: [#703](https://github.com/Ayush-Singh986/kubernaut/issues/703) (MCP Interactive Mode), [#705](https://github.com/Ayush-Singh986/kubernaut/issues/705) (A2A Protocol), [#708](https://github.com/Ayush-Singh986/kubernaut/issues/708) (API Frontend Service), [#711](https://github.com/Ayush-Singh986/kubernaut/issues/711) (Investigation Prompt Bundles), [#713](https://github.com/Ayush-Singh986/kubernaut/issues/713) (Kubernaut Console), [#714](https://github.com/Ayush-Singh986/kubernaut/issues/714) (NL Signal Intake), [DD-INTERACTIVE-001](../decisions/DD-INTERACTIVE-001-interactive-mode-crd-placement-and-timeouts.md)
 
 ---
 

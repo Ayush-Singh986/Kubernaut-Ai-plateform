@@ -19,7 +19,7 @@ package server
 import (
 	"context"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // InvestigationRunner abstracts the investigation entry point so that

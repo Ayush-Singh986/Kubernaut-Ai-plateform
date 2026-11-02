@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
 )
 
 // ErrTokenExpiredDelegation is returned when outbound delegation is attempted with an expired token.

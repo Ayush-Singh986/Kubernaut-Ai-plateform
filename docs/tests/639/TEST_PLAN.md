@@ -266,7 +266,7 @@ go test ./test/unit/effectivenessmonitor/... -ginkgo.v
 go test ./test/unit/remediationorchestrator/... -ginkgo.v
 
 # Coverage on notification creator
-go test ./test/unit/remediationorchestrator/... -coverpkg=github.com/jordigilh/kubernaut/pkg/remediationorchestrator/creator -coverprofile=coverage.out
+go test ./test/unit/remediationorchestrator/... -coverpkg=github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/creator -coverprofile=coverage.out
 go tool cover -func=coverage.out
 ```
 

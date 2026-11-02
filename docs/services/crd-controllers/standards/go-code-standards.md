@@ -28,7 +28,7 @@
        . "github.com/onsi/gomega"
        metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-       notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+       notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
    )
    ```
 
@@ -56,7 +56,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
     // CRD imports
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1alpha1"
 )
 
 func TestSuiteName(t *testing.T) {
@@ -82,7 +82,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/log"
 
     // CRD imports
-    somev1alpha1 "github.com/jordigilh/kubernaut/api/some/v1alpha1"
+    somev1alpha1 "github.com/Ayush-Singh986/kubernaut/api/some/v1alpha1"
 )
 ```
 
@@ -98,7 +98,7 @@ import (
     "github.com/sirupsen/logrus"
 
     // Internal imports
-    "github.com/jordigilh/kubernaut/pkg/some/dependency"
+    "github.com/Ayush-Singh986/kubernaut/pkg/some/dependency"
 )
 ```
 
@@ -123,7 +123,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/envtest"
 
     // CRD imports
-    somev1alpha1 "github.com/jordigilh/kubernaut/api/some/v1alpha1"
+    somev1alpha1 "github.com/Ayush-Singh986/kubernaut/api/some/v1alpha1"
 )
 
 var (
@@ -182,11 +182,11 @@ import (
     metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
     // CRD imports
-    somev1alpha1 "github.com/jordigilh/kubernaut/api/some/v1alpha1"
+    somev1alpha1 "github.com/Ayush-Singh986/kubernaut/api/some/v1alpha1"
 
     // Internal imports
-    "github.com/jordigilh/kubernaut/internal/controller/some"
-    "github.com/jordigilh/kubernaut/pkg/some/component"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller/some"
+    "github.com/Ayush-Singh986/kubernaut/pkg/some/component"
 )
 
 var (
@@ -336,8 +336,8 @@ import (
     . "github.com/onsi/gomega"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/remediationprocessing/enricher"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/remediationprocessing/enricher"
 )
 
 func TestRemediationProcessing(t *testing.T) {

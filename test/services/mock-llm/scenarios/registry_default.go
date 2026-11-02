@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
 )
 
 // DefaultRegistryWithOverrides returns a fully populated registry with optional

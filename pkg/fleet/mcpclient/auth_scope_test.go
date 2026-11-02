@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/mcpclient"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/mcpclient"
 )
 
 var _ = Describe("Fleet OAuth2 Scope Configuration (BR-INTEGRATION-054)", func() {

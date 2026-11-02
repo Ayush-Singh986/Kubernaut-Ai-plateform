@@ -37,7 +37,7 @@ This test plan validates the TLS security profiles feature introduced by Issue #
 
 ## 2. References
 
-- [Issue #748](https://github.com/jordigilh/kubernaut/issues/748) — TLS security profiles
+- [Issue #748](https://github.com/Ayush-Singh986/kubernaut/issues/748) — TLS security profiles
 - [ADR-TLS-001](../../architecture/decisions/ADR-TLS-001-openshift-tls-security-profiles.md) — OpenShift TLS security profiles
 - BR-SECURITY-748 — TLS security profiles
 - `pkg/shared/tls/profile.go` — `SecurityProfile`, `ProfileForType`, `SetDefaultSecurityProfileFromConfig`

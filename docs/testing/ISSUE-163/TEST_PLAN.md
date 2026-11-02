@@ -8,8 +8,8 @@
 **Branch**: `feat/crd-type-unification-113`
 
 **Authority**:
-- [Issue #163](https://github.com/jordigilh/kubernaut/issues/163): Extend CRD field validation to individual E2E test suites
-- [Issue #118](https://github.com/jordigilh/kubernaut/issues/118): FullPipeline CRD status validation (predecessor)
+- [Issue #163](https://github.com/Ayush-Singh986/kubernaut/issues/163): Extend CRD field validation to individual E2E test suites
+- [Issue #118](https://github.com/Ayush-Singh986/kubernaut/issues/118): FullPipeline CRD status validation (predecessor)
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)

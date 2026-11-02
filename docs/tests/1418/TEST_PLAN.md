@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Date**: 2026-06-13
-**Issue**: [#1418](https://github.com/jordigilh/kubernaut/issues/1418)
+**Issue**: [#1418](https://github.com/Ayush-Singh986/kubernaut/issues/1418)
 **Design**: [DD-AF-007](../../architecture/decisions/DD-AF-007-escalation-routing.md)
 **Business Requirements**: BR-WORKFLOW-1418
 

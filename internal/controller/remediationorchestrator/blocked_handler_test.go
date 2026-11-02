@@ -28,11 +28,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	prodcontroller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/config"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
-	"github.com/jordigilh/kubernaut/pkg/remediationorchestrator/phase"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	prodcontroller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/config"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/phase"
 )
 
 func noopBlockedCallbacks() prodcontroller.BlockedCallbacks {

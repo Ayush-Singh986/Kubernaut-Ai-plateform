@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/investigation"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/investigation"
 )
 
 var _ = Describe("TodoWrite Tool — #433 Phase 1", func() {

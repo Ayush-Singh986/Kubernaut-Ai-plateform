@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwmetrics "github.com/jordigilh/kubernaut/pkg/gateway/metrics"
+	gwmetrics "github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

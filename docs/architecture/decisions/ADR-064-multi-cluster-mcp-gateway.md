@@ -6,7 +6,7 @@
 **Deciders**: Architecture Team
 **Context**: ServiceNow signal investigation requires multi-cluster K8s access
 
-> **Superseded (Issue [#2254](https://github.com/jordigilh/kubernaut/issues/2254))**: The
+> **Superseded (Issue [#2254](https://github.com/Ayush-Singh986/kubernaut/issues/2254))**: The
 > direct KA-to-per-cluster-OCP-MCP-Server design described below (no MCP Gateway) was never
 > what shipped for fleet/multi-cluster tool discovery. The actual v1.6 architecture is the
 > Gateway-fronted design in [ADR-068](ADR-068-fleet-federation-architecture.md) (Status:

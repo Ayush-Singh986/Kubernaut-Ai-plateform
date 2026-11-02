@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 type demoCLIConfig struct {
@@ -90,7 +90,7 @@ func registerDemoFlags() demoFlagValues {
 		spPolicyFile:             flag.String("sp-policy-file", "", "optional SignalProcessing Rego policy file"),
 		aaPolicyFile:             flag.String("aa-policy-file", "", "optional AIAnalysis Rego policy file"),
 		imageTag:                 flag.String("image-tag", "", "optional shared Kubernaut image tag override"),
-		imageRepository:          flag.String("image-repository", "", "optional Kubernaut image repository override (for example, quay.io/jordigilh or localhost/kubernaut)"),
+		imageRepository:          flag.String("image-repository", "", "optional Kubernaut image repository override (for example, quay.io/Ayush-Singh986 or localhost/kubernaut)"),
 		vertexProject:            flag.String("vertex-project", "", "required with -llm-provider=vertex_ai"),
 		vertexLocation:           flag.String("vertex-location", "", "required with -llm-provider=vertex_ai"),
 	}

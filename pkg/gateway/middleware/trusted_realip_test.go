@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwmiddleware "github.com/jordigilh/kubernaut/pkg/gateway/middleware"
+	gwmiddleware "github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

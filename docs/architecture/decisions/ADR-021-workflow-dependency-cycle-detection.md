@@ -5,7 +5,7 @@
 **Related**: ADR-020 (Parallel Execution Limits), [DD-WORKFLOW-016](DD-WORKFLOW-016-action-type-workflow-indexing.md) (current: predefined workflow catalog), [DD-WORKFLOW-017](DD-WORKFLOW-017-workflow-lifecycle-component-interactions.md), [DD-WORKFLOW-019](DD-WORKFLOW-019-ka-owned-workflow-discovery.md)  
 **Confidence**: 90% (original design confidence for an approach later superseded before implementation)
 
-> **SUPERSEDED / NEVER IMPLEMENTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **SUPERSEDED / NEVER IMPLEMENTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > This entire document — not just this opening note — describes a dynamic, per-incident
 > workflow-generation model: the agent emits an arbitrary multi-step JSON graph of recommendations with
 > inter-step `dependencies`, and a cycle-detection validator protects against the agent generating an

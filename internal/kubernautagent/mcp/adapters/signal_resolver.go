@@ -20,8 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

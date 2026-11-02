@@ -8,7 +8,7 @@
 **Branch**: `fix/cve-remediation-kubernaut-agent`
 
 **Authority**:
-- Issue [#293](https://github.com/jordigilh/kubernaut/issues/293): Rename HolmesGPT API metrics prefix from holmesgpt_api to aiagent_api
+- Issue [#293](https://github.com/Ayush-Singh986/kubernaut/issues/293): Rename HolmesGPT API metrics prefix from holmesgpt_api to aiagent_api
 - DD-005: Observability Standards (metric name constants)
 
 **Cross-References**:

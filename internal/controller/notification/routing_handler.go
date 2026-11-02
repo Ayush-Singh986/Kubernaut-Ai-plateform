@@ -50,10 +50,10 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	kubernautnotif "github.com/jordigilh/kubernaut/pkg/notification"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	kubernautnotif "github.com/Ayush-Singh986/kubernaut/pkg/notification"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
 )
 
 // ========================================

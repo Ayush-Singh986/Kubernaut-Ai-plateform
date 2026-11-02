@@ -340,8 +340,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/contextapi/config"
-	"github.com/jordigilh/kubernaut/pkg/contextapi/server"
+	"github.com/Ayush-Singh986/kubernaut/pkg/contextapi/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/contextapi/server"
 	"go.uber.org/zap"
 )
 

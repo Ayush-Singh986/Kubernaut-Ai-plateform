@@ -57,7 +57,7 @@ This test plan validates the unified monitoring configuration introduced by Issu
 
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)
 - [Testing Guidelines](../../development/business-requirements/TESTING_GUIDELINES.md)
-- Observed failure: jordigilh/kubernaut-demo-scenarios#101, #103 (KA cannot query Prometheus)
+- Observed failure: Ayush-Singh986/kubernaut-demo-scenarios#101, #103 (KA cannot query Prometheus)
 - Helm smoke tests: `scripts/helm-smoke-test.sh`
 
 ---

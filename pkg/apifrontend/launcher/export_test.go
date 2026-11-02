@@ -12,8 +12,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // NewReinvokingRunnerForTest exports newReinvokingRunner for unit testing

@@ -25,7 +25,7 @@ spec:
       serviceAccountName: kubernaut
       containers:
       - name: webhook-service
-        image: quay.io/jordigilh/kubernaut-webhook-service:latest
+        image: quay.io/Ayush-Singh986/kubernaut-webhook-service:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 8080

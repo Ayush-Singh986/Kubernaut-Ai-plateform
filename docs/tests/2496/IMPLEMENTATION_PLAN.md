@@ -1,8 +1,8 @@
 # Implementation Plan: Issue #2496 — Failed Workflow Identity and Repeat-Selection Reasoning
 
 **Status**: Combined #2496/#2498 draft PR #2503 published for authorized CI triage; scoped gate repairs in progress<br>
-**Issue**: [#2496](https://github.com/jordigilh/kubernaut/issues/2496)<br>
-**Incorporated issue**: [#2498](https://github.com/jordigilh/kubernaut/issues/2498) — strict phase-scoped tool availability and optional RCA context tools<br>
+**Issue**: [#2496](https://github.com/Ayush-Singh986/kubernaut/issues/2496)<br>
+**Incorporated issue**: [#2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498) — strict phase-scoped tool availability and optional RCA context tools<br>
 **Created**: 2026-10-09<br>
 **Inspection baseline**: `8a907bb57d3530da32de9b3b8250b53587ed6f41`, branch `issue-2496-history-aware-rca`<br>
 **Remote main observed**: `8a907bb57d3530da32de9b3b8250b53587ed6f41` — #2490 history-chain fix merged<br>
@@ -65,7 +65,7 @@ approval-pending notes are historical, not current authorization or requirements
 
 **Current publication exception (2026-10-13):** after the single fresh AF-local
 diagnostic remained non-actionable, the user explicitly authorized publishing
-[draft PR #2503](https://github.com/jordigilh/kubernaut/pull/2503) for CI triage.
+[draft PR #2503](https://github.com/Ayush-Singh986/kubernaut/pull/2503) for CI triage.
 This supersedes the earlier pre-publication gate only, not merge readiness or
 the scoped scenario, critical-control and wiring requirements. The user then
 approved the localized CI repairs and removal of synthetic secret-scan literals
@@ -88,7 +88,7 @@ about production implementation not being approved describe that earlier stage.
 
 **Expanded spike authorized (2026-10-09)**: The user now wants recurrence-aware upstream RCA, a structured read-only evidence handoff and historical/current state comparison included in this enhancement and the same eventual PR. Workflow selection/discovery must not gain Kubernetes MCP access or rewrite the RCA. Issue #2498 is incorporated into that same PR: RCA context/history tools are optional in Phase 1, while Phase 3 exposes only workflow-discovery and required result-submission tooling. GPT-5.6 Luna is extending the isolated spike through real production dispatch and persistence, with supervised RED/GREEN checkpoints. The narrower plan below is the prior draft baseline; it must be revised using the expanded spike findings before implementation approval. The earlier test-local prototype is not evidence for the expanded journey.
 
-**Separate future enhancement**: [#2497 — Evaluate evidence-grounded review of repeat-workflow justifications](https://github.com/jordigilh/kubernaut/issues/2497) was filed at the user's request. A runtime reviewing agent is excluded from #2496's initial implementation and from this spike; #2497 has no committed release milestone or gate policy.
+**Separate future enhancement**: [#2497 — Evaluate evidence-grounded review of repeat-workflow justifications](https://github.com/Ayush-Singh986/kubernaut/issues/2497) was filed at the user's request. A runtime reviewing agent is excluded from #2496's initial implementation and from this spike; #2497 has no committed release milestone or gate policy.
 
 **Console delivery decision (Engram-validated, 2026-10-09)**: The current live RCA/selection result uses the existing KA MCP event stream or interactive decision function arguments, which AF projects through its existing A2A status/artifact path. Audit/DS data is consumed only for explicit past-remediation/history retrieval, including the history context used by history-aware RCA; it is not queried to present the current result. No mandatory AgentSession/AA status projection is added solely for live repeat context. The bounded KA complete payload and AF investigation artifact need safe workflow/repeat fields added; this is a live typed-projection change, not an audit-read integration.
 

@@ -33,7 +33,7 @@ import (
 
 	"github.com/google/uuid"
 
-	rwv1alpha1 "github.com/jordigilh/kubernaut/api/remediationworkflow/v1alpha1"
+	rwv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediationworkflow/v1alpha1"
 )
 
 // kubernautNamespace is the fixed UUIDv5 namespace for all Kubernaut

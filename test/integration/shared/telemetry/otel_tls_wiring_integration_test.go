@@ -55,9 +55,9 @@ import (
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	sharedtelemetry "github.com/jordigilh/kubernaut/pkg/shared/telemetry"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	sharedtelemetry "github.com/Ayush-Singh986/kubernaut/pkg/shared/telemetry"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 var _ = Describe("OTel OTLP/HTTPS wiring (GAP-14 / Issue #1519)", func() {

@@ -27,9 +27,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
-	sharedauth "github.com/jordigilh/kubernaut/pkg/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
+	sharedauth "github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
 )
 
 // recordingAuditStore captures every event passed to StoreAudit for assertion.

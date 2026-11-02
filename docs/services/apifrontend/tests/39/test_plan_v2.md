@@ -1,7 +1,7 @@
 # Test Plan: Configuration Extension and Log-Level Hot-Reload
 
 **Test Plan Identifier:** TP-AF-039-v2
-**Issue:** [#39](https://github.com/jordigilh/kubernaut-apifrontend/issues/39)
+**Issue:** [#39](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/39)
 **Version:** 2.0
 **Date:** 2026-05-06
 **Status:** Draft

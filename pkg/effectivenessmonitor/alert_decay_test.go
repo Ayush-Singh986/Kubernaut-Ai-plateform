@@ -34,13 +34,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	emaudit "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/audit"
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/conditions"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	emaudit "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/audit"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/conditions"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
 )
 
 // decayAMClient implements emclient.AlertManagerClient returning configurable alerts.

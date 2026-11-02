@@ -16,7 +16,7 @@ limitations under the License.
 
 package eaigw
 
-import "github.com/jordigilh/kubernaut/test/e2e/fleetmetadatacache/shared"
+import "github.com/Ayush-Singh986/kubernaut/test/e2e/fleetmetadatacache/shared"
 
 // E2E-FMC-EAIGW-054-014. See shared.TokenExchange for the scenario body --
 // 100% portable, shared verbatim with the Kuadrant lane (the RFC 8693

@@ -24,9 +24,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	"github.com/jordigilh/kubernaut/pkg/fleet"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 // DefaultConfigPath is the standard Kubernetes ConfigMap mount path for this service.
@@ -35,7 +35,7 @@ const DefaultConfigPath = "/etc/gateway/config.yaml"
 
 // configDocumentationURL is the shared reference link included in validation
 // errors returned by this package.
-const configDocumentationURL = "https://jordigilh.github.io/kubernaut-docs/user-guide/configuration/#gateway"
+const configDocumentationURL = "https://Ayush-Singh986.github.io/kubernaut-docs/user-guide/configuration/#gateway"
 
 // ServerConfig is the top-level configuration for the Gateway service.
 // Organized by Single Responsibility Principle for better maintainability.

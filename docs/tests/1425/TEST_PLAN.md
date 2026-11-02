@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Date**: 2026-06-14
-**Issue**: [#1425](https://github.com/jordigilh/kubernaut/issues/1425)
+**Issue**: [#1425](https://github.com/Ayush-Singh986/kubernaut/issues/1425)
 **Business Requirements**: BR-INTERACTIVE-010
 **Approach**: Root cause fix in session lifecycle (option B)
 

@@ -20,9 +20,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	pkgaudit "github.com/jordigilh/kubernaut/pkg/audit"
-	dsaudit "github.com/jordigilh/kubernaut/pkg/datastorage/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	pkgaudit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	dsaudit "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // BR-STORAGE-1505 (GAP-09, Issue #1505): Data Storage self-audits per-IP

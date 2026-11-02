@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // kaInteractiveFleetTargetName/Namespace are the dedicated marker Deployment

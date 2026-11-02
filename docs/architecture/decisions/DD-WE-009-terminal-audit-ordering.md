@@ -38,7 +38,7 @@ Prior to this decision, the three transition helpers (`applyCompletedTransition`
 condition **inside** this closure. Because `RetryOnConflict` re-runs the **entire**
 closure — refetch, phase transition, and audit call — on every optimistic-lock conflict,
 a single logical terminal transition that hit even one conflict produced **N audit
-events for N closure executions**, not one. This is [issue #1597](https://github.com/jordigilh/kubernaut/issues/1597),
+events for N closure executions**, not one. This is [issue #1597](https://github.com/Ayush-Singh986/kubernaut/issues/1597),
 originally surfaced as a follow-up item from
 [DD-WE-008](./DD-WE-008-job-resource-governance-transient-failure-tolerance.md)'s Related
 Documents section during its own audit-completeness preflight.
@@ -236,7 +236,7 @@ DataStorage OpenAPI schema/ogen-client (Option B rejected).
 - [DD-PERF-001: Atomic Status Updates Mandate](./DD-PERF-001-atomic-status-updates-mandate.md) — the pattern this decision does not conflict with (targets status-field consolidation, not audit-call bundling)
 - [DD-WE-008: Job Resource Governance and Transient-Failure Tolerance](./DD-WE-008-job-resource-governance-transient-failure-tolerance.md) — originating follow-up note ("`RetryOnConflict`-wraps-audit-call ordering gap") that led to this decision
 - BR-AUDIT-005 v2.0 (root audit business requirement, defined in `AGENTS.md`) — audit completeness/reconstruction mandate this decision protects
-- [Issue #1597](https://github.com/jordigilh/kubernaut/issues/1597) — originating issue
+- [Issue #1597](https://github.com/Ayush-Singh986/kubernaut/issues/1597) — originating issue
 
 ---
 

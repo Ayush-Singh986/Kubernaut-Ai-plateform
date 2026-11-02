@@ -24,9 +24,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	auditpkg "github.com/jordigilh/kubernaut/pkg/audit"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	auditpkg "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

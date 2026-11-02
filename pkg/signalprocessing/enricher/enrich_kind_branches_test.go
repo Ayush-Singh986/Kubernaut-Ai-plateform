@@ -31,9 +31,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/enricher"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/enricher"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 // UT-SP-054-KINDS: Table-driven test for K8sEnricher local signal kind branches

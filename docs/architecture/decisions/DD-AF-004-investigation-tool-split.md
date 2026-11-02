@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-03
-**Issue**: [#1372](https://github.com/jordigilh/kubernaut/issues/1372)
+**Issue**: [#1372](https://github.com/Ayush-Singh986/kubernaut/issues/1372)
 **Supersedes**: None
 
 ## Context

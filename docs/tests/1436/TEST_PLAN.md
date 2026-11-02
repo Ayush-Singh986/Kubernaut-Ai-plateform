@@ -1,7 +1,7 @@
 # Test Plan: TP-1436 — Multi-Provider JWT Authentication
 
 **Test Plan Identifier**: TP-1436-MULTI-PROVIDER-JWT
-**Issue**: [#1436](https://github.com/jordigilh/kubernaut/issues/1436)
+**Issue**: [#1436](https://github.com/Ayush-Singh986/kubernaut/issues/1436)
 **Service**: AF (API Frontend)
 **Test ID Format**: `{TIER}-AF-1436-{SEQUENCE}`
 

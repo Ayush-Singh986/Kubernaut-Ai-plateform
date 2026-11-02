@@ -22,7 +22,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
 )
 
 var _ = Describe("Controller Metrics (BR-EM-009, DD-METRICS-001)", func() {

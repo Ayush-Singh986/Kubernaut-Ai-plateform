@@ -1,4 +1,4 @@
-module github.com/jordigilh/kubernaut
+module github.com/Ayush-Singh986/kubernaut
 
 go 1.26.10
 

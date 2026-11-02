@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
 )
 
 // Issue #674 Bug 4: WorkflowExecution LoadFromFile swallows all errors silently.

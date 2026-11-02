@@ -52,7 +52,7 @@ This document maps all business requirements (BRs) relevant to the AIAnalysis Se
 - `docs/requirements/02_AI_MACHINE_LEARNING.md` v1.1 - Primary AI/ML requirements (BR-AI-*)
 - `docs/requirements/06_INTEGRATION_LAYER.md` - Integration requirements (BR-SP-*)
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**:
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**:
 > `docs/requirements/13_HOLMESGPT_REST_API_WRAPPER.md` no longer exists in the current codebase (no file
 > under that name, and no `13_*` requirements doc covers Kubernaut Agent requirements — `13_` is now
 > `13_INFRASTRUCTURE_PLATFORM.md`, an unrelated topic). The `BR-HAPI-*` IDs below are not currently traceable

@@ -26,8 +26,8 @@ This document establishes the **authoritative field mapping matrix** for Remedia
 
 **Scope**: 7 critical fields across 4 services (Gateway, Workflow Engine, Execution, Orchestrator).
 Originally 8 fields across 5 services; Field #4 (AI Analysis `providerData`) was removed 2026-08-02
-([#1806](https://github.com/jordigilh/kubernaut/issues/1806) /
-[#1882](https://github.com/jordigilh/kubernaut/issues/1882)) — see Field #4 entry below for why.
+([#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) /
+[#1882](https://github.com/Ayush-Singh986/kubernaut/issues/1882)) — see Field #4 entry below for why.
 
 ---
 
@@ -171,8 +171,8 @@ rr.Spec.SignalAnnotations = gatewayEvent.EventData["signal_annotations"].(map[st
 
 ### **Field #4: `providerData`** — ❌ REMOVED (2026-08-03)
 
-> **✅ RESOLVED ([#1882](https://github.com/jordigilh/kubernaut/issues/1882))**: This field
-> mapping was stale (flagged 2026-08-02, [#1806](https://github.com/jordigilh/kubernaut/issues/1806))
+> **✅ RESOLVED ([#1882](https://github.com/Ayush-Singh986/kubernaut/issues/1882))**: This field
+> mapping was stale (flagged 2026-08-02, [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 > and has now been removed from RR reconstruction scope per an explicit architecture-team decision:
 > - `.spec.aiAnalysis.providerData` never existed on `RemediationRequestSpec`
 >   (`api/remediation/v1alpha1/remediationrequest_types.go`). AI decision data (confidence,

@@ -9,7 +9,7 @@ TP-CFG-1330-V1
 ## 2. References
 
 - **Business Requirement**: BR-PLATFORM-1330
-- **Issue**: https://github.com/jordigilh/kubernaut/issues/1330
+- **Issue**: https://github.com/Ayush-Singh986/kubernaut/issues/1330
 - **Operator Issue**: kubernaut-operator#144
 - **Related**: `pkg/log/logger.go` Options.Development, LOG_FORMAT env var
 

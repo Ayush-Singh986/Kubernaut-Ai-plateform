@@ -7,7 +7,7 @@
 `AIAnalysis.Status.ApprovalContext.PolicyEvaluation.PolicyHash` and
 `RemediationApprovalRequest.Spec.PolicyEvaluation.PolicyHash`, so an approval decision record can
 be attributed to the exact policy bundle revision that produced it. **v1.1 consolidates the two
-follow-up gaps originally filed as** [issue #2005](https://github.com/jordigilh/kubernaut/issues/2005)
+follow-up gaps originally filed as** [issue #2005](https://github.com/Ayush-Singh986/kubernaut/issues/2005)
 **into this same PR**: audit-event payload parity (`RemediationApprovalAuditPayload`,
 `AIAnalysisRegoEvaluationPayload`) and console/MCP-facing payload parity (`ApprovalPolicyPayload`).
 **v1.2 deletes the dead `pkg/remediationapprovalrequest/audit` package** (and its
@@ -56,7 +56,7 @@ in-flight policy change silently flip an already-approved decision, which remain
 
 Issue #1981 was deliberately scoped to CRD-level attribution only (Section 1 above). Preflight for
 #1981 identified two additional consumers still lacking the hash, filed as
-[issue #2005](https://github.com/jordigilh/kubernaut/issues/2005). Per explicit user direction,
+[issue #2005](https://github.com/Ayush-Singh986/kubernaut/issues/2005). Per explicit user direction,
 both gaps are consolidated into this same PR rather than shipped separately:
 
 1. **Audit-event payload parity**: `AIAnalysisRegoEvaluationPayload` and
@@ -96,9 +96,9 @@ as superseded/relocated to point at the live `pkg/authwebhook` implementation in
 
 ### 2.1 Authority (governing documents)
 
-- [Issue #1981](https://github.com/jordigilh/kubernaut/issues/1981): Pin OPA policy hash on
+- [Issue #1981](https://github.com/Ayush-Singh986/kubernaut/issues/1981): Pin OPA policy hash on
   RemediationApprovalRequest for tamper-evident approval decisions
-- [Spike comment](https://github.com/jordigilh/kubernaut/issues/1981#issuecomment-5209422073):
+- [Spike comment](https://github.com/Ayush-Singh986/kubernaut/issues/1981#issuecomment-5209422073):
   independently re-verified during preflight (see Risks below for the one correction and one gap
   found beyond it)
 - **BR-AI-030** ([docs/requirements/02_AI_MACHINE_LEARNING.md](../../requirements/02_AI_MACHINE_LEARNING.md) line 125):

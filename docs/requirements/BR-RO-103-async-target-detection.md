@@ -144,7 +144,7 @@ See [Issue #253 Test Plan](../../testing/ISSUE-253/TEST_PLAN.md) — Propagation
 - [ADR-056](../../architecture/decisions/ADR-056-post-rca-label-computation.md) — Post-RCA label computation
 - [BR-EM-010](BR-EM-010-async-hash-deferral.md) — EM hash deferral requirement
 - [BR-EM-009](BR-EM-009-derived-timing-computation.md) — Derived timing computation (AlertManagerCheckAfter)
-- [#132](https://github.com/jordigilh/kubernaut/issues/132) — GitOps causality
-- [#251](https://github.com/jordigilh/kubernaut/issues/251) — Async hash deferral (foundation)
-- [#253](https://github.com/jordigilh/kubernaut/issues/253) — Timing model correction
-- [#277](https://github.com/jordigilh/kubernaut/issues/277) — Alert stabilization delay
+- [#132](https://github.com/Ayush-Singh986/kubernaut/issues/132) — GitOps causality
+- [#251](https://github.com/Ayush-Singh986/kubernaut/issues/251) — Async hash deferral (foundation)
+- [#253](https://github.com/Ayush-Singh986/kubernaut/issues/253) — Timing model correction
+- [#277](https://github.com/Ayush-Singh986/kubernaut/issues/277) — Alert stabilization delay

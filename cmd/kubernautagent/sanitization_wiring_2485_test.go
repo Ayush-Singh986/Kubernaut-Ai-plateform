@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/go-logr/logr"
-	kaconfig "github.com/jordigilh/kubernaut/internal/kubernautagent/config"
+	kaconfig "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/config"
 )
 
 var _ = Describe("KA sanitization wiring — #2485 (BR-KA-211)", func() {

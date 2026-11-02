@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/llm/openaicompat"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/llm/openaicompat"
 )
 
 // Issue #1581 / BR-AI-086: extraction RED for the shared, provider-agnostic

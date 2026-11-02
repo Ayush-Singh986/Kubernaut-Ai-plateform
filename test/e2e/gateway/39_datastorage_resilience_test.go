@@ -28,11 +28,11 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // Ginkgo DSL dot-import convention
 	. "github.com/onsi/gomega"    //nolint:staticcheck // Ginkgo/Gomega DSL dot-import convention
 
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	dsshared "github.com/jordigilh/kubernaut/test/e2e/datastorage/shared"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	dsshared "github.com/Ayush-Singh986/kubernaut/test/e2e/datastorage/shared"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Test 39: DataStorage Resilience -- the sole E2E representative for the

@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
 )
 
 // Validator handles input validation and sanitization

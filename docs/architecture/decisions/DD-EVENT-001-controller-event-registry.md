@@ -315,7 +315,7 @@ const (
 ```go
 import (
     corev1 "k8s.io/api/core/v1"
-    "github.com/jordigilh/kubernaut/pkg/shared/events"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
 )
 
 // Normal event

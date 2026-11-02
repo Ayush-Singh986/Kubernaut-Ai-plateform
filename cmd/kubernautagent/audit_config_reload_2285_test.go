@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kaaudit "github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
+	kaaudit "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
 )
 
 type recordConfigReloadSpyStore struct {

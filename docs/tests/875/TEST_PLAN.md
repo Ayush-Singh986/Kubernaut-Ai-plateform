@@ -29,7 +29,7 @@ This test plan validates the configurable log level feature for the Kubernaut Ag
 
 ## 2. References
 
-- [Issue #875](https://github.com/jordigilh/kubernaut/issues/875) — Make kubernaut-agent log level configurable via config file
+- [Issue #875](https://github.com/Ayush-Singh986/kubernaut/issues/875) — Make kubernaut-agent log level configurable via config file
 - BR-PLATFORM-875 — Log level hot-reload
 - `cmd/kubernautagent/main.go` — FileWatcher wiring
 - `internal/config/logging.go` — `ParseAndSetLevel`, `NewAtomicLevel`

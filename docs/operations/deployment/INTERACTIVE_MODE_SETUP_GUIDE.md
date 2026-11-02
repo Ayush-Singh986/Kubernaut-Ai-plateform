@@ -4,7 +4,7 @@
 **Audience**: Operators and SREs who want chat-driven investigation — a human (or an
 external agent) asks Kubernaut to investigate or remediate something on demand, via a
 browser console or directly against APIFrontend's MCP/API surface.
-**Authority**: [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md),
+**Authority**: [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md),
 Issue #2162, BR-PLATFORM-006.
 
 ---
@@ -104,7 +104,7 @@ not from your OIDC provider.
 ## 3. Install with Console + APIFrontend enabled
 
 Install the Kubernaut Operator and apply a `Kubernaut` CR using the
-[operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+[operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 Configure the CR's Console, APIFrontend, OIDC, LLM, policy, and dependency fields for
 this mode; the application Helm chart is no longer shipped by this repository.
 
@@ -176,8 +176,8 @@ kubectl get investigationsessions,agentsessions -n kubernaut-system
 
 ## References
 
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 - [AUTONOMOUS_MODE_SETUP_GUIDE.md](./AUTONOMOUS_MODE_SETUP_GUIDE.md) — the complementary alert-driven entry point
 - [FLEET_SETUP_GUIDE.md](./FLEET_SETUP_GUIDE.md) — layering multi-cluster fleet mode on top of this
 - `pkg/apifrontend/tools/af_create_rr.go` — source of truth for how AF creates `RemediationRequest` directly
-- [Issue #2162: Gateway/APIFrontend independent enable toggles](https://github.com/jordigilh/kubernaut/issues/2162)
+- [Issue #2162: Gateway/APIFrontend independent enable toggles](https://github.com/Ayush-Singh986/kubernaut/issues/2162)

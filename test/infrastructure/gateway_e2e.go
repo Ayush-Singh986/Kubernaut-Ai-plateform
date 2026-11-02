@@ -281,7 +281,7 @@ func loadAndDeployGatewayDependencies(ctx context.Context, clusterName, namespac
 		}{"DataStorage image", LoadImageToKind(ctx, dataStorageImage, "datastorage", clusterName, writer)}
 	}()
 	go func() {
-		for _, image := range []string{"docker.io/library/postgres:16-alpine", "quay.io/jordigilh/redis:7-alpine"} {
+		for _, image := range []string{"docker.io/library/postgres:16-alpine", "quay.io/Ayush-Singh986/redis:7-alpine"} {
 			if err := PreloadExternalImage(ctx, image, clusterName, writer); err != nil {
 				results <- struct {
 					name string

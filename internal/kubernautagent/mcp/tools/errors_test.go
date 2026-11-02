@@ -22,9 +22,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/adapters"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/mcp/tools"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/adapters"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp/tools"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

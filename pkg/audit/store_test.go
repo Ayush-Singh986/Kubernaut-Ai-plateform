@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	audit "github.com/jordigilh/kubernaut/pkg/audit"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	audit "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 // MockDataStorageClient is a mock implementation of audit.DataStorageClient for testing

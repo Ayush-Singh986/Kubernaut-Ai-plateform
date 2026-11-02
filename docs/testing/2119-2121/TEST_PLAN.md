@@ -7,11 +7,11 @@
 correction-retry LLM call when their respective triggers are hit (a
 same-kind remediation target, or an ambiguous kind missing `api_version`).
 This is the `main`-branch port of two fixes already shipped to
-`release/v1.5` (v1.5.6) as [#2118](https://github.com/jordigilh/kubernaut/issues/2118)
-and [#2120](https://github.com/jordigilh/kubernaut/issues/2120), tracked here
+`release/v1.5` (v1.5.6) as [#2118](https://github.com/Ayush-Singh986/kubernaut/issues/2118)
+and [#2120](https://github.com/Ayush-Singh986/kubernaut/issues/2120), tracked here
 under their v1.6-milestone clone numbers,
-[#2119](https://github.com/jordigilh/kubernaut/issues/2119) and
-[#2121](https://github.com/jordigilh/kubernaut/issues/2121). See
+[#2119](https://github.com/Ayush-Singh986/kubernaut/issues/2119) and
+[#2121](https://github.com/Ayush-Singh986/kubernaut/issues/2121). See
 `release/v1.5`'s `docs/testing/2118/TEST_PLAN.md` and
 `docs/testing/2120/TEST_PLAN.md` for the original live-LLM spike evidence
 (10/10 trials reproducing the undeclared-tool failure mode; 10/10 trials
@@ -41,7 +41,7 @@ the wrong call as a synthetic `tool_result` error plus an explicit reminder
 
 While restructuring both gates' audit-event lifecycle to add the new
 `retry_outcome` taxonomy, `main` was found to have the same pre-existing
-dead-mutation bug as `release/v1.5`'s [#2124](https://github.com/jordigilh/kubernaut/issues/2124):
+dead-mutation bug as `release/v1.5`'s [#2124](https://github.com/Ayush-Singh986/kubernaut/issues/2124):
 both gates called `audit.StoreBestEffort(gateEvent, ...)` immediately, then
 mutated `gateEvent.Data["retry_outcome"]`/`EventOutcome` afterward -- a
 production audit store snapshots `Data` synchronously at call time, so that
@@ -91,7 +91,7 @@ avoiding two near-duplicate helper sets in the same file. Concretely:
    matching real production semantics (identical fix to `release/v1.5`'s).
 7. New test files use `newTestInvestigator` (not `investigator.New`
    directly, as `release/v1.5`'s originals do) to satisfy `main`-only
-   [#1677](https://github.com/jordigilh/kubernaut/issues/1677) fail-closed
+   [#1677](https://github.com/Ayush-Singh986/kubernaut/issues/1677) fail-closed
    catalog-validation hardening for the workflow-selection phase that
    follows each gate in every scenario -- `release/v1.5` does not have this
    hardening, so its original tests call `investigator.New` directly.
@@ -137,7 +137,7 @@ new production entry point.
   entry point); this change modifies internal retry-handling and
   audit-emission behavior without adding a new wiring point.
 - **IT/E2E were added net-new for a related, separately-tracked gap**:
-  verifying this fix's audit trail surfaced [#2141](https://github.com/jordigilh/kubernaut/issues/2141)
+  verifying this fix's audit trail surfaced [#2141](https://github.com/Ayush-Singh986/kubernaut/issues/2141)
   (the `retry_outcome`/`ambiguous_kind`/`conflicting_groups` fields set here
   never reached Data Storage due to a fixed `LLMRequestPayload` schema,
   independent of this fix's correctness). See

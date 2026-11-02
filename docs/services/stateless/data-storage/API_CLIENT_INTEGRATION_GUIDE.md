@@ -4,13 +4,13 @@ Short guide for calling the Data Storage REST API from Go using the **ogen**-gen
 
 ## Generated client (`ogen`)
 
-The directory `pkg/datastorage/ogen-client` is generated from `api/openapi/data-storage-v1.yaml` (see `gen.go`). The **Go package name is `api`**, imported from module path **`github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client`**.
+The directory `pkg/datastorage/ogen-client` is generated from `api/openapi/data-storage-v1.yaml` (see `gen.go`). The **Go package name is `api`**, imported from module path **`github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client`**.
 
 ### Constructing the client
 
 ```go
 import (
-    dsapi "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+    dsapi "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 client, err := dsapi.NewClient("https://data-storage.namespace.svc:8443")

@@ -15,8 +15,8 @@ Validate that the `namespace` Prometheus alert label is excluded from `extractTa
 
 ### 1.3 References
 
-- Issue: [#1067](https://github.com/jordigilh/kubernaut/issues/1067)
-- Related: [#1045](https://github.com/jordigilh/kubernaut/issues/1045) (original reserved label denylist)
+- Issue: [#1067](https://github.com/Ayush-Singh986/kubernaut/issues/1067)
+- Related: [#1045](https://github.com/Ayush-Singh986/kubernaut/issues/1045) (original reserved label denylist)
 - Business Requirement: BR-GATEWAY-004 (Cross-adapter deduplication)
 - Business Requirement: BR-GATEWAY-069 (Deduplication tracking)
 - Testing Guidelines: `docs/development/business-requirements/TESTING_GUIDELINES.md`

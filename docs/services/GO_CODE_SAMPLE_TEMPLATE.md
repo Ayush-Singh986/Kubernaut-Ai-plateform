@@ -67,11 +67,11 @@ import (
 
 ```go
 import (
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1"
-    workflowexecutionv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1"
-    kubernetesexecutionv1 "github.com/jordigilh/kubernaut/api/kubernetesexecution/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1"
+    workflowexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1"
+    kubernetesexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/kubernetesexecution/v1"
 )
 ```
 
@@ -102,8 +102,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
     "sigs.k8s.io/controller-runtime/pkg/log"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 )
 
 const (
@@ -222,8 +222,8 @@ import (
     "k8s.io/apimachinery/pkg/types"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    "github.com/jordigilh/kubernaut/pkg/shared/types"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // Processor handles business logic
@@ -277,7 +277,7 @@ import (
 
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway/types"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 // GatewayService handles webhook ingestion
@@ -337,9 +337,9 @@ import (
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("RemediationRequest Controller", func() {
@@ -406,7 +406,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/processor"
+    "github.com/Ayush-Singh986/kubernaut/pkg/processor"
 )
 
 var _ = Describe("Business Logic Calculator", func() {
@@ -451,8 +451,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("Gateway Service Integration", func() {
@@ -510,8 +510,8 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/storage"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("PostgreSQL Integration", func() {
@@ -579,10 +579,10 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
 )
 
 var _ = Describe("RemediationRequest Controller Integration", func() {
@@ -663,7 +663,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/effectiveness"
+    "github.com/Ayush-Singh986/kubernaut/pkg/effectiveness"
 )
 
 var _ = Describe("Effectiveness Calculator", func() {
@@ -749,7 +749,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/gateway"
+    "github.com/Ayush-Singh986/kubernaut/pkg/gateway"
 )
 ```
 
@@ -783,7 +783,7 @@ defer server.Close()
 **External Service Mocking**:
 ```go
 import (
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 )
 
 mockAIService := mocks.NewMockAIService()
@@ -817,8 +817,8 @@ When writing test documentation, ensure:
 3. **Kubernetes Core**: `k8s.io/api/*`, `k8s.io/apimachinery/*`
 4. **Kubernetes Extensions**: `k8s.io/client-go/*`
 5. **Controller Runtime**: `sigs.k8s.io/controller-runtime/*`
-6. **Project APIs**: `github.com/jordigilh/kubernaut/api/*`
-7. **Project Packages**: `github.com/jordigilh/kubernaut/pkg/*`, `github.com/jordigilh/kubernaut/internal/*`
+6. **Project APIs**: `github.com/Ayush-Singh986/kubernaut/api/*`
+7. **Project Packages**: `github.com/Ayush-Singh986/kubernaut/pkg/*`, `github.com/Ayush-Singh986/kubernaut/internal/*`
 
 ### Within Each Group
 
@@ -845,11 +845,11 @@ import (
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    processingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1"
 
-    "github.com/jordigilh/kubernaut/pkg/processing"
-    "github.com/jordigilh/kubernaut/pkg/shared/types"
+    "github.com/Ayush-Singh986/kubernaut/pkg/processing"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 ```
 
@@ -1004,5 +1004,5 @@ go build sample.go
 ---
 
 **Maintained by**: Kubernaut Development Team
-**Questions**: File issue in [github.com/jordigilh/kubernaut](https://github.com/jordigilh/kubernaut)
+**Questions**: File issue in [github.com/Ayush-Singh986/kubernaut](https://github.com/Ayush-Singh986/kubernaut)
 

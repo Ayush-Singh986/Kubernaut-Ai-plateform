@@ -27,11 +27,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-	dsmetrics "github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server/helpers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+	dsmetrics "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server/helpers"
 )
 
 // ========================================

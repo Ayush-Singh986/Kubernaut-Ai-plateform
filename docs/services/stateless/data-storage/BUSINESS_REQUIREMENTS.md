@@ -33,7 +33,7 @@
   - Corrected `BR-STORAGE-003`'s description (removed a stale pgvector-version-check claim; the
     validator now only checks PostgreSQL ≥16) and flagged its test-coverage citation as unverified.
 - **Total retired this version**: 12 BRs (`002`, `008`, `012`-`016`, `038`-`042`); all marked
-  `❌ Retired` (kept as historical record per [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806));
+  `❌ Retired` (kept as historical record per [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806));
   excluded from the Coverage Analysis rollups, Priority Distribution, and Summary Statistics.
 
 ### **v1.5** (March 4, 2026)
@@ -105,7 +105,7 @@
   - **Active BRs (V1.0)**: 28 (62%)
   - **Planned BRs (V1.1)**: 3 (7%)
   - **Reserved BRs**: 1 (2%) - BR-029 reserved for future use
-  - **Retired BRs**: 12 (27%) - BR-STORAGE-002, 008, 012-016 (pgvector/embedding/dual-write removal), 038-042 (Workflow Catalog CRUD API); all retired 2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)
+  - **Retired BRs**: 12 (27%) - BR-STORAGE-002, 008, 012-016 (pgvector/embedding/dual-write removal), 038-042 (Workflow Catalog CRUD API); all retired 2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)
 - **Deprecated BRs**: 1 (2%) - BR-STORAGE-009 (marked ⚠️ DEPRECATED pre-existing, 2026-03)
 - **V2 Deferred BRs**: 0 (0%)
 
@@ -183,14 +183,14 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 #### **BR-STORAGE-002: Typed Error Handling for Dual-Write** — ❌ Retired
 - **Priority**: P1
-- **Status**: ❌ Retired (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)) — see Category 5/6 note below; `pkg/datastorage/dualwrite/` package (including `errors.go`) was deleted wholesale by `33c2053a3` ("Remove pgvector/dual-write dead code", 2026-01-04)
+- **Status**: ❌ Retired (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)) — see Category 5/6 note below; `pkg/datastorage/dualwrite/` package (including `errors.go`) was deleted wholesale by `33c2053a3` ("Remove pgvector/dual-write dead code", 2026-01-04)
 - **Description (historical)**: Provided typed errors for dual-write operations (PostgreSQL failure, Vector DB failure, validation failure, context canceled) to enable precise error handling and recovery
 - **Business Value (historical)**: Enable intelligent error handling and retry strategies based on failure type
 - **Related BRs**: BR-STORAGE-014 (atomic dual-write, also retired)
 
 #### **BR-STORAGE-003: Database Version Validation**
 - **Priority**: P0
-- **Status**: ✅ Active (⚠️ description corrected 2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) — pgvector was deprecated/removed, see Category 5/6 note; this BR now covers PostgreSQL-only validation)
+- **Status**: ✅ Active (⚠️ description corrected 2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) — pgvector was deprecated/removed, see Category 5/6 note; this BR now covers PostgreSQL-only validation)
 - **Description**: Validate PostgreSQL version at startup to ensure compatibility (PostgreSQL ≥16 per `MinPostgreSQLMajorVersion`, `pkg/datastorage/schema/validator.go`). The pgvector version check described in earlier versions of this document no longer applies — pgvector support was removed (see Category 5/6 note below)
 - **Business Value**: Prevent runtime failures due to an incompatible PostgreSQL version
 - **Test Coverage**: Not found under `test/unit/datastorage/` or co-located with `pkg/datastorage/schema/` as of this review — likely a coverage gap, not just a stale citation; the previously-cited `validator_schema_test.go` no longer exists
@@ -246,7 +246,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 #### **BR-STORAGE-008: Embedding Generation** — ❌ Retired
 - **Priority**: P0
-- **Status**: ❌ Retired (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)) — same pgvector/embedding removal as Category 5/6 below; both cited implementation files (`pkg/datastorage/embedding/pipeline.go`, `pkg/datastorage/dualwrite/coordinator.go`) are deleted
+- **Status**: ❌ Retired (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)) — same pgvector/embedding removal as Category 5/6 below; both cited implementation files (`pkg/datastorage/embedding/pipeline.go`, `pkg/datastorage/dualwrite/coordinator.go`) are deleted
 - **Description (historical)**: Generate 384-dimensional embeddings using sentence-transformers model for semantic similarity search capabilities
 - **Business Value (historical)**: Enable semantic similarity search for workflow catalog queries — superseded by label-based filtering in Kubernaut Agent's in-process catalog
 - **Related BRs**: BR-STORAGE-012 (workflow catalog embedding, also retired), BR-STORAGE-009 (cache tracking, already separately marked ⚠️ DEPRECATED below)
@@ -396,7 +396,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 ### **Category 5: Embedding & Vector Operations (BR-STORAGE-012, BR-STORAGE-013)** — ❌ RETIRED
 ### **Category 6: Dual-Write Operations (BR-STORAGE-014 to BR-STORAGE-016)** — ❌ RETIRED
 
-> **❌ RETIRED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Both categories
+> **❌ RETIRED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Both categories
 > describe pgvector-based semantic search and PostgreSQL/Redis-Vector-DB dual-write functionality that no
 > longer exists in Data Storage. Confirmed by two deliberate removal commits:
 > - `33c2053a3` ("Remove pgvector/dual-write dead code", 2026-01-04): deleted `pkg/datastorage/dualwrite/`
@@ -738,7 +738,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 ### **Category 10: Workflow Catalog CRUD API (BR-STORAGE-038 to BR-STORAGE-042)** — ❌ RETIRED
 
-> **❌ RETIRED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The entire
+> **❌ RETIRED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The entire
 > `/api/v1/workflows*` REST surface described in this category no longer exists in Data Storage. Removed by
 > `1ceb9fbf3` (mutations, Issue #1661 Phase B — `AuthWebhook` now owns the `RemediationWorkflow` CRD lifecycle
 > directly per DD-WORKFLOW-018) and `3e8b5fbb3` (discovery, Issue #1677 Phase 2g — Kubernaut Agent's
@@ -908,7 +908,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 #### **BR-STORAGE-035: Cursor-Based Pagination**
 - **Priority**: P1
-- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #288](https://github.com/jordigilh/kubernaut/issues/288)
+- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #288](https://github.com/Ayush-Singh986/kubernaut/issues/288)
 - **Description**: Support cursor-based pagination for audit event queries to handle real-time data with high write volumes. Cursor format: `base64(event_timestamp + event_id)` for uniqueness.
 - **Business Value**:
   - **Consistency**: No missed/duplicate records during pagination
@@ -930,7 +930,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 #### **BR-STORAGE-036: Parent Event Lookup Index**
 - **Priority**: P1
-- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #289](https://github.com/jordigilh/kubernaut/issues/289)
+- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #289](https://github.com/Ayush-Singh986/kubernaut/issues/289)
 - **Description**: Create database index on `(parent_event_id, parent_event_date)` to optimize child event lookups and event chain traversal.
 - **Business Value**:
   - **Performance**: Faster queries for "find all children of parent X"
@@ -951,7 +951,7 @@ The Data Storage Service is the **exclusive database access layer** for Kubernau
 
 #### **BR-STORAGE-037: Historical Parent-Child Backfill**
 - **Priority**: P2
-- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #290](https://github.com/jordigilh/kubernaut/issues/290)
+- **Status**: 📋 Planned (V1.1) — Tracked in [GitHub #290](https://github.com/Ayush-Singh986/kubernaut/issues/290)
 - **Description**: Backfill `parent_event_date` for existing audit events to enable historical event chain queries. Run during maintenance window.
 - **Business Value**:
   - **Completeness**: Enable historical event chain queries

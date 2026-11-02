@@ -27,7 +27,7 @@ Additionally, the unstructured `map[string]string` format is adapter-specific: P
 
 ### Trigger
 
-Issue [#462](https://github.com/jordigilh/kubernaut/issues/462): LLM concluded "not actionable" for a PVC alert because it had no description context to guide investigation.
+Issue [#462](https://github.com/Ayush-Singh986/kubernaut/issues/462): LLM concluded "not actionable" for a PVC alert because it had no description context to guide investigation.
 
 ---
 
@@ -166,7 +166,7 @@ The existing `SignalAnnotations map[string]string` on `RemediationRequestSpec` a
 1. **Structural isolation in prompt**: Annotation content is intended to be wrapped in clearly
    delimited context with an explicit instruction that the content is factual data, NOT
    instructions. *(Not independently verified against KA's Go prompt builder as part of the
-   [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) terminology sweep — flagged
+   [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) terminology sweep — flagged
    for follow-up verification.)*
 2. **Injection-pattern sanitization**: KA's `internal/kubernautagent/prompt/builder.go`
    (`sanitizeField`) strips known prompt-injection phrases (e.g. "ignore previous instructions")
@@ -211,7 +211,7 @@ flowchart LR
 - [DD-GATEWAY-002](DD-GATEWAY-002-opentelemetry-adapter.md): OpenTelemetry adapter (PLANNING)
 - [DD-GATEWAY-NON-K8S-SIGNALS](DD-GATEWAY-NON-K8S-SIGNALS.md): Non-Kubernetes signal support (PROPOSED)
 - [BR-GATEWAY-185](../../services/stateless/gateway-service/BUSINESS_REQUIREMENTS.md): Normalized Signal Description Capture
-- BR-KA-213: Signal Description in Investigation Prompt (no standalone doc yet; tracked for the KA service doc set consolidation, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) PR4)
+- BR-KA-213: Signal Description in Investigation Prompt (no standalone doc yet; tracked for the KA service doc set consolidation, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) PR4)
 - [BR-KA-211](../../requirements/BR-KA-211-llm-input-sanitization.md): LLM Input Sanitization
 
 ---

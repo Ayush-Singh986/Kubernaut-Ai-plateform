@@ -6,7 +6,7 @@
 **Target Version**: V1.6<br>
 **Status**: ✅ Approved contract; implementation pending<br>
 **Date**: 2026-10-09<br>
-**Related Issues**: [#2496](https://github.com/jordigilh/kubernaut/issues/2496), [#2498](https://github.com/jordigilh/kubernaut/issues/2498)<br>
+**Related Issues**: [#2496](https://github.com/Ayush-Singh986/kubernaut/issues/2496), [#2498](https://github.com/Ayush-Singh986/kubernaut/issues/2498)<br>
 **Authority**: [DD-KA-2496](../architecture/decisions/DD-KA-2496-history-aware-rca-and-repeat-selection.md)
 
 ---

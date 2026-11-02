@@ -11,9 +11,9 @@ import (
 	"google.golang.org/adk/v2/agent"
 	adksession "google.golang.org/adk/v2/session"
 
-	agentpkg "github.com/jordigilh/kubernaut/pkg/apifrontend/agent"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	agentpkg "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/agent"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
 )
 
 var _ = Describe("A2A Protocol Conformance", func() {

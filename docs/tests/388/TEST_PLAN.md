@@ -10,7 +10,7 @@
 **Authority**:
 - [BR-HAPI-200](../../requirements/BR-HAPI-200-resolved-stale-signals.md): Handling Inconclusive Investigations and Self-Resolved Signals
 - [BR-ORCH-037](../../requirements/BR-ORCH-037-workflow-not-needed.md): Handle AIAnalysis WorkflowNotNeeded
-- [Issue #388](https://github.com/jordigilh/kubernaut/issues/388): HAPI escalation logic overrides LLM "not actionable" conclusion
+- [Issue #388](https://github.com/Ayush-Singh986/kubernaut/issues/388): HAPI escalation logic overrides LLM "not actionable" conclusion
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)

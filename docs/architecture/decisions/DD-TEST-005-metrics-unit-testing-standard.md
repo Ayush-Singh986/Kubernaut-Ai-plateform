@@ -353,7 +353,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/{service}/metrics"
+    "github.com/Ayush-Singh986/kubernaut/pkg/{service}/metrics"
 )
 ```
 

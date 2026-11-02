@@ -190,7 +190,7 @@ package enricher
 import (
     "context"
 
-    "github.com/jordigilh/kubernaut/pkg/types"
+    "github.com/Ayush-Singh986/kubernaut/pkg/types"
 )
 
 // KubernetesEnricher fetches Kubernetes context for signal classification.

@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 // FuzzJWTValidatorValidate exercises JWTValidator.Validate with adversarial

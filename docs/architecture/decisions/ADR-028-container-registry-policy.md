@@ -64,7 +64,7 @@ registry.redhat.io
 
 #### **Tier 3: Internal Mirror (APPROVED)**
 ```
-quay.io/jordigilh/*
+quay.io/Ayush-Singh986/*
 ```
 - **Purpose**: Kubernaut service images and mirrored base images
 - **Authentication**: Public or private (per image)
@@ -76,7 +76,7 @@ quay.io/jordigilh/*
 - `docker.io` (Docker Hub) - Community images, no enterprise support
 - `gcr.io` (Google Container Registry) - Not Red Hat ecosystem
 - `ghcr.io` (GitHub Container Registry) - Not Red Hat ecosystem
-- `quay.io` (except `jordigilh/*`) - Public Quay images lack support
+- `quay.io` (except `Ayush-Singh986/*`) - Public Quay images lack support
 - `alpine` (Docker Hub shorthand) - Not Red Hat ecosystem
 
 ---
@@ -305,7 +305,7 @@ FROM registry.access.redhat.com/ubi10/ubi:latest
 
 #### **For Python Services** (e.g., HolmesGPT API)
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**:
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**:
 > "HolmesGPT API" was the pre-rewrite name of what is now Kubernaut Agent (KA), rewritten to native
 > Go per issue #433 (see `docker/kubernautagent.Dockerfile`). No Python-based production service
 > remains in Kubernaut today; this pattern is retained for reference should a future Python-based
@@ -483,8 +483,8 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:9.3-1552
 **Pipeline Integration**:
 ```bash
 # CI/CD Pipeline
-podman build -t quay.io/jordigilh/gateway:v1.0.0 .
-podman scan quay.io/jordigilh/gateway:v1.0.0
+podman build -t quay.io/Ayush-Singh986/gateway:v1.0.0 .
+podman scan quay.io/Ayush-Singh986/gateway:v1.0.0
 # Fail build if CRITICAL/HIGH CVEs found
 ```
 
@@ -628,7 +628,7 @@ LABEL name="kubernaut-service" \
 ### **Negative**
 
 1. ⚠️ **Registry Dependency**: Requires `registry.access.redhat.com` availability
-   - **Mitigation**: Mirror images to `quay.io/jordigilh/*` for redundancy
+   - **Mitigation**: Mirror images to `quay.io/Ayush-Singh986/*` for redundancy
 2. ⚠️ **Image Size**: UBI images larger than Alpine (~200MB vs. ~5MB)
    - **Mitigation**: Use `ubi-minimal` (100MB) instead of full UBI
 3. ⚠️ **Build Performance**: DNF package management slower than apk

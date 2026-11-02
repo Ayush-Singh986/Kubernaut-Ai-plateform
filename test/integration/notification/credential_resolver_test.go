@@ -14,10 +14,10 @@ import (
 	. "github.com/onsi/gomega"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 var _ = Describe("Credential Resolver Integration (BR-NOT-104)", func() {

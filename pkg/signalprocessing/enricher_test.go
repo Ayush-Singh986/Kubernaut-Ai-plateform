@@ -46,9 +46,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/enricher"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/enricher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
 )
 
 // Unit Test: K8sEnricher implementation correctness

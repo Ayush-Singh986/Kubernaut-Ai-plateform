@@ -13,7 +13,7 @@ Usage:
   tag used by Helm deployments.
 
 Environment:
-  REPOSITORY  GitHub repository, default: jordigilh/kubernaut
+  REPOSITORY  GitHub repository, default: Ayush-Singh986/kubernaut
   GITHUB_TOKEN / GH_TOKEN
               Optional explicit GitHub token.
               If neither token variable is set, an authenticated `gh` CLI
@@ -110,7 +110,7 @@ if [[ "$ARCH" == "arm64" ]]; then
   echo "Note: db-migrate and mock-llm are amd64-only; no ${ARCH} artifacts expected for them." >&2
 fi
 
-REPOSITORY="${REPOSITORY:-jordigilh/kubernaut}"
+REPOSITORY="${REPOSITORY:-Ayush-Singh986/kubernaut}"
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 if [[ -z "$TOKEN" ]]; then

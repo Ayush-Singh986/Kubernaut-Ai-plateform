@@ -16,8 +16,8 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
 )
 
 const debounceDuration = 200 * time.Millisecond

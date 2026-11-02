@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	sharedconfig "github.com/jordigilh/kubernaut/internal/config"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls" // Issue #678: TLS config
+	sharedconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls" // Issue #678: TLS config
 	"gopkg.in/yaml.v3"
 )
 

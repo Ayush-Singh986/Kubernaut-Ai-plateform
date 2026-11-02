@@ -23,9 +23,9 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // CompleteNoActionInput defines the input schema for the kubernaut_complete_no_action tool.

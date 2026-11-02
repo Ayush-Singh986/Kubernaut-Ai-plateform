@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/tools/custom"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/tools/custom"
 )
 
 // fakeGetTool is a tools.Tool double standing in for the fleet overlay's

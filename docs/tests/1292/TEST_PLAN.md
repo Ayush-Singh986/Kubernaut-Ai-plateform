@@ -8,10 +8,10 @@
 
 | Ref | Description |
 |-----|-------------|
-| [Issue #1292](https://github.com/jordigilh/kubernaut/issues/1292) | af_create_rr creates RR in target workload namespace instead of controller namespace |
+| [Issue #1292](https://github.com/Ayush-Singh986/kubernaut/issues/1292) | af_create_rr creates RR in target workload namespace instead of controller namespace |
 | [ADR-057](docs/architecture/decisions/ADR-057-crd-namespace-consolidation.md) | CRD Namespace Consolidation — all CRDs in controller namespace |
-| [PR #1284](https://github.com/jordigilh/kubernaut/pull/1284) | AF Agent Quality Fixes (parent PR) |
-| [Issue #1282](https://github.com/jordigilh/kubernaut/issues/1282) | AF Agent Quality — namespace, signal grounding, output suppression |
+| [PR #1284](https://github.com/Ayush-Singh986/kubernaut/pull/1284) | AF Agent Quality Fixes (parent PR) |
+| [Issue #1282](https://github.com/Ayush-Singh986/kubernaut/issues/1282) | AF Agent Quality — namespace, signal grounding, output suppression |
 | BR-PLATFORM-057 | CRD namespace consolidation |
 | BR-SAFETY-001 | Dedup fingerprint scoped to workload identity |
 | BR-AI-056 | Severity triage queries workload namespace |

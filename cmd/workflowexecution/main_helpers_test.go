@@ -23,9 +23,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	internalconfig "github.com/jordigilh/kubernaut/internal/config"
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
-	weexecutor "github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
+	internalconfig "github.com/Ayush-Singh986/kubernaut/internal/config"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
+	weexecutor "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
 )
 
 // TestLoadWorkflowExecutionConfig_DefaultsWhenPathEmpty is a characterization

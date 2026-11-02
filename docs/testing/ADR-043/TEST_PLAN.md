@@ -6,7 +6,7 @@
 **Author**: AI Assistant + Jordi Gil
 **Status**: Ready for Execution
 **Branch**: `feat/group-a-schema-credentials`
-**Issue**: [#131](https://github.com/jordigilh/kubernaut/issues/131)
+**Issue**: [#131](https://github.com/Ayush-Singh986/kubernaut/issues/131)
 
 **Authority**:
 - ADR-043: Workflow Schema Definition Standard

@@ -8,7 +8,7 @@
 **Branch**: `feat/329-crd-restructure`
 
 **Authority**:
-- [#329](https://github.com/jordigilh/kubernaut/issues/329): Restructure RemediationWorkflow CRD
+- [#329](https://github.com/Ayush-Singh986/kubernaut/issues/329): Restructure RemediationWorkflow CRD
 - [DD-WORKFLOW-002](docs/architecture/decisions/ADR-043-workflow-schema-definition-standard.md): Workflow schema definition standard
 - [BR-WORKFLOW-006](docs/requirements/BR-WORKFLOW-006-remediation-workflow-crd.md): Workflow content integrity
 

@@ -192,7 +192,7 @@ spec:
 package remediationorchestrator
 
 import (
-    remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+    remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 func (r *RemediationRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

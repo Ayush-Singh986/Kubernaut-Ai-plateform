@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/go-chi/chi/v5"
-	kubecors "github.com/jordigilh/kubernaut/pkg/http/cors"
+	kubecors "github.com/Ayush-Singh986/kubernaut/pkg/http/cors"
 )
 
 // BR-HTTP-015: CORS Integration Tests

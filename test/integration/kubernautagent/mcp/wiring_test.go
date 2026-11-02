@@ -28,8 +28,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
-	kaserver "github.com/jordigilh/kubernaut/internal/kubernautagent/server"
+	mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
+	kaserver "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/server"
 )
 
 var httpTestClient = &http.Client{Timeout: 10 * time.Second}

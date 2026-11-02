@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/backoff"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 )
 
 var defaultRetryBackoff = backoff.Config{

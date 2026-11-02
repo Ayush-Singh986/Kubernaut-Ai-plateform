@@ -21,7 +21,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/conversation"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/conversation"
 )
 
 // kaToolE2ETargetName is the name (and app label) of the dedicated

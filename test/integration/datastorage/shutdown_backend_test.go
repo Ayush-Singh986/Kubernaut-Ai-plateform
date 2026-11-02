@@ -15,11 +15,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/partition"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/server"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/partition"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/server"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
@@ -226,7 +226,7 @@ var _ = Describe("BR-STORAGE-028 / BR-AUDIT-005: owned shutdown backends", func(
 		GinkgoT().Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		provisionCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		failed, err := newShutdownBackend(provisionCtx, "quay.io/jordigilh/redis:7-alpine")
+		failed, err := newShutdownBackend(provisionCtx, "quay.io/Ayush-Singh986/redis:7-alpine")
 		Expect(failed).NotTo(BeNil())
 		// RED must not leak the real fault-injection container into later specs.
 		DeferCleanup(func() {

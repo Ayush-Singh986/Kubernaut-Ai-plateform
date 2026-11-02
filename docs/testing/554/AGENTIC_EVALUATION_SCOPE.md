@@ -8,7 +8,7 @@
 
 **Effectiveness signals**: Undecided; selection and validation require a future spike
 
-**Related issue**: [#554](https://github.com/jordigilh/kubernaut/issues/554)
+**Related issue**: [#554](https://github.com/Ayush-Singh986/kubernaut/issues/554)
 
 ## 1. Purpose and Claim Boundary
 

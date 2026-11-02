@@ -340,7 +340,7 @@ package authwebhook
 
 import (
     "context"
-    "github.com/jordigilh/kubernaut/internal/client/datastorage/dsgen"
+    "github.com/Ayush-Singh986/kubernaut/internal/client/datastorage/dsgen"
 )
 
 // AuditClient wraps Data Storage API for audit event emission
@@ -453,8 +453,8 @@ import (
     "encoding/json"
     "fmt"
     "net/http"
-    "github.com/jordigilh/kubernaut/pkg/authwebhook"
-    "github.com/jordigilh/kubernaut/api/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+    "github.com/Ayush-Singh986/kubernaut/api/v1alpha1"
     "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -679,8 +679,8 @@ import (
     "encoding/json"
     "fmt"
     "net/http"
-    "github.com/jordigilh/kubernaut/pkg/authwebhook"
-    "github.com/jordigilh/kubernaut/api/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+    "github.com/Ayush-Singh986/kubernaut/api/v1alpha1"
     "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -831,7 +831,7 @@ Similar structure to WFE handler tests, covering:
 replicaCount: 2  # HA deployment
 
 image:
-  repository: quay.io/jordigilh/kubernaut-auth-webhook
+  repository: quay.io/Ayush-Singh986/kubernaut-auth-webhook
   tag: v1.0.0
   pullPolicy: IfNotPresent
 
@@ -958,10 +958,10 @@ import (
     "flag"
     "os"
 
-    "github.com/jordigilh/kubernaut/pkg/authwebhook"
-    wfehandler "github.com/jordigilh/kubernaut/internal/webhook/workflowexecution"
-    rarhandler "github.com/jordigilh/kubernaut/internal/webhook/remediationapproval"
-    "github.com/jordigilh/kubernaut/internal/client/datastorage/dsgen"
+    "github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+    wfehandler "github.com/Ayush-Singh986/kubernaut/internal/webhook/workflowexecution"
+    rarhandler "github.com/Ayush-Singh986/kubernaut/internal/webhook/remediationapproval"
+    "github.com/Ayush-Singh986/kubernaut/internal/client/datastorage/dsgen"
 
     "sigs.k8s.io/controller-runtime/pkg/log"
     "sigs.k8s.io/controller-runtime/pkg/log/zap"

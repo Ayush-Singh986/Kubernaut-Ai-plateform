@@ -771,7 +771,7 @@ import (
     "time"
 
     tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/v1alpha1"
     corev1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     ctrl "sigs.k8s.io/controller-runtime"

@@ -117,7 +117,7 @@ var _ = Describe("issue #2492 operator deployment contracts", func() {
 	})
 	It("UT-2492-001 [BR-PLATFORM-014]: records exact operator provenance", func() {
 		data, err := BuildOperatorProvenanceJSON(OperatorArtifactProvenance{
-			Repository:    "jordigilh/kubernaut-operator",
+			Repository:    "Ayush-Singh986/kubernaut-operator",
 			RequestedRef:  "9dc9394fd1844be4f4d4adb89db9a881dbc066ed",
 			ResolvedSHA:   "9dc9394fd1844be4f4d4adb89db9a881dbc066ed",
 			ImageRef:      "localhost/kubernaut-operator:cebebf7",

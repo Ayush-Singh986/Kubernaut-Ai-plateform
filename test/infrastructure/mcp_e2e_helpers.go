@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

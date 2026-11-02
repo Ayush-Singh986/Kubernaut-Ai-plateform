@@ -30,9 +30,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // Event type constants (per DD-AUDIT-003 and ADR-034 Table 3)

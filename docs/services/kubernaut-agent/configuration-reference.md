@@ -22,7 +22,7 @@ Configuration is split into two files plus optional CLI overrides:
 | LLM runtime YAML (`LLMRuntimeConfig`) | File watcher reload, **except LLM identity** | Endpoint, API key placeholder, tuning, custom headers, per-phase overrides — see §6 |
 
 > **LLM identity (`model`, and `phaseModels.<phase>.provider`/`.model`) requires a
-> process restart to change** — [#1599](https://github.com/jordigilh/kubernaut/issues/1599) /
+> process restart to change** — [#1599](https://github.com/Ayush-Singh986/kubernaut/issues/1599) /
 > [DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md).
 > A hot-reload attempt that changes identity is rejected in full (the whole
 > candidate reload, including any otherwise-safe tuning changes in the same
@@ -248,12 +248,12 @@ Top-level YAML (not nested under `runtime`/`ai` in file). Mapped by `LLMRuntimeC
 | `endpoint` | string | (empty) | Required for non-standard providers (see section 5.1) | API base / proxy URL. |
 | `apiKey` | string | (empty) | If empty, resolved from credential files (section 5.2) | Inline key material (sensitive). |
 | `temperature` | float64 | `0` if omitted | None in `Validate` | Passed to `RuntimeParams`. **Omitted YAML fields decode as Go zero values** (`0`); they are **not** merged with `DefaultLLMRuntime()` in `LoadLLMRuntime`. |
-| `maxRetries` | int | `0` if omitted | None in `Validate` | Retry attempts = `maxAttempts = 1 + maxRetries`; if `maxAttempts < 1` it is clamped to `1` in chat helper. Applies uniformly to both the non-streaming (`ChatWithParams`) and streaming (`chatOrStream`, used whenever an SSE observer is attached) call paths — the streaming path previously made exactly one attempt regardless of this setting ([#1612](https://github.com/jordigilh/kubernaut/issues/1612)). Retries are skipped early once a permanent client error (400/401/403/404-class) is classified ([#1585](https://github.com/jordigilh/kubernaut/issues/1585)) or, on the streaming path only, once any token has already been delivered to the observer for the current attempt. |
+| `maxRetries` | int | `0` if omitted | None in `Validate` | Retry attempts = `maxAttempts = 1 + maxRetries`; if `maxAttempts < 1` it is clamped to `1` in chat helper. Applies uniformly to both the non-streaming (`ChatWithParams`) and streaming (`chatOrStream`, used whenever an SSE observer is attached) call paths — the streaming path previously made exactly one attempt regardless of this setting ([#1612](https://github.com/Ayush-Singh986/kubernaut/issues/1612)). Retries are skipped early once a permanent client error (400/401/403/404-class) is classified ([#1585](https://github.com/Ayush-Singh986/kubernaut/issues/1585)) or, on the streaming path only, once any token has already been delivered to the observer for the current attempt. |
 | `timeoutSeconds` | int | `0` if omitted | None | If `<= 0`, per-chat wrapper does not add `context.WithTimeout` (relies on parent context). The `anthropicfamily`/`openai` clients still use a **120s** default HTTP client timeout when a custom transport stack is built. |
 | `customHeaders` | array | `nil` | Each entry validated; see below | Extra outbound headers on LLM HTTP stack. |
 | `phaseModels` | map of complete `types.LLMConfig`, keyed by phase name | `nil` | See §6.1 | Independent per-phase LLM profiles (#1470, #2515). Provider/model identity remains subject to the restart-required rule. |
 
-**`model` is immutable after process start** ([#1599](https://github.com/jordigilh/kubernaut/issues/1599) /
+**`model` is immutable after process start** ([#1599](https://github.com/Ayush-Singh986/kubernaut/issues/1599) /
 [DD-LLM-008](../../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md)):
 `ai.llm.provider` (static config) combined with runtime `model` form the LLM's
 "identity". A hot-reload attempt where the new `model` differs from the model

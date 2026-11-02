@@ -47,7 +47,7 @@ the Kind config YAML as ground truth over this table for exact port semantics.*
 
 ## 🤖 Kubernaut Agent (KA) E2E Dependencies (Dedicated Kind Cluster)
 
-> **Corrected (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **Corrected (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > pgvector-backed workflow catalog storage and standalone Embedding Service below were **retired**
 > (`33c2053a3`, `eb5185b73` — see [DD-CONTRACT-002](DD-CONTRACT-002-service-integration-contracts.md)
 > changelog). KA's real E2E Kind config (`test/infrastructure/kind-kubernautagent-config.yaml`) has no

@@ -23,12 +23,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/circuitbreaker" // BR-GATEWAY-093: Circuit breaker detection
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/circuitbreaker" // BR-GATEWAY-093: Circuit breaker detection
 
-	"github.com/jordigilh/kubernaut/pkg/audit"                       // DD-AUDIT-003: Audit integration
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client" // Ogen generated audit types
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"    // BR-AUDIT-005 Gap #7: Standardized error details
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"                 // BR-GATEWAY-036/037: Shared auth middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"                       // DD-AUDIT-003: Audit integration
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client" // Ogen generated audit types
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"    // BR-AUDIT-005 Gap #7: Standardized error details
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"                 // BR-GATEWAY-036/037: Shared auth middleware
 
 	// ADR-052 Addendum 001: Exponential backoff with jitter
 	// Issue #753: Dedicated health server
@@ -43,7 +43,7 @@ import (
 
 	// BR-109: Request ID middleware
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 	// BR-HTTP-015: Shared CORS library
 	// DD-005: Shared sanitization library
 	// BR-SCOPE-002: Resource scope management

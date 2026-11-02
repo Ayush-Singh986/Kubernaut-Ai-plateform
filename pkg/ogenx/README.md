@@ -1,6 +1,6 @@
 # ogenx: Generic Error Handling for ogen-generated OpenAPI Clients
 
-**Package**: `github.com/jordigilh/kubernaut/pkg/ogenx`  
+**Package**: `github.com/Ayush-Singh986/kubernaut/pkg/ogenx`  
 **Authority**: OGEN_ERROR_HANDLING_INVESTIGATION_FEB_03_2026 (internal development reference, removed in v1.0)
 **Status**: ✅ SME-Validated Pattern
 
@@ -40,7 +40,7 @@ if err != nil {
 The package is part of the `kubernaut` repository. Import it:
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/ogenx"
+import "github.com/Ayush-Singh986/kubernaut/pkg/ogenx"
 ```
 
 ### Basic Usage
@@ -53,8 +53,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jordigilh/kubernaut/pkg/ogenx"
-    dsClient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ogenx"
+    dsClient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 func main() {

@@ -63,9 +63,9 @@ The fix introduces three changes:
 
 ### 2.1 Authoritative Documents
 
-- [Issue #1044](https://github.com/jordigilh/kubernaut/issues/1044) — Enhancement: tool-call-based apiVersion inference when LLM omits api_version
-- [Issue #1040](https://github.com/jordigilh/kubernaut/issues/1040) — Parent: apiVersion disambiguation for multi-group kinds
-- [PR #1042](https://github.com/jordigilh/kubernaut/pull/1042) — Schema enforcement (prerequisite, merged)
+- [Issue #1044](https://github.com/Ayush-Singh986/kubernaut/issues/1044) — Enhancement: tool-call-based apiVersion inference when LLM omits api_version
+- [Issue #1040](https://github.com/Ayush-Singh986/kubernaut/issues/1040) — Parent: apiVersion disambiguation for multi-group kinds
+- [PR #1042](https://github.com/Ayush-Singh986/kubernaut/pull/1042) — Schema enforcement (prerequisite, merged)
 - BR-AI-1044 — apiVersion validation gate for ambiguous kinds
 - BR-HAPI-261 — Hierarchy-aware target resolution
 - [DD-TEST-006](../../architecture/decisions/DD-TEST-006-test-plan-policy.md) — Test Plan Policy

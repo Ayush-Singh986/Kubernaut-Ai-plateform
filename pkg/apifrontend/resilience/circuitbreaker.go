@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	gobreaker "github.com/sony/gobreaker/v2"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
 )
 
 // CircuitBreakerAuditFunc returns an AuditFunc that emits circuitbreaker.trip

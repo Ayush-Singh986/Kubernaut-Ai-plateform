@@ -27,7 +27,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	openaimodel "github.com/jordigilh/kubernaut/pkg/apifrontend/launcher/openai"
+	openaimodel "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher/openai"
 )
 
 // Issue #1600 / BR-AI-086: Azure OpenAI support for AF's ADK-facing

@@ -11,7 +11,7 @@
 - BR-WORKFLOW-006: Kubernetes-native workflow registration via CRD + AW bridge
 - BR-WORKFLOW-007: ActionType CRD lifecycle management
 - BR-WORKFLOW-007.3: AT DELETE denied when dependent workflows exist
-- [GitHub Issue #418](https://github.com/jordigilh/kubernaut/issues/418)
+- [GitHub Issue #418](https://github.com/Ayush-Singh986/kubernaut/issues/418)
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)

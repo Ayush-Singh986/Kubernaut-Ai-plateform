@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	mcppkg "github.com/jordigilh/kubernaut/pkg/kubernautagent/tools/mcp"
+	mcppkg "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/tools/mcp"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

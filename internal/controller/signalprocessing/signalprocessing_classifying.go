@@ -30,13 +30,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/shared/events"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/classifier"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/evaluator"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/events"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/classifier"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/evaluator"
 
 	// BR-SP-110: Kubernetes Conditions
-	spconditions "github.com/jordigilh/kubernaut/pkg/signalprocessing"
+	spconditions "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing"
 )
 
 // reconcileClassifying performs environment and priority classification.

@@ -4,7 +4,7 @@
 **Date**: 2026-10-03
 **Decision Makers**: Kubernaut Agent Team
 **Business Requirement**: [BR-KA-211](../../requirements/BR-KA-211-llm-input-sanitization.md)
-**Issue**: [#2485](https://github.com/jordigilh/kubernaut/issues/2485)
+**Issue**: [#2485](https://github.com/Ayush-Singh986/kubernaut/issues/2485)
 
 ## Context
 

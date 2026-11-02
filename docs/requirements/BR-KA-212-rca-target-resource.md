@@ -6,7 +6,7 @@
 **Target Version**: V1.1
 **Status**: ✅ Approved
 **Date**: 2026-01-20
-**Last Updated**: 2026-08-01 (Rewritten against the Go KA implementation, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806); field renamed `affectedResource` → `remediationTarget`; corrected conditional-injection and escalation claims)
+**Last Updated**: 2026-08-01 (Rewritten against the Go KA implementation, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806); field renamed `affectedResource` → `remediationTarget`; corrected conditional-injection and escalation claims)
 
 **Related Design Decisions**:
 - [DD-KA-006 v2.0: Remediation Target in Root Cause Analysis](../architecture/decisions/DD-KA-006-remediation-target-in-rca.md)
@@ -124,7 +124,7 @@ If the LLM's proposed kind matches the resolved root or is a descendant in the o
 
 **Requirement**: KA's OpenAPI spec SHOULD document the `remediationTarget` field in `root_cause_analysis`.
 
-**Status**: ⚠️ **Not yet done.** `internal/kubernautagent/api/openapi.json` does not currently include a `remediationTarget` schema, despite the field being emitted on the wire and consumed by AIAnalysis (`ExtractRootCauseAnalysis`). This is a documentation/spec-accuracy gap, not a functional gap — tracked as a follow-up in [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806).
+**Status**: ⚠️ **Not yet done.** `internal/kubernautagent/api/openapi.json` does not currently include a `remediationTarget` schema, despite the field being emitted on the wire and consumed by AIAnalysis (`ExtractRootCauseAnalysis`). This is a documentation/spec-accuracy gap, not a functional gap — tracked as a follow-up in [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806).
 
 **Acceptance Criteria** (pending):
 1. ⬜ OpenAPI spec includes a `remediationTarget` schema under `root_cause_analysis`
@@ -223,4 +223,4 @@ Target resolution reuses owner-chain data already fetched during enrichment — 
 
 **Document Control**:
 - **Created**: 2026-01-20
-- **Last Updated**: 2026-08-01 (v2.0 — rewritten against Go KA implementation, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))
+- **Last Updated**: 2026-08-01 (v2.0 — rewritten against Go KA implementation, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))

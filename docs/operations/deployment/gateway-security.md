@@ -500,7 +500,7 @@ kubectl exec -it redis-gateway-ha-0 -n kubernaut-system -- redis-cli KEYS "rate_
 ## Application-Level Hardening (v1.3)
 
 > **Design Decision**: [DD-AUTH-014](../../architecture/decisions/DD-AUTH-014-middleware-based-sar-authentication.md)
-> **Tracking**: [Issue #673](https://github.com/jordigilh/kubernaut/issues/673)
+> **Tracking**: [Issue #673](https://github.com/Ayush-Singh986/kubernaut/issues/673)
 
 Starting with v1.3, the Gateway includes application-level security controls in addition to the network-level security described above:
 

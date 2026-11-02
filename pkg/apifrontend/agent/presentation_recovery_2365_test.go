@@ -8,7 +8,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 var _ = Describe("Presentation recovery guard (#2365)", func() {

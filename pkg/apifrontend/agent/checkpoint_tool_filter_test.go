@@ -25,7 +25,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	adksession "google.golang.org/adk/v2/session"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
 )
 
 // statefulCallbackContext extends stubCallbackContext (defined in

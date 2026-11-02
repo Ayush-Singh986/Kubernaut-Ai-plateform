@@ -272,5 +272,5 @@ And "warnings" SHALL be empty or contain only informational messages
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2025-12-06 | Initial business requirement |
-| 1.1 | 2026-08-01 | Added cross-references to BR-KA-200 and BR-AI-088 to clarify these are three distinct confidence-related gates, not overlapping/duplicate logic ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806) follow-up). |
+| 1.1 | 2026-08-01 | Added cross-references to BR-KA-200 and BR-AI-088 to clarify these are three distinct confidence-related gates, not overlapping/duplicate logic ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806) follow-up). |
 

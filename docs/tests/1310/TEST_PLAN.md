@@ -1,6 +1,6 @@
 # Test Plan — #1310: Investigation Failure Transparency and Recovery
 
-**IEEE 829 Compliant** | **Issue**: [#1310](https://github.com/jordigilh/kubernaut/issues/1310) | **Depends on**: TP-1307-MERGE-INVESTIGATE
+**IEEE 829 Compliant** | **Issue**: [#1310](https://github.com/Ayush-Singh986/kubernaut/issues/1310) | **Depends on**: TP-1307-MERGE-INVESTIGATE
 
 ## 1. Test Plan Identifier
 

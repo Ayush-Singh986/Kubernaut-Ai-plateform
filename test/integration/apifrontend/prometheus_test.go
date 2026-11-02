@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	afprom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	afprom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 var _ = Describe("Prometheus Client Integration (prometheus/)", func() {

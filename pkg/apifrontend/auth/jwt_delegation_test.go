@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
 )
 
 func containsSubstring(s, sub string) bool {

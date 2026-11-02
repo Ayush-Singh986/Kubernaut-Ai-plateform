@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
 )
 
 func generateAmbientCATestCert(t *testing.T) string {

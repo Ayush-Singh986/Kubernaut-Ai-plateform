@@ -9,8 +9,8 @@
 
 | Change | Issue | Parent Issue |
 |--------|-------|--------------|
-| Gateway post-completion cooldown in `ShouldDeduplicate` | [#202](https://github.com/jordigilh/kubernaut/issues/202) | [#197](https://github.com/jordigilh/kubernaut/issues/197) |
-| RO target resource case mismatch fix | [#203](https://github.com/jordigilh/kubernaut/issues/203) | [#197](https://github.com/jordigilh/kubernaut/issues/197) |
+| Gateway post-completion cooldown in `ShouldDeduplicate` | [#202](https://github.com/Ayush-Singh986/kubernaut/issues/202) | [#197](https://github.com/Ayush-Singh986/kubernaut/issues/197) |
+| RO target resource case mismatch fix | [#203](https://github.com/Ayush-Singh986/kubernaut/issues/203) | [#197](https://github.com/Ayush-Singh986/kubernaut/issues/197) |
 
 ---
 

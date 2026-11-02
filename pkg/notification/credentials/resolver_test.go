@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
 )
 
 var _ = Describe("CredentialResolver (BR-NOT-104)", func() {

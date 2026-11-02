@@ -3,8 +3,8 @@
 **Status**: Approved  
 **Version**: 1.1
 **Date**: 2026-10-17
-**Issue**: [#2512](https://github.com/jordigilh/kubernaut/issues/2512)
-**Correction**: [#2529](https://github.com/jordigilh/kubernaut/issues/2529)
+**Issue**: [#2512](https://github.com/Ayush-Singh986/kubernaut/issues/2512)
+**Correction**: [#2529](https://github.com/Ayush-Singh986/kubernaut/issues/2529)
 **Related**: DD-RO-002, DD-WE-003, DD-AUDIT-010, BR-WE-009/010/011/014/019, BR-AUDIT-005
 
 ## Decision

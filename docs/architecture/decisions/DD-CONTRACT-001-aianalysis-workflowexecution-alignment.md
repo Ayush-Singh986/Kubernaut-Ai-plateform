@@ -2,7 +2,7 @@
 
 **Status**: ✅ Approved (core contract shape); ⚠️ **catalog-resolution mechanism corrected in v2.0**
 **Version**: 2.0
-**Date**: 2025-11-28 (v1.2); 2026-08-02 (v2.0 correction, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))
+**Date**: 2025-11-28 (v1.2); 2026-08-02 (v2.0 correction, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))
 **Confidence**: 95%
 
 > **v2.0 correction note**: This v1.2 document (Nov 2025) predates the current implementation and got one
@@ -441,7 +441,7 @@ context and is **not** an open work item. All rows completed long before this v2
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.0 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)): Renamed HolmesGPT-API → Kubernaut Agent (KA) throughout. Corrected catalog-resolution mechanism: KA resolves `workflowId → executionBundle` via its own in-process discovery cache (DD-WORKFLOW-019), not a Data Storage MCP search — that endpoint was retired as dead code. Fixed API group `kubernaut.io` → `kubernaut.ai`. Replaced `ContainerImage`/`ContainerDigest` field names with the real `ExecutionBundle`/`ExecutionBundleDigest` (generalized for 3 execution engines: Tekton/Job/Ansible). Corrected `SelectedWorkflow`/`WorkflowRef` Go samples to reflect the real shared `sharedtypes.WorkflowSnapshot` embed. Pointed to DD-CONTRACT-002 for the up-to-date `approvalRequired`/`needsHumanReview` two-flag logic rather than duplicating a now-superseded single-flag description. Marked the v1.0 migration table historical. |
+| 2.0 | 2026-08-02 | **Correction** ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): Renamed HolmesGPT-API → Kubernaut Agent (KA) throughout. Corrected catalog-resolution mechanism: KA resolves `workflowId → executionBundle` via its own in-process discovery cache (DD-WORKFLOW-019), not a Data Storage MCP search — that endpoint was retired as dead code. Fixed API group `kubernaut.io` → `kubernaut.ai`. Replaced `ContainerImage`/`ContainerDigest` field names with the real `ExecutionBundle`/`ExecutionBundleDigest` (generalized for 3 execution engines: Tekton/Job/Ansible). Corrected `SelectedWorkflow`/`WorkflowRef` Go samples to reflect the real shared `sharedtypes.WorkflowSnapshot` embed. Pointed to DD-CONTRACT-002 for the up-to-date `approvalRequired`/`needsHumanReview` two-flag logic rather than duplicating a now-superseded single-flag description. Marked the v1.0 migration table historical. |
 | 1.2 | 2025-11-28 | **BREAKING**: HolmesGPT-API now resolves `workflow_id → containerImage` during MCP search. Added `containerImage` and `containerDigest` to `SelectedWorkflow`. RO no longer calls catalog - passes through from AIAnalysis. Updated data flow diagram. Removed catalog client code. |
 | 1.1 | 2025-11-28 | **Approval flow clarification**: AIAnalysis completes with `approvalRequired: true`, RO orchestrates approval (creates NotificationRequest + RemediationApprovalRequest). Removed "Approving" phase from AIAnalysis. Added approval flow diagram and service responsibilities. |
 | 1.0 | 2025-11-28 | Initial DD: AIAnalysis ↔ WorkflowExecution contract alignment |

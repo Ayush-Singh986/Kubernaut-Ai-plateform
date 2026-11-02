@@ -15,7 +15,7 @@
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)
 - [Phase 2 Test Plan (#299)](../299/TEST_PLAN.md) -- RemediationWorkflow CRD pattern (blueprint)
-- [GitHub Issue #300](https://github.com/jordigilh/kubernaut/issues/300)
+- [GitHub Issue #300](https://github.com/Ayush-Singh986/kubernaut/issues/300)
 
 ---
 

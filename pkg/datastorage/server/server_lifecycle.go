@@ -28,9 +28,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload" // Issue #756: FileWatcher for cert rotation
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload" // Issue #756: FileWatcher for cert rotation
 )
 
 // Start/Shutdown lifecycle (DD-007 + DD-008 Kubernetes-aware graceful

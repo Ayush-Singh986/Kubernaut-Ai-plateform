@@ -19,7 +19,7 @@ package hash
 import (
 	"time"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
 )
 
 // DeferralResult contains the outcome of a hash deferral check (DD-EM-004).

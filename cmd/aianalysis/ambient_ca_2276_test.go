@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	config "github.com/jordigilh/kubernaut/internal/config/aianalysis"
+	config "github.com/Ayush-Singh986/kubernaut/internal/config/aianalysis"
 )
 
 // generateAmbientCATestCert creates a self-signed CA certificate PEM file

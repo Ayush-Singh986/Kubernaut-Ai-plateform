@@ -1,12 +1,12 @@
 # DD-KA-007: Cumulative Per-RR Investigation Accounting (Turns, Tool Calls, Tokens) for Console Reporting
 
 **Date**: 2026-09-09
-**Status**: ✅ **APPROVED — Implemented** (Issue [#2387](https://github.com/jordigilh/kubernaut/issues/2387))
+**Status**: ✅ **APPROVED — Implemented** (Issue [#2387](https://github.com/Ayush-Singh986/kubernaut/issues/2387))
 **Decision Maker**: Kubernaut Architecture Team
 **Authority**: APPROVED — implementation complete, all quality gates passed
 **Affects**: KubernautAgent (KA), APIFrontend (AF), AgentSession CRD consumers; follow-up in kubernaut-console (ui-core rendering)
 **Related**: [DD-AUDIT-003](./DD-AUDIT-003-service-audit-trace-requirements.md) (per-service audit requirements), [ADR-034](./ADR-034-unified-audit-table-design.md) (unified audit table), [DD-KA-017](./DD-KA-017-three-step-workflow-discovery-integration.md) (discovery pipeline whose legs are accounted here)
-**Supersedes**: Issue [#435](https://github.com/jordigilh/kubernaut/issues/435) §3 ("No API response change — token totals are audit-only") **for raw token counts only**. #435 was written against a previous agent harness that constrained what could be surfaced; that constraint no longer holds. Financial/USD cost reporting remains **out of scope** (BR-KA-195, V2.0-pending).
+**Supersedes**: Issue [#435](https://github.com/Ayush-Singh986/kubernaut/issues/435) §3 ("No API response change — token totals are audit-only") **for raw token counts only**. #435 was written against a previous agent harness that constrained what could be surfaced; that constraint no longer holds. Financial/USD cost reporting remains **out of scope** (BR-KA-195, V2.0-pending).
 **Business Requirement**: BR-KA-OBSERVABILITY-001 (call-level observability in the structured decision payload), BR-AUDIT-005 v2.0 (full lifecycle reconstruction by `correlation_id`), BR-KA-195 (cost-tracking context; counts only, no costs)
 
 ---

@@ -32,7 +32,7 @@ Before performing any release, ensure:
 - The GitHub Actions secrets `QUAY_ROBOT_USERNAME` and `QUAY_ROBOT_TOKEN` are set.
   Verify with:
   ```bash
-  gh secret list --repo jordigilh/kubernaut
+  gh secret list --repo Ayush-Singh986/kubernaut
   ```
 - You have `gh`, `helm`, and `skopeo` installed locally for verification steps.
 - You are on an up-to-date `main` branch:
@@ -163,7 +163,7 @@ Replace the placeholder date with today's date:
 Ensure the comparison link at the bottom of the file is correct:
 
 ```markdown
-[X.Y.0]: https://github.com/jordigilh/kubernaut/compare/vPREVIOUS...vX.Y.0
+[X.Y.0]: https://github.com/Ayush-Singh986/kubernaut/compare/vPREVIOUS...vX.Y.0
 ```
 
 ### Step 5: Commit, push, and open PR
@@ -564,7 +564,7 @@ copies the staging image digests to immutable release-version architecture tags
 and creates the release-version manifest list. `tag-latest` then updates `:latest`
 only for GA candidates. Kubernaut release CI no longer packages or publishes an
 application chart; operator publication remains owned by the
-[Kubernaut Operator release pipeline](https://github.com/jordigilh/kubernaut-operator).
+[Kubernaut Operator release pipeline](https://github.com/Ayush-Singh986/kubernaut-operator).
 
 ### Stage 7: GitHub Release
 
@@ -611,7 +611,7 @@ primary gate:
 ```bash
 VERSION="1.1.0"  # adjust to your release
 cosign verify quay.io/kubernaut-ai/gateway:$VERSION \
-  --certificate-identity-regexp "https://github.com/jordigilh/kubernaut" \
+  --certificate-identity-regexp "https://github.com/Ayush-Singh986/kubernaut" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 gh release view v$VERSION --json assets --jq '.assets[].name' | grep -c '\.cdx\.json$'      # SBOMs
@@ -664,9 +664,9 @@ milestone.
 ### 2. Close the milestone
 
 ```bash
-MILESTONE_NUMBER=$(gh api repos/jordigilh/kubernaut/milestones \
+MILESTONE_NUMBER=$(gh api repos/Ayush-Singh986/kubernaut/milestones \
   --jq '.[] | select(.title=="vX.Y") | .number')
-gh api --method PATCH repos/jordigilh/kubernaut/milestones/$MILESTONE_NUMBER \
+gh api --method PATCH repos/Ayush-Singh986/kubernaut/milestones/$MILESTONE_NUMBER \
   -f state=closed
 ```
 
@@ -776,7 +776,7 @@ over REST, per ADR-068) were added later and were never added to this table.
 Kubernaut release qualification consumes the exact operator candidate image,
 bootstrap chart, and development-dependency chart recorded in the immutable
 qualification manifest. Operator publication and promotion are owned by the
-[Kubernaut Operator release workflow](https://github.com/jordigilh/kubernaut-operator).
+[Kubernaut Operator release workflow](https://github.com/Ayush-Singh986/kubernaut-operator).
 
 ### Version Injection
 
@@ -814,9 +814,9 @@ Every released image carries build-time version metadata:
 - [`.github/workflows/slsa-provenance.yml`](../../../.github/workflows/slsa-provenance.yml) — Isolated SLSA Build L3 provenance workflow
 - [`Makefile`](../../../Makefile) — `image-build`, `image-push`, `image-manifest` targets
 - [`CHANGELOG.md`](../../../CHANGELOG.md) — Release history
-- Issue [#80](https://github.com/jordigilh/kubernaut/issues/80) — Release: Helm chart creation, multi-arch images
-- Issue [#257](https://github.com/jordigilh/kubernaut/issues/257) — Multi-arch image build + Helm OCI publish workflow
-- Issue [#273](https://github.com/jordigilh/kubernaut/issues/273) — Standardize version injection and OCI labels
-- Issue [#569](https://github.com/jordigilh/kubernaut/issues/569) — Helm smoke tests gating the release
-- Issue [#1315](https://github.com/jordigilh/kubernaut/issues/1315) — Trivy CVE scanning + SBOM generation
-- Issue [#1109](https://github.com/jordigilh/kubernaut/issues/1109) — SLSA Build L3 provenance
+- Issue [#80](https://github.com/Ayush-Singh986/kubernaut/issues/80) — Release: Helm chart creation, multi-arch images
+- Issue [#257](https://github.com/Ayush-Singh986/kubernaut/issues/257) — Multi-arch image build + Helm OCI publish workflow
+- Issue [#273](https://github.com/Ayush-Singh986/kubernaut/issues/273) — Standardize version injection and OCI labels
+- Issue [#569](https://github.com/Ayush-Singh986/kubernaut/issues/569) — Helm smoke tests gating the release
+- Issue [#1315](https://github.com/Ayush-Singh986/kubernaut/issues/1315) — Trivy CVE scanning + SBOM generation
+- Issue [#1109](https://github.com/Ayush-Singh986/kubernaut/issues/1109) — SLSA Build L3 provenance

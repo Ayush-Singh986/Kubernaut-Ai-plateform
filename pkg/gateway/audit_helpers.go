@@ -19,9 +19,9 @@ package gateway
 import (
 	"encoding/json"
 
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 // ========================================

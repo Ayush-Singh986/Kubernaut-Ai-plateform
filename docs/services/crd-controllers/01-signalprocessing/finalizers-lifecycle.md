@@ -34,7 +34,7 @@ import (
     "context"
     "fmt"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     "github.com/go-logr/logr"
     "k8s.io/apimachinery/pkg/runtime"
@@ -124,7 +124,7 @@ import (
     "fmt"
     "time"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 )
 
 func (r *SignalProcessingReconciler) cleanupSignalProcessing(
@@ -196,8 +196,8 @@ import (
     "context"
     "fmt"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
-    "github.com/jordigilh/kubernaut/internal/controller/signalprocessing"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller/signalprocessing"
 
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
@@ -357,8 +357,8 @@ import (
     "context"
     "fmt"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -409,7 +409,7 @@ import (
     "context"
     "time"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -496,7 +496,7 @@ import (
     "fmt"
     "time"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 
     "k8s.io/client-go/tools/record"
 )

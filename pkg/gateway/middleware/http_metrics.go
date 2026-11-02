@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-	gatewayMetrics "github.com/jordigilh/kubernaut/pkg/gateway/metrics"
+	gatewayMetrics "github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
 )
 
 // HTTPMetrics tracks HTTP request duration by method, path, and status code

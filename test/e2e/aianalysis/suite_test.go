@@ -54,13 +54,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	agentsessionv1alpha1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	aianalysisv1alpha1 "github.com/jordigilh/kubernaut/api/aianalysis/v1alpha1"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	agentsessionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	aianalysisv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1alpha1"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

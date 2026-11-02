@@ -10,7 +10,7 @@
 
 | Version | Date | Changes | Reference |
 |---------|------|---------|-----------|
-| v3.0 | 2026-08-01 | **Full rewrite against Go implementation** ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)): replaced the fictional synchronous `POST /api/v1/investigate` call with the actual async session-based API; corrected the Rego `PolicyInput`/`PolicyResult` schema to match `pkg/aianalysis/rego/evaluator.go`; corrected toolsets (kubernetes, logs, prometheus, alertmanager — not "grafana"); corrected `AIApprovalRequest` → `RemediationApprovalRequest` (implemented, not deferred); corrected metric names; removed HolmesGPT/HAPI terminology throughout |
+| v3.0 | 2026-08-01 | **Full rewrite against Go implementation** ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)): replaced the fictional synchronous `POST /api/v1/investigate` call with the actual async session-based API; corrected the Rego `PolicyInput`/`PolicyResult` schema to match `pkg/aianalysis/rego/evaluator.go`; corrected toolsets (kubernetes, logs, prometheus, alertmanager — not "grafana"); corrected `AIApprovalRequest` → `RemediationApprovalRequest` (implemented, not deferred); corrected metric names; removed HolmesGPT/HAPI terminology throughout |
 | v2.0 | 2025-11-30 | REGENERATED: Fixed SignalProcessing naming; V1.0 approval signaling (no AIApprovalRequest CRD); Removed legacy phases; Reference to REGO_POLICY_EXAMPLES.md for input schema | DD-WORKFLOW-001 v1.8 |
 | v1.1 | 2025-10-16 | Added toolset management | - |
 | v1.0 | 2025-10-15 | Initial specification | - |

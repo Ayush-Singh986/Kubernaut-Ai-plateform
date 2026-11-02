@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // ========================================

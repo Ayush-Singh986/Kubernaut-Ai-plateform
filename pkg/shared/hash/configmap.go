@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/sizeutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sizeutil"
 )
 
 // ExtractConfigMapRefs returns a deduplicated, sorted list of ConfigMap names

@@ -16,7 +16,7 @@ limitations under the License.
 
 package tools
 
-import mcpinternal "github.com/jordigilh/kubernaut/internal/kubernautagent/mcp"
+import mcpinternal "github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/mcp"
 
 // ResolveUser returns a UserInfo built from the tool input's acting_user fields
 // when present (trusted intermediary model, #1287). When acting_user is empty,

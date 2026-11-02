@@ -15,7 +15,7 @@
 - [Testing Strategy](../../../.cursor/rules/03-testing-strategy.mdc)
 - [Test Case Specification Template](../TEST_CASE_SPECIFICATION_TEMPLATE.md)
 - [Integration/E2E No-Mocks Policy](../INTEGRATION_E2E_NO_MOCKS_POLICY.md)
-- GitHub Issue: [#365](https://github.com/jordigilh/kubernaut/issues/365)
+- GitHub Issue: [#365](https://github.com/Ayush-Singh986/kubernaut/issues/365)
 
 ---
 

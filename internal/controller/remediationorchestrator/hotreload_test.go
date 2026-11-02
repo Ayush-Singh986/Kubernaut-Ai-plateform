@@ -26,9 +26,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	roconfig "github.com/jordigilh/kubernaut/internal/config/remediationorchestrator"
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
-	rometrics "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/metrics"
+	roconfig "github.com/Ayush-Singh986/kubernaut/internal/config/remediationorchestrator"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
+	rometrics "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/metrics"
 )
 
 var _ = Describe("RO Config Hot-Reload (#835, DD-INFRA-001)", func() {

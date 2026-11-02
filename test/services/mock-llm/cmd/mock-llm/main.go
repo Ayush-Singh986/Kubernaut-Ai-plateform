@@ -25,10 +25,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/config"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/handlers"
-	mockmetrics "github.com/jordigilh/kubernaut/test/services/mock-llm/metrics"
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/config"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/handlers"
+	mockmetrics "github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 func main() {

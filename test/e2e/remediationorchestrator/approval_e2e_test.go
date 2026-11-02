@@ -33,15 +33,15 @@ import (
 	k8sretry "k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	signalprocessingv1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/authwebhook"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	rarconditions "github.com/jordigilh/kubernaut/pkg/remediationapprovalrequest"
-	roaudit "github.com/jordigilh/kubernaut/pkg/remediationorchestrator/audit"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	signalprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/authwebhook"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	rarconditions "github.com/Ayush-Singh986/kubernaut/pkg/remediationapprovalrequest"
+	roaudit "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator/audit"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // TDD RED Phase: RAR Audit Trail E2E Tests

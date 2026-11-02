@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/jordigilh/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/config"
 )
 
 var _ = Describe("Shared LoggingConfig — BR-PLATFORM-875", func() {

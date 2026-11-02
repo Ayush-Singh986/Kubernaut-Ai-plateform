@@ -41,7 +41,7 @@ Gateway with **zero authentication**. This contradicts
 which mandates OAuth2 for every service-to-MCP-Gateway connection with no unauthenticated
 fallback. FleetMetadataCache (FMC) already implements the correct, unconditional pattern
 (`pkg/fleet/fmc/config/config.go:100-109,161-186`); the other 7 services do not. Filed and tracked
-as [Issue #1991](https://github.com/jordigilh/kubernaut/issues/1991), fixed in this same PR per
+as [Issue #1991](https://github.com/Ayush-Singh986/kubernaut/issues/1991), fixed in this same PR per
 scope decision.
 
 **Impact**:
@@ -165,8 +165,8 @@ endpoint field is set, mirroring FMC's existing correct pattern.
 
 ## Related Decisions
 
-- **Tracked in**: [Issue #1984](https://github.com/jordigilh/kubernaut/issues/1984) (Helm chart
-  schema-level input validation), [Issue #1991](https://github.com/jordigilh/kubernaut/issues/1991)
+- **Tracked in**: [Issue #1984](https://github.com/Ayush-Singh986/kubernaut/issues/1984) (Helm chart
+  schema-level input validation), [Issue #1991](https://github.com/Ayush-Singh986/kubernaut/issues/1991)
   (ADR-068 `oauth2.enabled=false` gap, folded into the same PR).
 - **Authoritative source for FR-4/FR-5**:
   [ADR-068 (Fleet Federation Architecture)](../architecture/decisions/ADR-068-fleet-federation-architecture.md)

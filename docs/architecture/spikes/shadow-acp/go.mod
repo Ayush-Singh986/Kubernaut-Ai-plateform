@@ -1,12 +1,12 @@
-module github.com/jordigilh/kubernaut/spikes/shadow-acp
+module github.com/Ayush-Singh986/kubernaut/spikes/shadow-acp
 
 go 1.26
 
-replace github.com/jordigilh/kubernaut => ../../
+replace github.com/Ayush-Singh986/kubernaut => ../../
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/jordigilh/kubernaut v0.0.0-00010101000000-000000000000
+	github.com/Ayush-Singh986/kubernaut v0.0.0-00010101000000-000000000000
 )
 
 require (

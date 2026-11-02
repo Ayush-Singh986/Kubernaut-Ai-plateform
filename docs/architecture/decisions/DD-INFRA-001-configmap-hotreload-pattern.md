@@ -521,7 +521,7 @@ import (
     "github.com/go-logr/logr"
     "github.com/open-policy-agent/opa/v1/rego"
 
-    "github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 type PriorityEngine struct {
@@ -602,7 +602,7 @@ import (
     "github.com/go-logr/logr"
     "gopkg.in/yaml.v3"
 
-    "github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 type EnvironmentClassifier struct {
@@ -673,7 +673,7 @@ import (
 
     "github.com/go-logr/logr"
 
-    "github.com/jordigilh/kubernaut/pkg/shared/hotreload"
+    "github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
 )
 
 type FeatureFlags struct {

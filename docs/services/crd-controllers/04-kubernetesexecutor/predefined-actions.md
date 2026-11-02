@@ -225,7 +225,7 @@ func (e *executor) registerBuiltinActions() error {
 All services MUST validate action types against this list:
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/shared/types"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 func ValidateAction(actionType string) error {
     if !types.IsValidAction(actionType) {

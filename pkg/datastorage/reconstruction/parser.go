@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-faster/jx"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // ParsedAuditData contains structured data extracted from audit events for RR reconstruction.

@@ -1,6 +1,6 @@
 # Implementation Plan: Issue #614 — RO-level DuplicateInProgress Outcome Inheritance
 
-**Issue**: [#614](https://github.com/jordigilh/kubernaut/issues/614)
+**Issue**: [#614](https://github.com/Ayush-Singh986/kubernaut/issues/614)
 **Test Plan**: [TEST_PLAN.md](./TEST_PLAN.md)
 **Branch**: `development/v1.4`
 **Created**: 2026-03-04

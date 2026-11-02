@@ -7,7 +7,7 @@
 **Status**: Proposed
 **Date**: May 30, 2026
 **Related BRs**: BR-INT-004 (ServiceNow Ticket Creation/Tracking), BR-WE-014 (Job Execution Backend), BR-AI-001 (Signal Investigation)
-**GitHub Issue**: [#1338](https://github.com/jordigilh/kubernaut/issues/1338)
+**GitHub Issue**: [#1338](https://github.com/Ayush-Singh986/kubernaut/issues/1338)
 
 ---
 

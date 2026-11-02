@@ -28,8 +28,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/creator"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/creator"
 )
 
 // BR-INTERACTIVE-010 SC-9 (#2214, DD-AA-KA-001 Amendment): AA's cascade-cancel

@@ -9,7 +9,7 @@
 
 **Last Updated**: 2026-08-01 — Renamed from `BR-HAPI-195`, terminology corrected to Kubernaut
 Agent (KA, Go), and de-duplicated against [BR-KA-OBSERVABILITY-001](BR-KA-OBSERVABILITY-001-agent-prometheus-metrics.md)
-([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). Neither this BR's original
+([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). Neither this BR's original
 proposal nor `BR-KA-OBSERVABILITY-001.3`'s cost counter is implemented in code as of this update
 (confirmed by code search — no `llm_cost_dollars`/`CostDollars`/pricing-map symbol exists in
 `internal/kubernautagent/metrics/`). This document now covers only the V2.0 enhancements beyond

@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	k8sutil "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	k8sutil "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 var _ = Describe("BR-SHARED-001: TruncateMapValues (issue 668)", func() {

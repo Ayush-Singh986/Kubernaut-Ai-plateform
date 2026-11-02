@@ -36,13 +36,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/signalprocessing"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
-	spaudit "github.com/jordigilh/kubernaut/pkg/signalprocessing/audit"
-	"github.com/jordigilh/kubernaut/pkg/signalprocessing/evaluator"
-	spmetrics "github.com/jordigilh/kubernaut/pkg/signalprocessing/metrics"
-	spstatus "github.com/jordigilh/kubernaut/pkg/signalprocessing/status"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/signalprocessing"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
+	spaudit "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/evaluator"
+	spmetrics "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/metrics"
+	spstatus "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/status"
 )
 
 var _ = Describe("UT-SP-1511: Cluster classification persistence (BR-FLEET-003, #1511)", func() {

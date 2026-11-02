@@ -1,11 +1,11 @@
 # Test Plan: Three-Tier Severity Triage for Manual Signals
 
-> **Partially superseded by [#1282](https://github.com/jordigilh/kubernaut/issues/1282):**
+> **Partially superseded by [#1282](https://github.com/Ayush-Singh986/kubernaut/issues/1282):**
 > `af_create_rr` no longer accepts user-supplied severity or namespace from the LLM.
 > Severity is always AF-resolved via the triage pipeline. Namespace is AF-resolved
 > via K8s downward API. See `docs/tests/1282/TEST_PLAN.md` for current behavior.
 >
-> **Partially superseded by [#1839](https://github.com/jordigilh/kubernaut/issues/1839) /
+> **Partially superseded by [#1839](https://github.com/Ayush-Singh986/kubernaut/issues/1839) /
 > [DD-AF-010](../../../../architecture/decisions/DD-AF-010-remove-ungrounded-severity-inference.md):**
 > Tier 3 (pure LLM classification, BAC-T-06) was **removed**. When alert/rule evidence
 > cannot provide an explicit severity, the pipeline returns
@@ -19,7 +19,7 @@
 > **Further superseded by [DD-AF-016](../../../../architecture/decisions/DD-AF-016-explicit-alert-severity-source.md) / #2467:** The Tier 2.5 LLM-with-rule-context fallback described below is no longer allowed. AF must use explicit alert/rule severity unchanged; rule-only candidates must agree on one non-empty raw value; missing/conflicting evidence creates no RR. All Tier 2.5 LLM acceptance criteria and provider-dependency scenarios in this historical #92 plan are superseded. Tier 3 remains removed by DD-AF-010.
 
 **Test Plan Identifier:** TP-AF-092-SEVERITY-TRIAGE
-**Issue:** [#92](https://github.com/jordigilh/kubernaut-apifrontend/issues/92)
+**Issue:** [#92](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/92)
 **Version:** 1.0
 **Date:** 2026-05-02
 **Status:** Historical — severity-inference portions superseded by DD-AF-010 and DD-AF-016

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-13
-**Issue**: [#1418](https://github.com/jordigilh/kubernaut/issues/1418)
+**Issue**: [#1418](https://github.com/Ayush-Singh986/kubernaut/issues/1418)
 **Related**: ADR-022 (AF SA unified security model), DD-AF-004 (investigation tool split), DD-AF-006 (approval consent guard)
 
 ## Context

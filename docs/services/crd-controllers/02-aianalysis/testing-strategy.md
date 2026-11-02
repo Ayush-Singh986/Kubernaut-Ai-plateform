@@ -48,7 +48,7 @@ Following Kubernaut's defense-in-depth testing strategy:
 
 **Testing Strategy**: Use fake K8s client for compile-time API safety. Mock ONLY KA HTTP API. Use REAL business logic (Rego policy engine, approval workflow).
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: Package
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: Package
 > and mock naming in the Ginkgo example below (and the "Integration Tests" section further down) have been
 > corrected to current terms (`pkg/agentclient`, `mockAgentClient`), but the example still depicts a purely
 > synchronous `mockAgentClient.On("Investigate", ...)` call as the only KA interaction. The current
@@ -63,7 +63,7 @@ Following Kubernaut's defense-in-depth testing strategy:
 
 **Test Files (Day 6 Complete)**:
 
-> **⚠️ STALE (flagged [#1806](https://github.com/jordigilh/kubernaut/issues/1806), not corrected here)**: this table
+> **⚠️ STALE (flagged [#1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806), not corrected here)**: this table
 > predates the async agent-client rewrite — `holmesgpt_client_test.go` and `audit_client_test.go` no longer exist;
 > the current files are `pkg/aianalysis/agentclient_test.go` (+ `agentclient_session_test.go`,
 > `agentclient_tls_test.go`) and `pkg/aianalysis/audit_test.go`. `pkg/aianalysis/` now has 41 test files, not 8.
@@ -100,14 +100,14 @@ import (
     "context"
     "time"
 
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/aianalysis/v1"
-    approvalv1 "github.com/jordigilh/kubernaut/api/approval/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/agentclient"
-    "github.com/jordigilh/kubernaut/pkg/ai/rego"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/aianalysis/v1"
+    approvalv1 "github.com/Ayush-Singh986/kubernaut/api/approval/v1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/agentclient"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ai/rego"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/runtime"

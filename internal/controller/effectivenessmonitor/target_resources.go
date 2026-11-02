@@ -30,10 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/health"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
-	k8sutil "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/health"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
+	k8sutil "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 // getTargetHealthStatus queries the K8s API for a target resource's health.

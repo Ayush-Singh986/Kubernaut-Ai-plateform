@@ -8,7 +8,7 @@
 **Date**: June 30, 2026
 **Related ADRs**: [ADR-034: Unified Audit Table Design](../architecture/decisions/ADR-034-unified-audit-table-design.md)
 **Related BRs**: BR-AUDIT-005 (Core Audit Business Requirement), BR-AUDIT-007 (Tamper-evident audit exports)
-**GitHub Issues**: [#1505](https://github.com/jordigilh/kubernaut/issues/1505) (GAP-05)
+**GitHub Issues**: [#1505](https://github.com/Ayush-Singh986/kubernaut/issues/1505) (GAP-05)
 
 > **Superseded (Helm gating only)**: [DD-PLATFORM-006](../architecture/decisions/DD-PLATFORM-006-helm-chart-configuration-surface-reduction.md)
 > Decision Areas 6/7 made `datastorage.config.auditHashKey` mandatory (the
@@ -75,7 +75,7 @@ Closing this residual risk would require an external, out-of-band anchor (e.g., 
 ## Related Documents
 
 - [ADR-034: Unified Audit Table Design](../architecture/decisions/ADR-034-unified-audit-table-design.md)
-- [kubernaut-operator#209 — operator-managed keyed audit hash chain wiring](https://github.com/jordigilh/kubernaut-operator/issues/209)
+- [kubernaut-operator#209 — operator-managed keyed audit hash chain wiring](https://github.com/Ayush-Singh986/kubernaut-operator/issues/209)
 
 ---
 

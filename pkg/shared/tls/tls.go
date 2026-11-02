@@ -32,8 +32,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	"github.com/jordigilh/kubernaut/pkg/shared/transport"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/transport"
 )
 
 // TLSConfig holds TLS configuration shared across services.

@@ -4,7 +4,7 @@
 **Category**: Security / Platform
 **Priority**: P1 (HIGH)
 **Status**: Approved for implementation
-**Issue**: [#2545](https://github.com/jordigilh/kubernaut/issues/2545)
+**Issue**: [#2545](https://github.com/Ayush-Singh986/kubernaut/issues/2545)
 **Related**: BR-SECURITY-493, BR-PLATFORM-005, BR-WE-018, DD-TLS-001
 
 ## Business need

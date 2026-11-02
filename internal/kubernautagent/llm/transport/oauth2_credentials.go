@@ -23,7 +23,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // NewOAuth2ClientCredentialsTransport creates an http.RoundTripper that

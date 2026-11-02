@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/rego"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/rego"
 )
 
 // SERIAL EXECUTION: AA integration suite runs serially for 100% reliability.

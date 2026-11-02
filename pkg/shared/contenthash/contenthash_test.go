@@ -18,7 +18,7 @@ package contenthash_test
 
 import (
 	"github.com/google/uuid"
-	"github.com/jordigilh/kubernaut/pkg/shared/contenthash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/contenthash"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

@@ -57,7 +57,7 @@ configured, with zero behavior change when it is not (backward compatibility).
 - FedRAMP AC-6 (Least Privilege), CM-6 (Configuration Settings)
 - Issue #1686: Fleet ClusterRegistry RBAC: cluster-wide ClusterRole granted even when `namespace`
   scopes the watch to one namespace
-- Prior art (same class of fix): `jordigilh/kubernaut-operator#223` (ADR-068 fleet triage,
+- Prior art (same class of fix): `Ayush-Singh986/kubernaut-operator#223` (ADR-068 fleet triage,
   `mcpGatewayNamespace`)
 - DD-PLATFORM-004 (chart default hardening): establishes `helm-unittest` as the chart's unit-test
   convention this plan extends

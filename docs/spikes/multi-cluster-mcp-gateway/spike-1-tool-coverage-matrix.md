@@ -145,7 +145,7 @@ These tools are available in OCP MCP server but KA does NOT currently have:
 
 **For K8s investigation tools: 82% coverage (FULL + PARTIAL) is sufficient for POC.**
 
-> **Retired (Issue [#2254](https://github.com/jordigilh/kubernaut/issues/2254))**: this 82%
+> **Retired (Issue [#2254](https://github.com/Ayush-Singh986/kubernaut/issues/2254))**: this 82%
 > figure was a paper analysis. [Spike S13](spike-s13-tool-coverage-validation/README.md)
 > later empirically validated actual tool coverage and found **100%** for KA's real
 > investigation-tool set (and 100% for execution) — see S13's README for the corrected

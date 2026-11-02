@@ -90,7 +90,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/notification"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 var _ = Describe("Sanitizer", func() {
@@ -179,7 +179,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/notification"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 var _ = Describe("Channel Adapters", func() {
@@ -285,7 +285,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/notification"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 var _ = Describe("Data Freshness Tracker", func() {
@@ -357,7 +357,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/notification"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 var _ = Describe("Notification HTTP API Integration", func() {
@@ -424,7 +424,7 @@ import (
     . "github.com/onsi/ginkgo/v2"
     . "github.com/onsi/gomega"
 
-    "github.com/jordigilh/kubernaut/pkg/notification"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification"
 )
 
 var _ = Describe("External Channel Integration", func() {

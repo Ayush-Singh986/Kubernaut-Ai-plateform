@@ -28,8 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	agentsessionv1 "github.com/jordigilh/kubernaut/api/agentsession/v1alpha1"
-	controller "github.com/jordigilh/kubernaut/internal/controller/aianalysis"
+	agentsessionv1 "github.com/Ayush-Singh986/kubernaut/api/agentsession/v1alpha1"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/aianalysis"
 )
 
 var _ = Describe("AgentSessionEventPredicate (#1449, DD-AA-KA-001)", func() {

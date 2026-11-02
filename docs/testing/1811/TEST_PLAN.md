@@ -1,6 +1,6 @@
 # Test Plan: Late-Subscribe Event Replay for AA/AF Interactive-Upgrade Race
 
-**Issue**: [#1811](https://github.com/jordigilh/kubernaut/issues/1811)
+**Issue**: [#1811](https://github.com/Ayush-Singh986/kubernaut/issues/1811)
 **Authority**: BR-INTERACTIVE-004 (dynamic takeover / in-place upgrade), BR-INTERACTIVE-010 (deferred interactive sessions)
 **Business Requirements**: BR-INTERACTIVE-004, BR-INTERACTIVE-010
 **Branch**: `fix/1811-late-subscribe-event-replay`
@@ -114,7 +114,7 @@ No new production components — this closes a gap in existing, already-wired ma
 - `release/v1.5` applicability — assessed separately after `main` fix lands (same
   `LazySink`/`InteractiveHold` architecture is present on `v1.5`, confirmed during #1811
   triage; backport tracked as a follow-up once the `main` fix is verified in CI).
-- **[#1818](https://github.com/jordigilh/kubernaut/issues/1818)** (filed during this fix's CI
+- **[#1818](https://github.com/Ayush-Singh986/kubernaut/issues/1818)** (filed during this fix's CI
   verification): attempting to harden `E2E-FP-1189-005`'s RCA-content assertion surfaced a
   *third*, architecturally distinct race, confirmed via CI must-gather KA logs — AA's
   `RequestBuilder.BuildIncidentRequest` never sets `IncidentRequest.Interactive`, so KA always

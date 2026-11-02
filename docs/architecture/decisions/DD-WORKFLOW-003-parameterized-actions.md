@@ -12,14 +12,14 @@
 ## Changelog
 
 ### Version 2.5 (2026-09-26)
-**Changes** ([Issue #2466](https://github.com/jordigilh/kubernaut/issues/2466)):
+**Changes** ([Issue #2466](https://github.com/Ayush-Singh986/kubernaut/issues/2466)):
 - ✅ Clarified that `TARGET_RESOURCE_API_VERSION` is also KA-managed when the RCA target has an API version, consistent with DD-KA-006 and `kaManagedParams`.
 - ✅ Clarified the Step 3 LLM projection: expose the structured workflow description and operational parameter definitions only; exclude all four KA-managed target parameters and execution/dependency metadata.
 
 **Rationale**: KA derives target identity from the authoritative RCA target and injects it after LLM selection. The schema shown to the LLM must not invite the model to provide values KA will overwrite. In this Go implementation, API group/version is represented by `TARGET_RESOURCE_API_VERSION` (for example, `apps/v1`); there is no separately injected `TARGET_RESOURCE_API_GROUP` parameter.
 
 ### Version 2.4 (2026-08-02)
-**Changes** ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)):
+**Changes** ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)):
 - ✅ Renamed HAPI → Kubernaut Agent (KA) throughout (mechanical rename, same feature, verified live against `internal/kubernautagent/parser/validator.go`)
 - ✅ Corrected the "Current Tekton Pipeline Execution Model" diagram: real service names (SignalProcessing/AIAnalysis/RemediationOrchestrator/WorkflowExecution controllers), KA's in-process workflow discovery (DD-WORKFLOW-019, not MCP catalog search), and the 3 execution engines (Tekton/Job/Ansible, ADR-024/044) instead of Tekton-only
 - ✅ Marked the Nov 2025 "Implementation Roadmap" phase list historical

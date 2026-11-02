@@ -34,8 +34,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/scopecache"
-	gwTestutil "github.com/jordigilh/kubernaut/test/services/mock-mcp-gateway/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/scopecache"
+	gwTestutil "github.com/Ayush-Singh986/kubernaut/test/services/mock-mcp-gateway/testutil"
 )
 
 func TestSpikeS12(t *testing.T) {

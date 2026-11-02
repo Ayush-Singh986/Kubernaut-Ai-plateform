@@ -9,7 +9,7 @@
 
 **Authority**:
 - [BR-HAPI-214](../../services/stateless/kubernaut-agent/BUSINESS_REQUIREMENTS.md): Anti-Confirmation-Bias Investigation Guardrails
-- [Issue #462](https://github.com/jordigilh/kubernaut/issues/462): Forward RR.spec.signalAnnotations to HAPI + anti-confirmation-bias guardrail
+- [Issue #462](https://github.com/Ayush-Singh986/kubernaut/issues/462): Forward RR.spec.signalAnnotations to HAPI + anti-confirmation-bias guardrail
 
 **Cross-References**:
 - [Testing Strategy](../../.cursor/rules/03-testing-strategy.mdc)

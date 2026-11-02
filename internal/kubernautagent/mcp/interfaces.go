@@ -22,7 +22,7 @@ import (
 	"context"
 	"time"
 
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
 )
 
 // NotificationType distinguishes notification categories on the bus.

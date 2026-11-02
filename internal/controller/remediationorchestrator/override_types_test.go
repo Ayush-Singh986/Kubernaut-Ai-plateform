@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 )
 
 // TDD Phase: RED — Issue #594 Override Type Serialization Tests

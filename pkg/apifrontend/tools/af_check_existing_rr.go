@@ -9,8 +9,8 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/validate"
 )
 
 // CheckExistingRRArgs defines the LLM-supplied input for kubernaut_check_existing_remediation.

@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"time"
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
 )
 
 // eventTimestamps extracts timestamp fields from a Kubernetes Event body.

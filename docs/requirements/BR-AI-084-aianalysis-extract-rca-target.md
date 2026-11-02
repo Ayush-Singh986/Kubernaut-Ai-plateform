@@ -6,7 +6,7 @@
 **Target Version**: V1.1
 **Status**: ✅ Approved
 **Date**: 2026-01-20
-**Last Updated**: 2026-08-01 (Rewritten against the Go implementation, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806); field renamed `affectedResource` → `remediationTarget` per ADR-055-ADDENDUM-001)
+**Last Updated**: 2026-08-01 (Rewritten against the Go implementation, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806); field renamed `affectedResource` → `remediationTarget` per ADR-055-ADDENDUM-001)
 
 **Related Design Decisions**:
 - [DD-KA-006: Remediation Target in Root Cause Analysis](../architecture/decisions/DD-KA-006-remediation-target-in-rca.md)
@@ -264,4 +264,4 @@ Extraction is a simple map lookup and struct construction (~10µs); no additiona
 
 **Document Control**:
 - **Created**: 2026-01-20
-- **Last Updated**: 2026-08-01 (v2.0 — rewritten against Go implementation, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))
+- **Last Updated**: 2026-08-01 (v2.0 — rewritten against Go implementation, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))

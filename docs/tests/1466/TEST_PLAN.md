@@ -1,6 +1,6 @@
 # Test Plan: Issue #1466 — EA Controller Alert Decay Hot Loop
 
-**IEEE 829 Format** | **Issue**: [#1466](https://github.com/jordigilh/kubernaut/issues/1466)
+**IEEE 829 Format** | **Issue**: [#1466](https://github.com/Ayush-Singh986/kubernaut/issues/1466)
 
 ## 1. Test Plan Identifier
 

@@ -1,7 +1,7 @@
 # Test Plan: ConfigMap-Based Configuration — Validation, Loading, and envOr Removal
 
 **Test Plan Identifier:** TP-AF-039
-**Issue:** [#39](https://github.com/jordigilh/kubernaut-apifrontend/issues/39)
+**Issue:** [#39](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/39)
 **Version:** 1.0
 **Date:** 2026-05-05
 **Status:** Draft

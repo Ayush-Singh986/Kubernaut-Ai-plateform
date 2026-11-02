@@ -18,8 +18,8 @@ package audit
 
 import (
 	"github.com/go-faster/jx"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 // buildConfigReloadedPayload builds the aiagent.config.reloaded payload

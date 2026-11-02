@@ -170,7 +170,7 @@ Dockerfile mappings (from `docker/`):
 ## 📦 Deployment
 
 Services are deployed by the Kubernaut Operator. See the
-[operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+[operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 for bootstrap, dependency-chart, and Kubernaut CR configuration.
 
 ---

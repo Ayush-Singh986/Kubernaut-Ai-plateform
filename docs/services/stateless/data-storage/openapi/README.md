@@ -3,7 +3,7 @@
 **Date**: 2025-12-13
 **Status**: 🔴 **DEPRECATED** - This directory is no longer used
 
-> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > "Reason for Move" section below is retained as historical context — it correctly describes the
 > pre-rewrite state where the Python HolmesGPT-API ("HAPI") used its own copy of the spec. HAPI was
 > rewritten in Go as **Kubernaut Agent (KA)** (Issue #433) and, like every other Go service, now

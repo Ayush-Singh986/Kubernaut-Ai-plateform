@@ -6,7 +6,7 @@
 **Target Version**: V1.3
 **Status**: Approved
 **Date**: 2026-03-04
-**Related Issue**: [kubernaut-demo-scenarios#296](https://github.com/jordigilh/kubernaut-demo-scenarios/issues/296)
+**Related Issue**: [kubernaut-demo-scenarios#296](https://github.com/Ayush-Singh986/kubernaut-demo-scenarios/issues/296)
 
 ---
 

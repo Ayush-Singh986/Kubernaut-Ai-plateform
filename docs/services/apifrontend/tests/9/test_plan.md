@@ -1,7 +1,7 @@
 # Test Plan: Rate Limiting for External Clients
 
 **Test Plan Identifier:** TP-AF-009
-**Issue:** [#9](https://github.com/jordigilh/kubernaut-apifrontend/issues/9)
+**Issue:** [#9](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/9)
 **Version:** 1.0
 **Date:** 2026-05-03
 **Status:** Draft

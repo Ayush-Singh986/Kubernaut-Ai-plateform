@@ -2,7 +2,7 @@
 
 > **Note**: Investigation tool references in this plan (`kubernaut_stream_investigation`) have been **superseded by #1307**, which merged all investigation tools into `kubernaut_investigate`. Tests have been migrated accordingly. This plan is retained as historical record.
 
-**IEEE 829 Compliant** | **Issues**: [#1301](https://github.com/jordigilh/kubernaut/issues/1301), [#1302](https://github.com/jordigilh/kubernaut/issues/1302)
+**IEEE 829 Compliant** | **Issues**: [#1301](https://github.com/Ayush-Singh986/kubernaut/issues/1301), [#1302](https://github.com/Ayush-Singh986/kubernaut/issues/1302)
 
 | Field | Value |
 |-------|-------|

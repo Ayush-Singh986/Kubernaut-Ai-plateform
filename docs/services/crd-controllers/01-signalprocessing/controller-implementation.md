@@ -41,7 +41,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
     "sigs.k8s.io/controller-runtime/pkg/log"
 
-    kubernautv1alpha1 "github.com/jordigilh/kubernaut/api/kubernaut.io/v1alpha1"
+    kubernautv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/kubernaut.io/v1alpha1"
 )
 
 const (

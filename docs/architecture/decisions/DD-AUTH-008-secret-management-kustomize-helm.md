@@ -5,7 +5,7 @@
 **Authority**: Supersedes inline secret generation approaches
 **Related**: DD-AUTH-007 (OAuth2-Proxy Migration), DD-AUTH-004 (DataStorage OAuth), DD-AUTH-006 (Kubernaut Agent (KA) OAuth)
 
-> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: The
+> **⚠️ CORRECTED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: The
 > worked examples below use DataStorage and "HolmesGPT API" (now Kubernaut Agent (KA)) `ose-oauth-proxy`
 > cookie secrets as their running example. Per [DD-AUTH-011](DD-AUTH-011/DD-AUTH-011-granular-rbac-sar-verb-mapping.md)
 > and [DD-AUTH-014](DD-AUTH-014-middleware-based-sar-authentication.md), **both services have since

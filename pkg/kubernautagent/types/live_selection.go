@@ -23,8 +23,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // LiveSelectionContext is the DD-KA-2496 allow-list for KA -> AF/A2A. It has

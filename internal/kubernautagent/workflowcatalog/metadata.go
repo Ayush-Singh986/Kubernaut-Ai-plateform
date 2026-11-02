@@ -20,9 +20,9 @@ import (
 	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/parser"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	dsschema "github.com/jordigilh/kubernaut/pkg/datastorage/schema"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/parser"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	dsschema "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/schema"
 )
 
 // BuildWorkflowMeta converts catalog metadata into the single KA validation

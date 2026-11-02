@@ -328,7 +328,7 @@ fi
 #### **Setting Conditions in Controllers**
 ```go
 // Import conditions helper
-import "github.com/jordigilh/kubernaut/pkg/aianalysis"
+import "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
 
 // In reconcile function
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

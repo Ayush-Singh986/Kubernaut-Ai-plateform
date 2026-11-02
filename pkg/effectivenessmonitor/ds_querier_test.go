@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
 )
 
 // newTestQuerier creates a DataStorageQuerier backed by http.DefaultTransport

@@ -112,7 +112,7 @@ const (
 //   make test-integration-notification  # Infrastructure starts/stops automatically
 //
 // Manual Infrastructure Control:
-//   import "github.com/jordigilh/kubernaut/test/infrastructure"
+//   import "github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 //   infrastructure.StartNotificationIntegrationInfrastructure(ctx, os.Stdout)
 //   defer infrastructure.StopNotificationIntegrationInfrastructure(ctx, os.Stdout)
 //

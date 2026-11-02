@@ -4,7 +4,7 @@
 **Status**: Proposed
 **Confidence**: 90%
 **Decision Type**: Architecture — External Service Integration
-**Issue**: [#1507](https://github.com/jordigilh/kubernaut/issues/1507)
+**Issue**: [#1507](https://github.com/Ayush-Singh986/kubernaut/issues/1507)
 
 ---
 

@@ -22,9 +22,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	signalprocessingv1alpha1 "github.com/jordigilh/kubernaut/api/signalprocessing/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/fleet/fleettest"
-	"github.com/jordigilh/kubernaut/pkg/fleet/registry"
+	signalprocessingv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/signalprocessing/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fleettest"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/registry"
 )
 
 // IT-SP-1511-002: Rego `cluster` classification through the real

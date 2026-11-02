@@ -575,7 +575,7 @@ sequenceDiagram
   ([DD-KA-019](decisions/DD-KA-019-go-rewrite-design/DD-KA-019-go-rewrite-design.md)), not a
   wrapper around a HolmesGPT Python SDK
 - **`AgentSession` CRD dispatch**: the retired `pkg/agentclient` OpenAPI submit/poll client is
-  fully deleted ([issue #2190](https://github.com/jordigilh/kubernaut/issues/2190)); AA↔KA is
+  fully deleted ([issue #2190](https://github.com/Ayush-Singh986/kubernaut/issues/2190)); AA↔KA is
   exclusively the `AgentSession` CRD now (Spec is immutable after Create; Status is KA-only) —
   see [DD-AA-KA-001](decisions/DD-AA-KA-001-agentsession-crd-http-removal.md)
 - **Exactly-once dispatch via Lease**: a per-`AgentSession` `coordination/v1.Lease`
@@ -687,7 +687,7 @@ single, consistent controller-facing interface.
 ## 📋 **SERVICE SPECIFICATIONS**
 
 ### **🔗 Gateway Service**
-**Image**: `quay.io/jordigilh/gateway-service`
+**Image**: `quay.io/Ayush-Singh986/gateway-service`
 **Type**: Stateless HTTP — runs **no `ctrl.Manager`**
 **Port**: 8080 (API/health), 8081 (health), 9090 (metrics)
 **Single Responsibility**: HTTP Gateway & Security Only
@@ -714,7 +714,7 @@ alert detection. All downstream services receive only non-duplicate signals via
 ---
 
 ### **🔍 Signal Processing Service**
-**Image**: `quay.io/jordigilh/signalprocessing`
+**Image**: `quay.io/Ayush-Singh986/signalprocessing`
 **Type**: CRD controller
 **Port**: 8081 (health/ready), 9090 (metrics) — **no business API port**
 **Single Responsibility**: Signal Enrichment & Business Classification
@@ -736,7 +736,7 @@ alert detection. All downstream services receive only non-duplicate signals via
 ---
 
 ### **🤖 AI Analysis Service**
-**Image**: `quay.io/jordigilh/ai-service`
+**Image**: `quay.io/Ayush-Singh986/ai-service`
 **Type**: CRD controller
 **Port**: 8080 (API — purpose not fully documented), 8081 (health/ready), 9090 (metrics)
 **Single Responsibility**: AI Analysis & Decision Making Only
@@ -766,7 +766,7 @@ alert detection. All downstream services receive only non-duplicate signals via
 ---
 
 ### **🎯 Workflow Execution Service**
-**Image**: `quay.io/jordigilh/workflow-service`
+**Image**: `quay.io/Ayush-Singh986/workflow-service`
 **Type**: CRD controller
 **Port**: 8081 (health/ready), 9090 (metrics) — **no business API port**
 **Single Responsibility**: Workflow Execution Only
@@ -795,7 +795,7 @@ alert detection. All downstream services receive only non-duplicate signals via
 
 ### **🎛️ Remediation Orchestrator Service**
 **CRD**: `RemediationRequest`
-**Image**: `quay.io/jordigilh/remediationorchestrator`
+**Image**: `quay.io/Ayush-Singh986/remediationorchestrator`
 **Type**: CRD controller — the reconciliation hub
 **Port**: 8081 (health/ready), 9090 (metrics) — **no business API port**
 **Single Responsibility**: End-to-End Remediation Lifecycle Management Only
@@ -855,7 +855,7 @@ if aiAnalysis.status.phase == "Approving" && !remediation.status.approvalRequest
 ---
 
 ### **📊 Data Storage Service**
-**Image**: `quay.io/jordigilh/storage-service`
+**Image**: `quay.io/Ayush-Singh986/storage-service`
 **Type**: Stateless HTTP
 **Port**: 8080 (API/health), 8081 (health), 9090 (metrics)
 **Single Responsibility**: Data Persistence, Vector Search, and the Unified Audit Sink
@@ -888,7 +888,7 @@ if aiAnalysis.status.phase == "Approving" && !remediation.status.approvalRequest
 ---
 
 ### **📈 Effectiveness Monitor Service**
-**Image**: `quay.io/jordigilh/effectivenessmonitor`
+**Image**: `quay.io/Ayush-Singh986/effectivenessmonitor`
 **Type**: CRD controller
 **Port**: 8081 (health), 9090 (metrics) — **no business API port at all**
 **Single Responsibility**: Effectiveness Assessment
@@ -925,7 +925,7 @@ implemented**
 ---
 
 ### **📢 Notification Service**
-**Image**: `quay.io/jordigilh/notification-service`
+**Image**: `quay.io/Ayush-Singh986/notification-service`
 **Type**: CRD controller — **migrated from stateless HTTP in October 2025; the old stateless
 design is dead/superseded**
 **Port**: 8081 (health/ready), 9090 (metrics) — **no business API port**
@@ -951,7 +951,7 @@ design is dead/superseded**
 ---
 
 ### **🔍 Kubernaut Agent (KA) Service**
-**Image**: `quay.io/jordigilh/kubernaut-agent-server`
+**Image**: `quay.io/Ayush-Singh986/kubernaut-agent-server`
 **Type**: Hybrid — `AgentSession` CRD-dispatch (watch + Lease `Reconciler`, DD-AA-KA-001) + MCP
 (native Go). Unlike apifrontend/Auth Webhook's shared `ctrl.Manager` reconcilers, KA's
 `Dispatcher` is a standalone controller-runtime `Reconciler` with no leader election of its own.

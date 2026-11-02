@@ -60,20 +60,20 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	// Import CRD types that EM interacts with
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
 
 	// Import EM controller and client
-	controller "github.com/jordigilh/kubernaut/internal/controller/effectivenessmonitor"
-	emaudit "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/audit"
-	emclient "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/client"
-	emmetrics "github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/metrics"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/effectivenessmonitor"
+	emaudit "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/audit"
+	emclient "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/client"
+	emmetrics "github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/metrics"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 
 	// Import audit infrastructure (ADR-032)
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
-	"github.com/jordigilh/kubernaut/test/shared/integration"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/integration"
 )
 
 // Test constants for timeout and polling intervals

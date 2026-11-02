@@ -16,8 +16,8 @@ limitations under the License.
 package scenarios
 
 import (
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
-	"github.com/jordigilh/kubernaut/pkg/shared/uuid"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/uuid"
 )
 
 func noWorkflowFoundConfig() MockScenarioConfig {

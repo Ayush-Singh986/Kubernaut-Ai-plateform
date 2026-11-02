@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	weconfig "github.com/jordigilh/kubernaut/pkg/workflowexecution/config"
+	weconfig "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/config"
 )
 
 // IT-AUDIT-1985-008: cmd/workflowexecution must wire an independent,

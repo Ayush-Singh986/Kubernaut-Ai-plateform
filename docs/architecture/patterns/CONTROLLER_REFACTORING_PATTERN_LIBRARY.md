@@ -112,7 +112,7 @@ package phase
 
 import (
     "fmt"
-    [servicev1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+    [servicev1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 // Phase is an alias for the API-exported phase type
@@ -186,7 +186,7 @@ package phase
 
 import (
     "fmt"
-    [servicev1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+    [servicev1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 // Manager implements phase state machine logic.
@@ -251,7 +251,7 @@ func (r *Reconciler) Reconcile(...) {
 // ✅ AFTER: Phase logic centralized in phase package
 
 import (
-    "[service]phase" "github.com/jordigilh/kubernaut/pkg/[service]/phase"
+    "[service]phase" "github.com/Ayush-Singh986/kubernaut/pkg/[service]/phase"
 )
 
 type Reconciler struct {
@@ -482,7 +482,7 @@ package creator
 
 import (
     "context"
-    [childv1] "github.com/jordigilh/kubernaut/api/[child]/v1alpha1"
+    [childv1] "github.com/Ayush-Singh986/kubernaut/api/[child]/v1alpha1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -549,7 +549,7 @@ package delivery
 
 import (
     "context"
-    [servicev1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+    [servicev1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 // Orchestrator manages delivery/execution orchestration.
@@ -748,7 +748,7 @@ import (
     "fmt"
     "time"
 
-    [servicev1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+    [servicev1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/api/errors"
     "sigs.k8s.io/controller-runtime/pkg/client"
@@ -884,7 +884,7 @@ func (r *Reconciler) updateStatusWithRetry(...) error {
 
 // ✅ AFTER: Controller uses status manager
 import (
-    [service]status "github.com/jordigilh/kubernaut/pkg/[service]/status"
+    [service]status "github.com/Ayush-Singh986/kubernaut/pkg/[service]/status"
 )
 
 type Reconciler struct {
@@ -1322,8 +1322,8 @@ import (
     "context"
     "sync"
 
-    "github.com/jordigilh/kubernaut/pkg/audit"
-    [servicev1] "github.com/jordigilh/kubernaut/api/[service]/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/audit"
+    [servicev1] "github.com/Ayush-Singh986/kubernaut/api/[service]/v1alpha1"
 )
 
 // EventManager manages audit event emission with idempotency.
@@ -1439,7 +1439,7 @@ func (r *Reconciler) auditMessageSent(...) error {
 
 // ✅ AFTER: Controller delegates to audit manager
 import (
-    [service]audit "github.com/jordigilh/kubernaut/pkg/[service]/audit"
+    [service]audit "github.com/Ayush-Singh986/kubernaut/pkg/[service]/audit"
 )
 
 type Reconciler struct {

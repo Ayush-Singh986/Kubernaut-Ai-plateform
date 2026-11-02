@@ -10,8 +10,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwerrors "github.com/jordigilh/kubernaut/pkg/gateway/errors"
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware"
+	gwerrors "github.com/Ayush-Singh986/kubernaut/pkg/gateway/errors"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware"
 )
 
 // ============================================================================

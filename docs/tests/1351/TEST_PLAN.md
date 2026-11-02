@@ -1,6 +1,6 @@
 # Test Plan — #1351: Interactive Pipeline GA Readiness Bug Fixes
 
-**IEEE 829 Compliant** | **Issue**: [#1351](https://github.com/jordigilh/kubernaut/issues/1351)
+**IEEE 829 Compliant** | **Issue**: [#1351](https://github.com/Ayush-Singh986/kubernaut/issues/1351)
 
 ## 1. Test Plan Identifier
 

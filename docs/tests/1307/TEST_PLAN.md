@@ -1,6 +1,6 @@
 # Test Plan — #1307: AF Agent Tool Ordering Guard
 
-**IEEE 829 Compliant** | **Issue**: [#1307](https://github.com/jordigilh/kubernaut/issues/1307)
+**IEEE 829 Compliant** | **Issue**: [#1307](https://github.com/Ayush-Singh986/kubernaut/issues/1307)
 
 ## 1. Test Plan Identifier
 

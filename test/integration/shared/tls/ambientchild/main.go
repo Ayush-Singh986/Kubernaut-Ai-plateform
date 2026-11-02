@@ -19,7 +19,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 )
 
 func main() {

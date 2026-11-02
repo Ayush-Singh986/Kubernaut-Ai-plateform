@@ -28,7 +28,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // UT-1519-011 (GAP-14 / Issue #1519): buildTransportChain's outbound LLM

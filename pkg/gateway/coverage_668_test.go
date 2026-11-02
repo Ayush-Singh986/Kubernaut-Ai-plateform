@@ -34,10 +34,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	gwconfig "github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	gwconfig "github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
 )
 
 // spyLogSink implements logr.LogSink for assertions on adapter logging (BR-GATEWAY-004).

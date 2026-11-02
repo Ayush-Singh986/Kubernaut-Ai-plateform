@@ -13,9 +13,9 @@
 **Author**: AI Assistant
 **Status**: Draft
 **Branch**: `development/v1.5`
-**Parent Issue**: [#1048](https://github.com/jordigilh/kubernaut/issues/1048)
-**Tracking Issue**: [#1088](https://github.com/jordigilh/kubernaut/issues/1088)
-**Operator Dependencies**: [kubernaut-operator#89](https://github.com/jordigilh/kubernaut-operator/issues/89) (Valkey TLS), [kubernaut-operator#90](https://github.com/jordigilh/kubernaut-operator/issues/90) (signing cert mount)
+**Parent Issue**: [#1048](https://github.com/Ayush-Singh986/kubernaut/issues/1048)
+**Tracking Issue**: [#1088](https://github.com/Ayush-Singh986/kubernaut/issues/1088)
+**Operator Dependencies**: [kubernaut-operator#89](https://github.com/Ayush-Singh986/kubernaut-operator/issues/89) (Valkey TLS), [kubernaut-operator#90](https://github.com/Ayush-Singh986/kubernaut-operator/issues/90) (signing cert mount)
 
 ---
 
@@ -72,7 +72,7 @@ This test plan validates Phase 5 of the Data Storage Readiness Audit (#1048). Ph
 
 ### 2.2 Cross-References
 
-- [Phase 5 readiness audit findings](https://github.com/jordigilh/kubernaut/issues/1088)
+- [Phase 5 readiness audit findings](https://github.com/Ayush-Singh986/kubernaut/issues/1088)
 - [TP-485 (Retention Enforcement)](../485/TEST_PLAN.md) — retention eligibility and purge SQL tests
 - [Testing Strategy](.cursor/rules/03-testing-strategy.mdc)
 - [V1.0 Test Plan Template](../../development/testing/V1_0_SERVICE_MATURITY_TEST_PLAN_TEMPLATE.md)
@@ -284,7 +284,7 @@ Wraps `redis.XAutoClaim` and returns claimed messages + new start ID for cursor-
 
 **Business Requirement**: FedRAMP AU-9, SC-8
 **Files Under Test**: `pkg/datastorage/config/config.go` (`RedisConfig.TLS`), `pkg/datastorage/server/server.go`
-**Operator Dependency**: [kubernaut-operator#89](https://github.com/jordigilh/kubernaut-operator/issues/89)
+**Operator Dependency**: [kubernaut-operator#89](https://github.com/Ayush-Singh986/kubernaut-operator/issues/89)
 
 | ID | Tier | TDD Phase | Description | Expected Result |
 |----|------|-----------|-------------|-----------------|

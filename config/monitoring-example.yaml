@@ -205,9 +205,9 @@ data:
 
 # ```go
 # import (
-#     "github.com/jordigilh/kubernaut/internal/config"
-#     "github.com/jordigilh/kubernaut/pkg/monitoring"
-#     "github.com/jordigilh/kubernaut/pkg/effectiveness"
+#     "github.com/Ayush-Singh986/kubernaut/internal/config"
+#     "github.com/Ayush-Singh986/kubernaut/pkg/monitoring"
+#     "github.com/Ayush-Singh986/kubernaut/pkg/effectiveness"
 # )
 #
 # // Load configuration

@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/launcher"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/launcher"
 )
 
 var _ = Describe("ActiveContextRegistry — Idle Timeout (#1446, BR-SESS-023)", func() {

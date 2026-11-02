@@ -15,7 +15,7 @@ limitations under the License.
 */
 package conversation
 
-import openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+import openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 
 // StepType identifies the kind of response a conversation step produces.
 type StepType int

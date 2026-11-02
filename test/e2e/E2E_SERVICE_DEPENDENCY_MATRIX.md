@@ -200,12 +200,12 @@ aianalysis (depends on datastorage + kubernaut-agent + mock-llm)
 **Tagging Convention**:
 ```bash
 # For Pull Requests (ephemeral, auto-cleanup after 14 days)
-ghcr.io/jordigilh/kubernaut/datastorage:pr-123
-ghcr.io/jordigilh/kubernaut/gateway:pr-123
+ghcr.io/Ayush-Singh986/kubernaut/datastorage:pr-123
+ghcr.io/Ayush-Singh986/kubernaut/gateway:pr-123
 
 # For main branch commits (ephemeral, auto-cleanup after 14 days)
-ghcr.io/jordigilh/kubernaut/datastorage:main-abc1234
-ghcr.io/jordigilh/kubernaut/gateway:main-abc1234
+ghcr.io/Ayush-Singh986/kubernaut/datastorage:main-abc1234
+ghcr.io/Ayush-Singh986/kubernaut/gateway:main-abc1234
 ```
 
 **GitHub Actions Configuration**:
@@ -222,7 +222,7 @@ permissions:
 **E2E Test Configuration**:
 ```bash
 # Environment variables for E2E tests (set automatically by CI)
-IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut
+IMAGE_REGISTRY=ghcr.io/Ayush-Singh986/kubernaut
 IMAGE_TAG=pr-123
 
 # E2E infrastructure checks these env vars:
@@ -312,7 +312,7 @@ make test-e2e-workflowexecution
 # E2E infrastructure detects these and pulls from ghcr.io instead of building
 
 # Example (manual test with registry):
-export IMAGE_REGISTRY=ghcr.io/jordigilh/kubernaut
+export IMAGE_REGISTRY=ghcr.io/Ayush-Singh986/kubernaut
 export IMAGE_TAG=pr-123
 make test-e2e-gateway
 

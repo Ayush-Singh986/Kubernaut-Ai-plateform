@@ -75,8 +75,8 @@ and 9-category quality gate checkpoints at every phase boundary.
 
 - [Testing Guidelines](../../../docs/development/business-requirements/TESTING_GUIDELINES.md)
 - [100 Go Mistakes](https://github.com/teivah/100-go-mistakes)
-- [Issue #1110](https://github.com/jordigilh/kubernaut/issues/1110)
-- [Issue #1116](https://github.com/jordigilh/kubernaut/issues/1116) — AA cross-cutting (out of scope)
+- [Issue #1110](https://github.com/Ayush-Singh986/kubernaut/issues/1110)
+- [Issue #1116](https://github.com/Ayush-Singh986/kubernaut/issues/1116) — AA cross-cutting (out of scope)
 - [SP Readiness Audit Plan](../../../.cursor/plans/sp_multi-dimension_readiness_audit_a53a2da0.plan.md)
 
 ---

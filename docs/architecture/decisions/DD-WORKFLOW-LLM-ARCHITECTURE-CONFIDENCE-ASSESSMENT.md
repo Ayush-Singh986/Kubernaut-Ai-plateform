@@ -6,7 +6,7 @@
 **Reviewer**: AI Architecture Assistant
 **Status**: 🗄️ **SUPERSEDED** — see note below
 
-> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: This Nov
+> **SUPERSEDED (2026-08-02, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: This Nov
 > 2025 assessment reviews a Python `HolmesGPT API` calling a standalone **Embedding Service MCP**, neither
 > of which was built as described. `HolmesGPT-API` was rewritten in Go as **Kubernaut Agent (KA)**; the
 > separate Embedding Service MCP component was never built; and workflow catalog resolution moved to KA's

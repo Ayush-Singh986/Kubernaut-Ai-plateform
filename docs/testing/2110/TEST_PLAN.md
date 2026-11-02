@@ -7,7 +7,7 @@
 task, permanently breaking SSE delivery of the `investigation_summary`
 artifact for the entire interactive approve/decline/dismiss flow.
 
-Reported by QE ([#2110](https://github.com/jordigilh/kubernaut/issues/2110)),
+Reported by QE ([#2110](https://github.com/Ayush-Singh986/kubernaut/issues/2110)),
 confirmed via the `kubernaut-console` live E2E suite against a verified
 `v1.5.6-rc4` deployment, and independently reproduced live against this
 project's own dev cluster (`apifrontend` pod running the exact digest QE

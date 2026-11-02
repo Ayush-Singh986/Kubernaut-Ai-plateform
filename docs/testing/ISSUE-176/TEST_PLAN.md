@@ -7,7 +7,7 @@
 **Status**: Implemented
 
 **Authority**:
-- [Issue #176](https://github.com/jordigilh/kubernaut/issues/176): All CRD controllers: CRD namespace consolidation and watch restriction
+- [Issue #176](https://github.com/Ayush-Singh986/kubernaut/issues/176): All CRD controllers: CRD namespace consolidation and watch restriction
 - [ADR-057](../../architecture/decisions/ADR-057-crd-namespace-consolidation.md): CRD Namespace Consolidation
 - [BR-SCOPE-001](../../requirements/BR-SCOPE-001-resource-scope-management.md): Resource Scope Management
 - [BR-SCOPE-010](../../requirements/BR-SCOPE-010-ro-routing-validation.md): RO Routing Validation
@@ -223,7 +223,7 @@ Each phase follows strict RED-GREEN-REFACTOR:
 2. **Phase 3** (DONE): UT-GW-057-001 through UT-GW-057-003 (RED) -> production code (GREEN) -> existing test updates (REFACTOR) -- all 3 passing
 3. **Phase 4** (DONE): UT-RO-057-001 through UT-RO-057-003 (RED) -> bug fix (GREEN) -- all 3 passing
 4. **Phase 5** (DONE): Cache.ByObject added to all 7 controller managers + Gateway cache
-5. **Phase 6** (DEFERRED): Integration test env vars set. IT-GW-057 and IT-CTRL-057 integration tests deferred — require full envtest infrastructure. Gateway deduplication namespace bug discovered during triage and filed as [Issue #195](https://github.com/jordigilh/kubernaut/issues/195); IT-GW-057-003 will be addressed as part of that fix.
+5. **Phase 6** (DEFERRED): Integration test env vars set. IT-GW-057 and IT-CTRL-057 integration tests deferred — require full envtest infrastructure. Gateway deduplication namespace bug discovered during triage and filed as [Issue #195](https://github.com/Ayush-Singh986/kubernaut/issues/195); IT-GW-057-003 will be addressed as part of that fix.
 
 ---
 

@@ -12,9 +12,9 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/validate"
-	sharedK8s "github.com/jordigilh/kubernaut/pkg/shared/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/validate"
+	sharedK8s "github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s"
 )
 
 // KubectlGetArgs defines the input for kubectl_get.

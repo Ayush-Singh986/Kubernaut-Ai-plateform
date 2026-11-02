@@ -17,7 +17,7 @@ limitations under the License.
 package config_test
 
 import (
-	"github.com/jordigilh/kubernaut/internal/config"
+	"github.com/Ayush-Singh986/kubernaut/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

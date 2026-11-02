@@ -6,8 +6,8 @@
 **Target Version**: V1.6
 **Status**: Approved
 **Date**: 2026-06-15
-**Issue**: [#1427](https://github.com/jordigilh/kubernaut/issues/1427)
-**Dependency**: [#1426](https://github.com/jordigilh/kubernaut/issues/1426) (phase-level metadata)
+**Issue**: [#1427](https://github.com/Ayush-Singh986/kubernaut/issues/1427)
+**Dependency**: [#1426](https://github.com/Ayush-Singh986/kubernaut/issues/1426) (phase-level metadata)
 
 ---
 

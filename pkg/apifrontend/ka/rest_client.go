@@ -13,8 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	gobreaker "github.com/sony/gobreaker/v2"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/requestid"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/resilience"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/requestid"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/resilience"
 )
 
 // Client is a REST client for the Kubernaut Agent API.

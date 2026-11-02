@@ -330,7 +330,7 @@ package delivery
 
 import (
     "context"
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
 )
 
 // DeliveryService is the common interface for all notification delivery mechanisms.
@@ -373,7 +373,7 @@ import (
     "sync"
     "time"
 
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
     "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -512,8 +512,8 @@ import (
     . "github.com/onsi/gomega"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-    notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-    "github.com/jordigilh/kubernaut/pkg/notification/delivery"
+    notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
 )
 
 func TestFileDeliveryService(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
 )
 
 // gatewayTestCertDir provides the same certificate material that a chart

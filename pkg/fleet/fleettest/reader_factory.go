@@ -23,7 +23,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
 )
 
 // StubReaderFactory implements fleet.ReaderFactory for unit and integration tests.

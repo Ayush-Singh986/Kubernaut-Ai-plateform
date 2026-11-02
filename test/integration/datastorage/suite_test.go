@@ -33,18 +33,18 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib" // DD-010: Migrated from lib/pq
 	"github.com/jmoiron/sqlx"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/jordigilh/kubernaut/pkg/cert"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls"
+	"github.com/Ayush-Singh986/kubernaut/pkg/cert"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/dlq"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/partition"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/repository"
-	"github.com/jordigilh/kubernaut/test/infrastructure"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/dlq"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/partition"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/repository"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"
 )
 
 // ========================================
@@ -604,7 +604,7 @@ func startRedis() {
 	_ = exec.Command("podman", "rm", redisContainer).Run()
 	// Start Redis
 	// Use --network=datastorage-test for container-to-container communication
-	const redisImage = "quay.io/jordigilh/redis:7-alpine"
+	const redisImage = "quay.io/Ayush-Singh986/redis:7-alpine"
 	Expect(infrastructure.PullImageWithRetry(context.Background(), redisImage, 3, GinkgoWriter)).To(Succeed())
 	cmd := exec.Command("podman", "run", "-d",
 		"--name", redisContainer,

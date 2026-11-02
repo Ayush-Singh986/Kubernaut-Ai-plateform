@@ -266,7 +266,7 @@ Expose a new `/api/v1/proactive-investigation` endpoint alongside the existing i
 
 - [BR-SP-106: Proactive Signal Mode Classification](../../requirements/BR-SP-106-proactive-signal-mode-classification.md)
 - [BR-AI-084: Proactive Signal Mode Prompt Strategy](../../requirements/BR-AI-084-proactive-signal-mode-prompt-strategy.md)
-- [Issue #55: Proactive remediation pipeline](https://github.com/jordigilh/kubernaut/issues/55)
+- [Issue #55: Proactive remediation pipeline](https://github.com/Ayush-Singh986/kubernaut/issues/55)
 - [DD-WORKFLOW-001: Mandatory Label Schema](DD-WORKFLOW-001-mandatory-label-schema.md)
 - [ADR-045: AIAnalysis ↔ Kubernaut Agent Contract](ADR-045-aianalysis-kubernaut-agent-contract.md)
 

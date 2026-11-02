@@ -187,7 +187,7 @@ podman build \
   --build-arg APP_VERSION=${APP_VERSION} \
   --build-arg GIT_COMMIT=${GIT_COMMIT} \
   --build-arg BUILD_DATE=${BUILD_DATE} \
-  -t quay.io/jordigilh/<service>:latest \
+  -t quay.io/Ayush-Singh986/<service>:latest \
   .
 ```
 

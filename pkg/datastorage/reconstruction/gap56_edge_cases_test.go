@@ -39,8 +39,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	reconstructionpkg "github.com/jordigilh/kubernaut/pkg/datastorage/reconstruction"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	reconstructionpkg "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/reconstruction"
 )
 
 var _ = Describe("Gap #5-6 Edge Cases (BR-AUDIT-005)", func() {

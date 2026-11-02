@@ -21,7 +21,7 @@ instead of retrying context reconstruction on a fixed sleep schedule.
 
 `E2E-1293-006` (`test/e2e/fullpipeline/10_interactive_investigation_test.go`) intermittently
 failed in CI with "0 prior turns reconstructed" during interactive takeover
-(https://github.com/jordigilh/kubernaut/actions/runs/31883551415/job/95012656186?pr=2153).
+(https://github.com/Ayush-Singh986/kubernaut/actions/runs/31883551415/job/95012656186?pr=2153).
 RCA (captured in issue #2155) identified a race: `handleTakeover`
 (`internal/kubernautagent/mcp/tools/investigate_takeover.go`) calls
 `transitionAutonomousToUserDriving`, which synchronously cancels the in-flight

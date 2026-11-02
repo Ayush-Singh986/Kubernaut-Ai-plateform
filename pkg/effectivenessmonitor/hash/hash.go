@@ -38,8 +38,8 @@ package hash
 import (
 	"fmt"
 
-	"github.com/jordigilh/kubernaut/pkg/effectivenessmonitor/types"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
+	"github.com/Ayush-Singh986/kubernaut/pkg/effectivenessmonitor/types"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
 )
 
 // ComputeResult contains the outcome of a hash computation and optional comparison.

@@ -29,14 +29,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	notification "github.com/jordigilh/kubernaut/internal/controller/notification"
-	"github.com/jordigilh/kubernaut/pkg/notification/credentials"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
-	"github.com/jordigilh/kubernaut/pkg/notification/routing"
-	"github.com/jordigilh/kubernaut/pkg/shared/hotreload"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	notification "github.com/Ayush-Singh986/kubernaut/internal/controller/notification"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/credentials"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	notificationmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/routing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/hotreload"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // =============================================================================

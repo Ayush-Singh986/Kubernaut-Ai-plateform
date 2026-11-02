@@ -4,7 +4,7 @@ Technical spikes validating key architectural decisions before committing to imp
 
 This directory contains both spike summary documents and spike source code.
 
-**Tracking**: [#1240 — AgenticWorkflow Multi-Runtime Architecture](https://github.com/jordigilh/kubernaut/issues/1240) (closed, was tracked under the v1.6 milestone before custom-agent work moved out) → current direction: [#1536](https://github.com/jordigilh/kubernaut/issues/1536) (CRD spec v2, runtime-agnostic OCI), [#1535](https://github.com/jordigilh/kubernaut/issues/1535) / [#1681](https://github.com/jordigilh/kubernaut/issues/1681) (AuthBridge audit relay + shadow-evaluator tee), all now under **milestone v1.7** — see [ROADMAP.md](../../roadmap/ROADMAP.md). **v1.6 is Fleet Operations**, not custom agents; the section headers below intentionally drop the old "v1.6" labels to avoid that confusion.
+**Tracking**: [#1240 — AgenticWorkflow Multi-Runtime Architecture](https://github.com/Ayush-Singh986/kubernaut/issues/1240) (closed, was tracked under the v1.6 milestone before custom-agent work moved out) → current direction: [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536) (CRD spec v2, runtime-agnostic OCI), [#1535](https://github.com/Ayush-Singh986/kubernaut/issues/1535) / [#1681](https://github.com/Ayush-Singh986/kubernaut/issues/1681) (AuthBridge audit relay + shadow-evaluator tee), all now under **milestone v1.7** — see [ROADMAP.md](../../roadmap/ROADMAP.md). **v1.6 is Fleet Operations**, not custom agents; the section headers below intentionally drop the old "v1.6" labels to avoid that confusion.
 
 ---
 
@@ -12,7 +12,7 @@ This directory contains both spike summary documents and spike source code.
 
 ### AgenticWorkflow Multi-Runtime Architecture (originally v1.6 scope, superseded)
 
-⚠️ **This entire section is superseded** — see [#1536](https://github.com/jordigilh/kubernaut/issues/1536). These spikes were tracked under the v1.6 milestone (#1240) back when custom-agent runtime selection was v1.6 scope; that work is now milestone **v1.7** (per the current [ROADMAP.md](../../roadmap/ROADMAP.md) — v1.6 shipped as Fleet Operations instead). The spikes below validated real techniques (still useful — see [ADR-KA-002](../decisions/ADR-KA-002-agent-security-defense-in-depth.md) for the security-relevant ones) but the multi-runtime CRD model they fed into is dead.
+⚠️ **This entire section is superseded** — see [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536). These spikes were tracked under the v1.6 milestone (#1240) back when custom-agent runtime selection was v1.6 scope; that work is now milestone **v1.7** (per the current [ROADMAP.md](../../roadmap/ROADMAP.md) — v1.6 shipped as Fleet Operations instead). The spikes below validated real techniques (still useful — see [ADR-KA-002](../decisions/ADR-KA-002-agent-security-defense-in-depth.md) for the security-relevant ones) but the multi-runtime CRD model they fed into is dead.
 
 | Spike | Status | Confidence | Proposal | Code |
 |---|---|---|---|---|
@@ -34,7 +34,7 @@ This directory contains both spike summary documents and spike source code.
 
 ### Agent Runtime Evaluation (originally v1.6 scope, superseded)
 
-⚠️ **This entire section is superseded** — see [#1536](https://github.com/jordigilh/kubernaut/issues/1536). This section was previously mislabeled "v1.5" — all six spikes' tracking issues (#1203, #1206, #1207, #1208, and siblings) are actually milestone **v1.6** (closed) in GitHub, from the same now-superseded custom-agent-runtime effort as the section above. All six spikes evaluated the OAS Runtime / ACP-session architecture from [PROPOSAL-EXT-003](../proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md), now dead. Security-relevant findings (sandbox isolation, shadow evaluation) are carried forward in [ADR-KA-002](../decisions/ADR-KA-002-agent-security-defense-in-depth.md); see each spike's own status line for what specifically survives vs. is open.
+⚠️ **This entire section is superseded** — see [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536). This section was previously mislabeled "v1.5" — all six spikes' tracking issues (#1203, #1206, #1207, #1208, and siblings) are actually milestone **v1.6** (closed) in GitHub, from the same now-superseded custom-agent-runtime effort as the section above. All six spikes evaluated the OAS Runtime / ACP-session architecture from [PROPOSAL-EXT-003](../proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md), now dead. Security-relevant findings (sandbox isolation, shadow evaluation) are carried forward in [ADR-KA-002](../decisions/ADR-KA-002-agent-security-defense-in-depth.md); see each spike's own status line for what specifically survives vs. is open.
 
 | Spike | Status | Confidence | Proposal | Code |
 |---|---|---|---|---|

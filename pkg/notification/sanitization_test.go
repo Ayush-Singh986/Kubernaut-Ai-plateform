@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
 )
 
 // BR-NOT-054: Data Sanitization - BEHAVIOR & CORRECTNESS Testing

@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck // Ginkgo DSL dot-import convention
 	. "github.com/onsi/gomega"    //nolint:staticcheck // Ginkgo/Gomega DSL dot-import convention
 
-	"github.com/jordigilh/kubernaut/pkg/fleet/fmc"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet/fmc"
 )
 
 // TLSPortSplit proves the full production topology for Issue #1683's TLS +

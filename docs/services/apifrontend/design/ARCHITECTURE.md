@@ -804,7 +804,7 @@ make run-local    # AF binary with config/local.yaml
 
 ### Go Module Dependencies
 
-AF imports from the kubernaut monorepo (`github.com/jordigilh/kubernaut`):
+AF imports from the kubernaut monorepo (`github.com/Ayush-Singh986/kubernaut`):
 
 | Package | Purpose |
 |---------|---------|

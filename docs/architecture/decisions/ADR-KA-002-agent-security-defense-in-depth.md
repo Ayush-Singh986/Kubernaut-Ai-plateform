@@ -2,7 +2,7 @@
 
 **Status**: ACCEPTED
 **Date**: 2026-07-19
-**Related**: [ADR-KA-001](ADR-KA-001-shadow-agent-alignment-check.md) (shadow agent alignment check — current Layer 4 implementation for KA-side investigations), [#1535](https://github.com/jordigilh/kubernaut/issues/1535) (AuthBridge audit relay), [#1681](https://github.com/jordigilh/kubernaut/issues/1681) (AuthBridge shadow-evaluator tee), [#1536](https://github.com/jordigilh/kubernaut/issues/1536) (opaque-OCI-agent runtime-agnostic direction), [PROPOSAL-EXT-003](../proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md) §16.7 (❌ superseded — original Goose/OAS-session-based version of this model)
+**Related**: [ADR-KA-001](ADR-KA-001-shadow-agent-alignment-check.md) (shadow agent alignment check — current Layer 4 implementation for KA-side investigations), [#1535](https://github.com/Ayush-Singh986/kubernaut/issues/1535) (AuthBridge audit relay), [#1681](https://github.com/Ayush-Singh986/kubernaut/issues/1681) (AuthBridge shadow-evaluator tee), [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536) (opaque-OCI-agent runtime-agnostic direction), [PROPOSAL-EXT-003](../proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md) §16.7 (❌ superseded — original Goose/OAS-session-based version of this model)
 
 ## Context
 
@@ -91,7 +91,7 @@ Layer 1: Identity and credential interception (AuthBridge)
 
 - [PROPOSAL-EXT-003](../proposals/PROPOSAL-EXT-003-goose-runtime-evaluation.md) §16.7 (❌ superseded — original Goose/OAS-session version of this model)
 - [ADR-KA-001](ADR-KA-001-shadow-agent-alignment-check.md) (shadow agent alignment check — current L4 implementation for KA-side investigations)
-- [#1535](https://github.com/jordigilh/kubernaut/issues/1535) (AuthBridge audit relay)
-- [#1681](https://github.com/jordigilh/kubernaut/issues/1681) (AuthBridge shadow-evaluator tee, v1.7)
-- [#1536](https://github.com/jordigilh/kubernaut/issues/1536) (opaque-OCI-agent runtime-agnostic direction)
+- [#1535](https://github.com/Ayush-Singh986/kubernaut/issues/1535) (AuthBridge audit relay)
+- [#1681](https://github.com/Ayush-Singh986/kubernaut/issues/1681) (AuthBridge shadow-evaluator tee, v1.7)
+- [#1536](https://github.com/Ayush-Singh986/kubernaut/issues/1536) (opaque-OCI-agent runtime-agnostic direction)
 - [SPIKE-OPENSHELL-OAS-RUNTIME.md](../spikes/SPIKE-OPENSHELL-OAS-RUNTIME.md) §8 (AuthBridge/OpenShell coexistence, untested)

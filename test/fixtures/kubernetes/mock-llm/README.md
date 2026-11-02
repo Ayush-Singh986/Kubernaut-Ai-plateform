@@ -20,7 +20,7 @@ This directory contains Kubernetes manifests for deploying the Mock LLM service 
 
 1. Build the Mock LLM image:
    ```bash
-   cd /Users/jgil/go/src/github.com/jordigilh/kubernaut
+   cd /Users/jgil/go/src/github.com/Ayush-Singh986/kubernaut
    podman build -t localhost/mock-llm:latest -f test/services/mock-llm/Dockerfile .
    ```
 

@@ -40,11 +40,11 @@ import (
 
 	// BR-GATEWAY-036/037: K8s clientset for TokenReview/SAR
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"      // BR-HTTP-015: Shared CORS library
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware" // BR-109: Request ID middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"      // BR-HTTP-015: Shared CORS library
 	// DD-005: Shared sanitization library
-	"github.com/jordigilh/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
 )
 
 // RegisterAdapter registers a RoutableAdapter using chi router

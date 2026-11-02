@@ -3,8 +3,8 @@ package mocks
 import (
 	"context"
 
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 // Compile-time interface compliance check.

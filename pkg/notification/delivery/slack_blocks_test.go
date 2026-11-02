@@ -28,8 +28,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/slack-go/slack"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
 )
 
 var _ = Describe("Issue #588: FormatSlackBlocks Direct Tests", func() {

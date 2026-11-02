@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jordigilh/kubernaut/pkg/gateway/middleware"
-	"github.com/jordigilh/kubernaut/pkg/gateway/types"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/middleware"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/types"
 )
 
 // severityUnknown is the fallback severity label when a signal source does not

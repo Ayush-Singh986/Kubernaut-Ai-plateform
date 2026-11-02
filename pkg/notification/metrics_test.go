@@ -21,7 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
 
-	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
+	notificationmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
 )
 
 // ========================================

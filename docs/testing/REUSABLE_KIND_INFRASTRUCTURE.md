@@ -35,7 +35,7 @@ Reusable Go package for Kind cluster operations:
 
 **Import Path**:
 ```go
-import "github.com/jordigilh/kubernaut/pkg/testutil/kind"
+import "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
 ```
 
 ---
@@ -166,7 +166,7 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/jordigilh/kubernaut/pkg/testutil/kind"
+	"github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
 )
 
 var (
@@ -241,7 +241,7 @@ For each new service, add integration tests following this checklist:
 - [ ] Create `test/integration/<service-name>/` directory
 - [ ] Create `suite_test.go` using `kind.Setup()` pattern
 - [ ] Define unique namespaces for service isolation
-- [ ] Import `github.com/jordigilh/kubernaut/pkg/testutil/kind`
+- [ ] Import `github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind`
 
 ### **2. Test Dependencies**
 
@@ -405,7 +405,7 @@ createStandardTestServices(ctx, suite.Client)
 
 2. **Use Kind Utility**:
    ```go
-   import "github.com/jordigilh/kubernaut/pkg/testutil/kind"
+   import "github.com/Ayush-Singh986/kubernaut/pkg/testutil/kind"
 
    suite := kind.Setup("<service-name>-test", "kubernaut-system")
    ```

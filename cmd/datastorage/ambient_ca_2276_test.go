@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/config"
 )
 
 func generateAmbientCATestCert(t *testing.T) string {

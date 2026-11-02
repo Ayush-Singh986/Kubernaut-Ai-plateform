@@ -34,7 +34,7 @@ injected `controllerNS`.
 
 The kubernaut-console `ChatContainer.tsx` passes `approval_request_name`
 through to `rar_id` verbatim (no parsing), so this change requires **no
-console-side update** — see jordigilh/kubernaut-console#57 for the console's
+console-side update** — see Ayush-Singh986/kubernaut-console#57 for the console's
 own, unrelated follow-up (error-type differentiation in the graceful
 degradation card).
 

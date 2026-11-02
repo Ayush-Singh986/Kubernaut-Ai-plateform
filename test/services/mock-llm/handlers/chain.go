@@ -18,7 +18,7 @@ package handlers
 import (
 	"strings"
 
-	"github.com/jordigilh/kubernaut/test/services/mock-llm/scenarios"
+	"github.com/Ayush-Singh986/kubernaut/test/services/mock-llm/scenarios"
 )
 
 // flattenToolCallChain walks a NextToolCall linked list starting at head and

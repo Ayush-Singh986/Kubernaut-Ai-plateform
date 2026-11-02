@@ -27,7 +27,7 @@ import (
 	einojsonschema "github.com/eino-contrib/jsonschema"
 	"github.com/go-logr/logr"
 
-	"github.com/jordigilh/kubernaut/pkg/kubernautagent/llm"
+	"github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/llm"
 )
 
 // thoughtSignatureExtraKey MUST stay byte-for-byte identical to

@@ -1,4 +1,4 @@
-module github.com/jordigilh/kubernaut/spikes/hitl-permission
+module github.com/Ayush-Singh986/kubernaut/spikes/hitl-permission
 
 go 1.23.0
 

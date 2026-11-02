@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-06-15
-**Issue**: [#1434](https://github.com/jordigilh/kubernaut/issues/1434)
+**Issue**: [#1434](https://github.com/Ayush-Singh986/kubernaut/issues/1434)
 **Related**: DD-AF-005 (Alert Prioritization Algorithm), BR-AF-STREAM-001
 
 ## Context & Problem
@@ -106,7 +106,7 @@ exist beyond the visible set.
 ## Addendum: Per-Type EventBridge Text Limits (#1435)
 
 **Date**: 2026-06-16
-**Issue**: [#1435](https://github.com/jordigilh/kubernaut/issues/1435)
+**Issue**: [#1435](https://github.com/Ayush-Singh986/kubernaut/issues/1435)
 
 ### Problem
 

@@ -8,7 +8,7 @@
 **Branch**: `feature/demo-scenarios-v1.0`
 
 **Authority**:
-- [Issue #191](https://github.com/jordigilh/kubernaut/issues/191): Incorrect target extraction from monitoring metadata labels
+- [Issue #191](https://github.com/Ayush-Singh986/kubernaut/issues/191): Incorrect target extraction from monitoring metadata labels
 - [BR-GATEWAY-184](../../requirements/BR-GATEWAY-184-target-resource-extraction-priority.md): Target Resource Extraction Priority Order
 
 **Cross-References**:

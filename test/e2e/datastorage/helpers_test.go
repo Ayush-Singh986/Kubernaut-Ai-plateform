@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	dsgen "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/test/testutil"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	dsgen "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/test/testutil"
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck // Ginkgo/Gomega convention
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck // Ginkgo/Gomega convention
 )

@@ -1,7 +1,7 @@
 # DD-WORKFLOW-018: Etcd as Single Source of Truth for Workflow/ActionType Catalog
 
 **Date**: July 14, 2026
-**Status**: Approved — Phased Rollout In Progress (tracked in [Issue #1661](https://github.com/jordigilh/kubernaut/issues/1661))
+**Status**: Approved — Phased Rollout In Progress (tracked in [Issue #1661](https://github.com/Ayush-Singh986/kubernaut/issues/1661))
 **Decision Maker**: Kubernaut Architecture Team
 **Version**: 1.1
 **Authority**: AUTHORITATIVE — governs the storage architecture for `RemediationWorkflow`/`ActionType` catalog data
@@ -38,7 +38,7 @@
   backend" decision. Establishes etcd (via the `RemediationWorkflow`/`ActionType` CRDs) as the sole source of truth
   for workflow/action-type *definitions*, with PostgreSQL relegated strictly to audit traces and on-demand
   aggregation queries.
-- Rollout is phased; see [Issue #1661](https://github.com/jordigilh/kubernaut/issues/1661) for current implementation
+- Rollout is phased; see [Issue #1661](https://github.com/Ayush-Singh986/kubernaut/issues/1661) for current implementation
   status against the Wiring Manifest in this document.
 
 ---
@@ -85,7 +85,7 @@ already established it for: an append-only audit trail, plus on-demand aggregate
 There is no second mutable copy of catalog state anywhere in the system.
 
 This is implemented as eleven coordinated changes, tracked end-to-end in
-[Issue #1661](https://github.com/jordigilh/kubernaut/issues/1661):
+[Issue #1661](https://github.com/Ayush-Singh986/kubernaut/issues/1661):
 
 ### 1. DataStorage replaces its PostgreSQL catalog with an informer-backed in-memory cache
 
@@ -298,7 +298,7 @@ retained at the CRD or cache level. This is a deliberate decision, not an oversi
   ships will not have a `workflow_content`-enriched admission event in their history — only new CREATE/UPDATE/DENIED
   events after rollout carry it. This is flagged as a **documentation task for the `kubernaut-docs` 1.6 upgrade
   guide**, alongside the existing fleet `cluster: ["*"]` label-backfill guidance tracked in
-  [Issue #204](https://github.com/jordigilh/kubernaut/issues/204) — both are "what changes for existing workflows
+  [Issue #204](https://github.com/Ayush-Singh986/kubernaut/issues/204) — both are "what changes for existing workflows
   when you upgrade to 1.6" concerns and belong in the same upgrade-guide section. No reconciler or migration code
   backfills historical audit content; this is an explicit, documented scope decision, not a gap.
 - **No database migration deletes `remediation_workflow_catalog`/`action_type_taxonomy` until every caller — direct
@@ -326,7 +326,7 @@ This decision does **not** supersede or duplicate:
 [DD-WORKFLOW-019](./DD-WORKFLOW-019-ka-owned-workflow-discovery.md) captures a validated (but not-yet-implemented)
 direction to further relocate the discovery/scoring logic and cache this decision's Change 1-2 place in DS into
 KubernautAgent, once KA's status as the sole real consumer is reconfirmed post-rollout. Tracked in
-[Issue #1677](https://github.com/jordigilh/kubernaut/issues/1677).
+[Issue #1677](https://github.com/Ayush-Singh986/kubernaut/issues/1677).
 
 ---
 
@@ -345,7 +345,7 @@ KubernautAgent, once KA's status as the sole real consumer is reconfirmed post-r
 
 ## Confidence Assessment
 
-**Confidence: 95%** (see [Issue #1661](https://github.com/jordigilh/kubernaut/issues/1661) for the full preflight
+**Confidence: 95%** (see [Issue #1661](https://github.com/Ayush-Singh986/kubernaut/issues/1661) for the full preflight
 evidence trail and phased TDD execution log).
 
 **Justification**: every mechanism this decision depends on was verified against actual source before being adopted

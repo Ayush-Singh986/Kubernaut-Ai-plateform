@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	notificationv1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	notificationphase "github.com/jordigilh/kubernaut/pkg/notification/phase"
+	notificationv1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	notificationphase "github.com/Ayush-Singh986/kubernaut/pkg/notification/phase"
 )
 
 var _ = Describe("Phase Transition Logic - DetermineTransition", func() {

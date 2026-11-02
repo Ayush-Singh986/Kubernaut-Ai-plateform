@@ -30,8 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
-	eav1 "github.com/jordigilh/kubernaut/api/effectivenessassessment/v1alpha1"
-	canonicalhash "github.com/jordigilh/kubernaut/pkg/shared/hash"
+	eav1 "github.com/Ayush-Singh986/kubernaut/api/effectivenessassessment/v1alpha1"
+	canonicalhash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
 )
 
 var _ = Describe("Spec Hash Integration (BR-EM-004)", func() {

@@ -6,7 +6,7 @@
 **Version**: 2.0
 **Related**: DD-WORKFLOW-004 v1.7 (per-key custom-label boost), DD-WORKFLOW-019 (KA-owned workflow discovery), DD-KA-017 (Three-Step Workflow Discovery Integration)
 
-> **Note (2026-08-01, [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806))**: Rewritten against the Go implementation and renumbered `DD-HAPI-001` → **`DD-KA-002`** (not `DD-KA-001` — that identifier was already taken by the unrelated `DD-KA-001-workflow-response-validation-architecture.md`, renamed from `DD-HAPI-002` earlier in this cleanup; `DD-KA-002` was the next free slot in the `DD-KA-*` range at the time of this rewrite). The original document described a Python `WorkflowCatalogToolset`/MCP auto-append mechanism that no longer exists — workflow discovery moved in-process into KA (DD-WORKFLOW-019). **This rewrite surfaced an apparent wiring gap** (see "Known Gap" below): `custom_labels` reaches KA over the wire but is not currently forwarded into workflow-discovery scoring. This is flagged for a separate issue, not fixed here.
+> **Note (2026-08-01, [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806))**: Rewritten against the Go implementation and renumbered `DD-HAPI-001` → **`DD-KA-002`** (not `DD-KA-001` — that identifier was already taken by the unrelated `DD-KA-001-workflow-response-validation-architecture.md`, renamed from `DD-HAPI-002` earlier in this cleanup; `DD-KA-002` was the next free slot in the `DD-KA-*` range at the time of this rewrite). The original document described a Python `WorkflowCatalogToolset`/MCP auto-append mechanism that no longer exists — workflow discovery moved in-process into KA (DD-WORKFLOW-019). **This rewrite surfaced an apparent wiring gap** (see "Known Gap" below): `custom_labels` reaches KA over the wire but is not currently forwarded into workflow-discovery scoring. This is flagged for a separate issue, not fixed here.
 
 ---
 
@@ -113,7 +113,7 @@ Workflow discovery — including all custom-label scoring — now runs in-proces
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2025-11-30 | Initial version - Auto-append architecture approved (Python HAPI / MCP `search_workflow_catalog`) |
-| 2.0 | 2026-08-01 | Rewritten against the Go implementation ([Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806)). Renumbered DD-HAPI-001 → **DD-KA-002** (DD-KA-001 was already taken by the renamed workflow-response-validation-architecture doc). Replaced Python `WorkflowCatalogToolset` auto-append design with the current in-process `customLabelsBoost` catalog scoring. Documented the discovered CustomLabels wiring gap. |
+| 2.0 | 2026-08-01 | Rewritten against the Go implementation ([Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806)). Renumbered DD-HAPI-001 → **DD-KA-002** (DD-KA-001 was already taken by the renamed workflow-response-validation-architecture doc). Replaced Python `WorkflowCatalogToolset` auto-append design with the current in-process `customLabelsBoost` catalog scoring. Documented the discovered CustomLabels wiring gap. |
 
 ---
 

@@ -280,8 +280,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	remediationprocessingv1 "github.com/jordigilh/kubernaut/api/remediationprocessing/v1alpha1"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	remediationprocessingv1 "github.com/Ayush-Singh986/kubernaut/api/remediationprocessing/v1alpha1"
 )
 
 var (
@@ -365,8 +365,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	workflowv1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	kubernetesexecutionv1 "github.com/jordigilh/kubernaut/api/kubernetesexecution/v1alpha1" // DEPRECATED - ADR-025
+	workflowv1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	kubernetesexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/kubernetesexecution/v1alpha1" // DEPRECATED - ADR-025
 )
 
 var (
@@ -441,7 +441,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	kubernetesexecutionv1 "github.com/jordigilh/kubernaut/api/kubernetesexecution/v1alpha1"
+	kubernetesexecutionv1 "github.com/Ayush-Singh986/kubernaut/api/kubernetesexecution/v1alpha1"
 )
 
 var (

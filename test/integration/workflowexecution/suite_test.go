@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -48,15 +48,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	workflowexecutionv1alpha1 "github.com/jordigilh/kubernaut/api/workflowexecution/v1alpha1"
-	workflowexecution "github.com/jordigilh/kubernaut/internal/controller/workflowexecution"
-	"github.com/jordigilh/kubernaut/pkg/audit"
-	weaudit "github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
-	weexecutor "github.com/jordigilh/kubernaut/pkg/workflowexecution/executor"
-	wemetrics "github.com/jordigilh/kubernaut/pkg/workflowexecution/metrics"
-	westatus "github.com/jordigilh/kubernaut/pkg/workflowexecution/status"
-	"github.com/jordigilh/kubernaut/test/infrastructure"     // Shared infrastructure (PostgreSQL + Redis + DS)
-	"github.com/jordigilh/kubernaut/test/shared/integration" // DD-AUTH-014: Authenticated DataStorage clients
+	workflowexecutionv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/workflowexecution/v1alpha1"
+	workflowexecution "github.com/Ayush-Singh986/kubernaut/internal/controller/workflowexecution"
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit"
+	weaudit "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
+	weexecutor "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/executor"
+	wemetrics "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/metrics"
+	westatus "github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/status"
+	"github.com/Ayush-Singh986/kubernaut/test/infrastructure"     // Shared infrastructure (PostgreSQL + Redis + DS)
+	"github.com/Ayush-Singh986/kubernaut/test/shared/integration" // DD-AUTH-014: Authenticated DataStorage clients
 	"github.com/prometheus/client_golang/prometheus"
 	// +kubebuilder:scaffold:imports
 )

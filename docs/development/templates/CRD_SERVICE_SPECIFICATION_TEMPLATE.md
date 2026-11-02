@@ -270,24 +270,24 @@ internal/controller/            → CRD controller (INTERNAL)
 ```go
 // Remediation Processor Controller
 import (
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"      // Parent (owner reference)
-    processingv1 "github.com/jordigilh/kubernaut/api/alertprocessor/v1"    // Own CRD
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/v1"                         // Creates downstream
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"      // Parent (owner reference)
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/alertprocessor/v1"    // Own CRD
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/v1"                         // Creates downstream
 )
 
 // AI Analysis Controller
 import (
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"      // Parent
-    processingv1 "github.com/jordigilh/kubernaut/api/alertprocessor/v1"    // Reads from
-    aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/v1"                         // Own CRD
-    workflowv1 "github.com/jordigilh/kubernaut/api/workflow/v1"             // Creates downstream
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"      // Parent
+    processingv1 "github.com/Ayush-Singh986/kubernaut/api/alertprocessor/v1"    // Reads from
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/v1"                         // Own CRD
+    workflowv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/v1"             // Creates downstream
 )
 
 // Workflow Execution Controller
 import (
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"      // Parent
-    workflowv1 "github.com/jordigilh/kubernaut/api/workflow/v1"             // Own CRD
-    executorv1 "github.com/jordigilh/kubernaut/api/executor/v1"             // Creates downstream
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"      // Parent
+    workflowv1 "github.com/Ayush-Singh986/kubernaut/api/workflow/v1"             // Own CRD
+    executorv1 "github.com/Ayush-Singh986/kubernaut/api/executor/v1"             // Creates downstream
 )
 ```
 
@@ -304,15 +304,15 @@ import (
 ❌ **DO NOT** create a catch-all `api/v1` package with all CRDs:
 ```go
 // WRONG - Catch-all package anti-pattern
-kubernautv1 "github.com/jordigilh/kubernaut/api/v1"  // ❌ Contains all CRDs
+kubernautv1 "github.com/Ayush-Singh986/kubernaut/api/v1"  // ❌ Contains all CRDs
 ```
 
 ✅ **DO** use dedicated packages per CRD:
 ```go
 // CORRECT - Dedicated package per CRD
-remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-processingv1 "github.com/jordigilh/kubernaut/api/alertprocessor/v1"
-aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/v1"
+remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+processingv1 "github.com/Ayush-Singh986/kubernaut/api/alertprocessor/v1"
+aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/v1"
 ```
 
 ---
@@ -658,14 +658,14 @@ import (
 
     // CRD API Imports - Each CRD in its own dedicated package
     // NOTE: "kubernaut" ONLY appears in K8s API Group strings, NOT in Go import paths
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"         // RemediationRequest (parent orchestrator)
-    [servicename]v1 "github.com/jordigilh/kubernaut/api/[servicename]/v1"     // This service's CRD (own types)
-    [downstream]v1 "github.com/jordigilh/kubernaut/api/[downstream]/v1"       // Downstream CRDs (creates)
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"         // RemediationRequest (parent orchestrator)
+    [servicename]v1 "github.com/Ayush-Singh986/kubernaut/api/[servicename]/v1"     // This service's CRD (own types)
+    [downstream]v1 "github.com/Ayush-Singh986/kubernaut/api/[downstream]/v1"       // Downstream CRDs (creates)
 
     // Example for Remediation Processor:
-    // remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    // processingv1 "github.com/jordigilh/kubernaut/api/alertprocessor/v1"
-    // aianalysisv1 "github.com/jordigilh/kubernaut/api/ai/v1"
+    // remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    // processingv1 "github.com/Ayush-Singh986/kubernaut/api/alertprocessor/v1"
+    // aianalysisv1 "github.com/Ayush-Singh986/kubernaut/api/ai/v1"
 
     apierrors "k8s.io/apimachinery/pkg/api/errors"
     apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -790,7 +790,7 @@ func (r *[CRD]Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 package main
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/infrastructure/metrics"
+    "github.com/Ayush-Singh986/kubernaut/pkg/infrastructure/metrics"
     "github.com/prometheus/client_golang/prometheus/promhttp"
     "github.com/sirupsen/logrus"
     "net/http"
@@ -1393,12 +1393,12 @@ import (
     "time"
 
     // CRD API Imports - Each CRD in its own dedicated package
-    remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1"
-    [servicename]v1 "github.com/jordigilh/kubernaut/api/[servicename]/v1"
-    [downstream]v1 "github.com/jordigilh/kubernaut/api/[downstream]/v1"
-    "github.com/jordigilh/kubernaut/internal/controller"
-    "github.com/jordigilh/kubernaut/pkg/testutil"
-    "github.com/jordigilh/kubernaut/pkg/testutil/mocks"
+    remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1"
+    [servicename]v1 "github.com/Ayush-Singh986/kubernaut/api/[servicename]/v1"
+    [downstream]v1 "github.com/Ayush-Singh986/kubernaut/api/[downstream]/v1"
+    "github.com/Ayush-Singh986/kubernaut/internal/controller"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil"
+    "github.com/Ayush-Singh986/kubernaut/pkg/testutil/mocks"
 
     v1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1730,7 +1730,7 @@ Following the [MULTI_CRD_RECONCILIATION_ARCHITECTURE.md](../../architecture/MULT
 package controller
 
 import (
-    "github.com/jordigilh/kubernaut/pkg/storage"
+    "github.com/Ayush-Singh986/kubernaut/pkg/storage"
 )
 
 type [CRD]Reconciler struct {

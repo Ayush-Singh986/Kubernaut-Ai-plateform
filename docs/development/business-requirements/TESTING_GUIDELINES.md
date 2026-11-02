@@ -1445,8 +1445,8 @@ Integration tests require real service dependencies (Kubernaut Agent, Data Stora
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| **PostgreSQL** | `quay.io/jordigilh/pgvector:pg16` | 5432 | Audit trail storage (pgvector) |
-| **Redis** | `quay.io/jordigilh/redis:7-alpine` | 6379 | Caching layer |
+| **PostgreSQL** | `quay.io/Ayush-Singh986/pgvector:pg16` | 5432 | Audit trail storage (pgvector) |
+| **Redis** | `quay.io/Ayush-Singh986/redis:7-alpine` | 6379 | Caching layer |
 | **Data Storage** | Built from `docker/data-storage.Dockerfile` | 8080 | Audit persistence API |
 | **Kubernaut Agent** | Built from `kubernaut-agent/Dockerfile` | 8081 | AI analysis service |
 

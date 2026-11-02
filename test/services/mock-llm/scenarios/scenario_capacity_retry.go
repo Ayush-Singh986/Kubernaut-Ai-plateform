@@ -19,7 +19,7 @@ package scenarios
 import (
 	"time"
 
-	openai "github.com/jordigilh/kubernaut/pkg/shared/types/openai"
+	openai "github.com/Ayush-Singh986/kubernaut/pkg/shared/types/openai"
 )
 
 type capacityRetrySlowInvestigationScenario struct {

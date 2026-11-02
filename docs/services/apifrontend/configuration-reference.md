@@ -2,7 +2,7 @@
 
 Narrowly-scoped reference for API Frontend (AF, `cmd/apifrontend`) configuration
 and hot-reload behavior, written specifically to document the restart-required
-LLM identity rule ([#1599](https://github.com/jordigilh/kubernaut/issues/1599) /
+LLM identity rule ([#1599](https://github.com/Ayush-Singh986/kubernaut/issues/1599) /
 [DD-LLM-008](../architecture/decisions/DD-LLM-008-restart-required-llm-identity-lock.md))
 for this service. AF did not previously have a configuration-reference doc; this
 is not (yet) an exhaustive field-by-field reference the way

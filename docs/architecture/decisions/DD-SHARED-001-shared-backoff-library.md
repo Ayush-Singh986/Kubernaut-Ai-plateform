@@ -258,7 +258,7 @@ See [Backoff Adoption Status](../shared-utilities/BACKOFF_ADOPTION_STATUS.md) fo
 ### Quick Start (MANDATORY for All Production Services)
 
 ```go
-import "github.com/jordigilh/kubernaut/pkg/shared/backoff"
+import "github.com/Ayush-Singh986/kubernaut/pkg/shared/backoff"
 
 // In reconciler or retry logic:
 func (r *Reconciler) calculateBackoff(attempts int32) time.Duration {

@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	controller "github.com/jordigilh/kubernaut/internal/controller/remediationorchestrator"
+	controller "github.com/Ayush-Singh986/kubernaut/internal/controller/remediationorchestrator"
 )
 
 // ========================================

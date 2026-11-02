@@ -33,9 +33,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	dsmetrics "github.com/jordigilh/kubernaut/pkg/datastorage/metrics"
-	"github.com/jordigilh/kubernaut/pkg/datastorage/retention"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	dsmetrics "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/retention"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 func TestServerShutdown(t *testing.T) {

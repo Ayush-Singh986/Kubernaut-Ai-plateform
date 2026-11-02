@@ -30,8 +30,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/workflowexecution/audit"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/workflowexecution/audit"
 )
 
 var _ = Describe("Audit Manager — RecordConfigReloaded (GAP-11, Issue #2285)", func() {

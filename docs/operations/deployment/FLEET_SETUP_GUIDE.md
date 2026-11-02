@@ -82,7 +82,7 @@ That path provisions the hub, spoke, Keycloak, Envoy AI Gateway (EAIGW), MCP ser
 Gateway registrations, monitoring, and the operator-managed Kubernaut workloads. It
 leaves the clusters running for inspection; delete `fleet-e2e` and
 `fleet-e2e-remote` when finished. For a persistent user-managed environment, install
-the [Kubernaut Operator](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+the [Kubernaut Operator](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 and apply a Fleet-enabled `Kubernaut` CR as described in Path B below.
 
 ### Validate the registrations
@@ -483,7 +483,7 @@ EOF
 ```
 
 Install the Kubernaut Operator and apply a Fleet-enabled `Kubernaut` CR using the
-[operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
+[operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md).
 Map the MCP Gateway endpoint and separate read/write OAuth2 Secret references into the
 CR; the application Helm chart is no longer shipped by this repository.
 
@@ -577,6 +577,6 @@ kind delete cluster --name kubernaut-remote-cluster
 - `test/infrastructure/fleet_e2e.go` (`SetupFleetE2EInfrastructure`, EAIGW provisioning) — source of truth for Path A's automation and this guide's hub-side steps
 - `test/infrastructure/fleetmetadatacache_remote_cluster.go` (`SetupRemoteClusterForFMC`) — source of truth for this guide's spoke-side steps
 - `test/infrastructure/workflowexecution_e2e_hybrid.go` (`createWorkflowJobExecutorRBAC`) — source of truth for B4's RBAC
-- [Kubernaut Operator installation guide](https://github.com/jordigilh/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
+- [Kubernaut Operator installation guide](https://github.com/Ayush-Singh986/kubernaut-operator/blob/main/docs/installation/00-quickstart.md)
 - [AUTONOMOUS_MODE_SETUP_GUIDE.md](./AUTONOMOUS_MODE_SETUP_GUIDE.md) / [INTERACTIVE_MODE_SETUP_GUIDE.md](./INTERACTIVE_MODE_SETUP_GUIDE.md) — the triggering path fleet mode layers onto; see "Fleet still needs a triggering path" above
-- [Issue #54: Fleet Management](https://github.com/jordigilh/kubernaut/issues/54)
+- [Issue #54: Fleet Management](https://github.com/Ayush-Singh986/kubernaut/issues/54)

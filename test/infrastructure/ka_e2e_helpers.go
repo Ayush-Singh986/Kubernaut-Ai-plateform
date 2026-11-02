@@ -27,9 +27,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/jordigilh/kubernaut/pkg/datastorage/models"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/datastorage/models"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 const readyConditionTrue = "True"

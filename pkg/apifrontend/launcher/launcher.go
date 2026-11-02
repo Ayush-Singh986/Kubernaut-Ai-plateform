@@ -15,11 +15,11 @@ import (
 	"google.golang.org/adk/v2/server/adka2a"
 	adksession "google.golang.org/adk/v2/session"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/audit"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/auth"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/security"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/session"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/audit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/auth"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/security"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/session"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
 )
 
 // A2AConfig holds the configuration for the A2A JSON-RPC handler.

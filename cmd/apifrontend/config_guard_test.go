@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/config"
-	"github.com/jordigilh/kubernaut/pkg/apifrontend/ratelimit"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/ratelimit"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

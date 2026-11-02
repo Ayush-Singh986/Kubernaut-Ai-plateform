@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	prom "github.com/jordigilh/kubernaut/pkg/apifrontend/prometheus"
+	prom "github.com/Ayush-Singh986/kubernaut/pkg/apifrontend/prometheus"
 )
 
 // Source identifies which triage tier determined the severity.

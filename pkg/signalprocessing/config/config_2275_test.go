@@ -5,7 +5,7 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	config "github.com/jordigilh/kubernaut/pkg/signalprocessing/config"
+	config "github.com/Ayush-Singh986/kubernaut/pkg/signalprocessing/config"
 )
 
 // BR-PLATFORM-012, Issue #2275: extend the shared Debug.PprofEnabled toggle

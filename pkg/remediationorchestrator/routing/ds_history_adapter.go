@@ -22,9 +22,9 @@ import (
 	"net/http"
 	"time"
 
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	"github.com/jordigilh/kubernaut/pkg/shared/auth"
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls" // Issue #678: Inter-service TLS
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth"
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls" // Issue #678: Inter-service TLS
 )
 
 // HistoryContextClient is a narrow interface for querying remediation history

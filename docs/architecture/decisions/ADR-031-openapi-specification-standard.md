@@ -117,7 +117,7 @@ info:
     This API provides read-only access to incident data.
   contact:
     name: Kubernaut Team
-    url: https://github.com/jordigilh/kubernaut
+    url: https://github.com/Ayush-Singh986/kubernaut
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html

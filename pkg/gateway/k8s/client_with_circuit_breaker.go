@@ -24,8 +24,8 @@ import (
 	"github.com/sony/gobreaker/v2"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"
 )
 
 // ClientWithCircuitBreaker wraps K8s client operations with circuit breaker protection

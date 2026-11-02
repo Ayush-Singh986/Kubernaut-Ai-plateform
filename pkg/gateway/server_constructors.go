@@ -27,14 +27,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp" // GAP-14 / Issue #1519: inbound/outbound tracing
 
-	"github.com/jordigilh/kubernaut/pkg/audit" // DD-AUDIT-003: Audit integration
+	"github.com/Ayush-Singh986/kubernaut/pkg/audit" // DD-AUDIT-003: Audit integration
 	// Ogen generated audit types
 	// BR-AUDIT-005 Gap #7: Standardized error details
-	"github.com/jordigilh/kubernaut/pkg/shared/auth" // BR-GATEWAY-036/037: Shared auth middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/auth" // BR-GATEWAY-036/037: Shared auth middleware
 	// ADR-052 Addendum 001: Exponential backoff with jitter
-	sharedhealth "github.com/jordigilh/kubernaut/pkg/shared/health" // Issue #753: Dedicated health server
+	sharedhealth "github.com/Ayush-Singh986/kubernaut/pkg/shared/health" // Issue #753: Dedicated health server
 	// Issue #756: FileWatcher for cert rotation
-	sharedtls "github.com/jordigilh/kubernaut/pkg/shared/tls" // Issue #493/#678: Conditional TLS
+	sharedtls "github.com/Ayush-Singh986/kubernaut/pkg/shared/tls" // Issue #493/#678: Conditional TLS
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -47,17 +47,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	remediationv1alpha1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/fleet" // ADR-068: Federated scope checking factory
-	"github.com/jordigilh/kubernaut/pkg/gateway/adapters"
-	"github.com/jordigilh/kubernaut/pkg/gateway/config"
-	"github.com/jordigilh/kubernaut/pkg/gateway/k8s"
-	"github.com/jordigilh/kubernaut/pkg/gateway/metrics"    // BR-109: Request ID middleware
-	"github.com/jordigilh/kubernaut/pkg/gateway/processing" // BR-HTTP-015: Shared CORS library
+	remediationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet" // ADR-068: Federated scope checking factory
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/adapters"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/config"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/k8s"
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/metrics"    // BR-109: Request ID middleware
+	"github.com/Ayush-Singh986/kubernaut/pkg/gateway/processing" // BR-HTTP-015: Shared CORS library
 
 	// DD-005: Shared sanitization library
-	"github.com/jordigilh/kubernaut/pkg/shared/k8s/ownerchain"
-	"github.com/jordigilh/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/k8s/ownerchain"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/scope" // BR-SCOPE-002: Resource scope management
 )
 
 // NewServer creates a new Gateway server with default metrics registry

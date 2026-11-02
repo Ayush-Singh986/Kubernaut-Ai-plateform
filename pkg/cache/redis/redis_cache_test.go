@@ -27,8 +27,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	rediscache "github.com/jordigilh/kubernaut/pkg/cache/redis"
-	kubelog "github.com/jordigilh/kubernaut/pkg/log"
+	rediscache "github.com/Ayush-Singh986/kubernaut/pkg/cache/redis"
+	kubelog "github.com/Ayush-Singh986/kubernaut/pkg/log"
 )
 
 var _ = Describe("Redis Cache", func() {

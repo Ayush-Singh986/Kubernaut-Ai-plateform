@@ -26,12 +26,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	notificationv1alpha1 "github.com/jordigilh/kubernaut/api/notification/v1alpha1"
-	"github.com/jordigilh/kubernaut/pkg/notification/delivery"
-	notificationmetrics "github.com/jordigilh/kubernaut/pkg/notification/metrics"
-	notificationstatus "github.com/jordigilh/kubernaut/pkg/notification/status"
-	"github.com/jordigilh/kubernaut/pkg/shared/sanitization"
-	"github.com/jordigilh/kubernaut/test/shared/helpers"
+	notificationv1alpha1 "github.com/Ayush-Singh986/kubernaut/api/notification/v1alpha1"
+	"github.com/Ayush-Singh986/kubernaut/pkg/notification/delivery"
+	notificationmetrics "github.com/Ayush-Singh986/kubernaut/pkg/notification/metrics"
+	notificationstatus "github.com/Ayush-Singh986/kubernaut/pkg/notification/status"
+	"github.com/Ayush-Singh986/kubernaut/pkg/shared/sanitization"
+	"github.com/Ayush-Singh986/kubernaut/test/shared/helpers"
 )
 
 // Mock delivery service for testing

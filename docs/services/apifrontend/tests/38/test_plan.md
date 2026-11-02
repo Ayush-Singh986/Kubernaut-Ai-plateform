@@ -4,7 +4,7 @@
 **Version:** 1.0
 **Date:** 2026-05-06
 **Status:** Draft
-**Issue:** [#38](https://github.com/jordigilh/kubernaut-apifrontend/issues/38)
+**Issue:** [#38](https://github.com/Ayush-Singh986/kubernaut-apifrontend/issues/38)
 
 ## 1. Introduction
 

@@ -81,9 +81,9 @@ Audited all 6 playbooks in `kubernaut-test-playbooks`:
 - [DD-WE-005: Workflow-Scoped RBAC](./DD-WE-005-workflow-scoped-rbac.md) — v1.2 replacement for shared ClusterRole
 - [DD-WE-002: Dedicated Execution Namespace](./DD-WE-002-dedicated-execution-namespace.md) — Establishes `kubernaut-workflows` namespace
 - [BR-WE-017: Shared SA Model (v1.1) → Per-Workflow SA (v1.2)](../requirements/BR-WE-017-shared-sa-execution-model.md) — Business requirement for SA transition
-- [Issue #551](https://github.com/jordigilh/kubernaut/issues/551) — RBAC rules bug
-- [Issue #552](https://github.com/jordigilh/kubernaut/issues/552) — Credential type injection bug (dependency)
-- [Issue #501](https://github.com/jordigilh/kubernaut/issues/501) — Per-workflow SA via TokenRequest (v1.2)
+- [Issue #551](https://github.com/Ayush-Singh986/kubernaut/issues/551) — RBAC rules bug
+- [Issue #552](https://github.com/Ayush-Singh986/kubernaut/issues/552) — Credential type injection bug (dependency)
+- [Issue #501](https://github.com/Ayush-Singh986/kubernaut/issues/501) — Per-workflow SA via TokenRequest (v1.2)
 
 ---
 

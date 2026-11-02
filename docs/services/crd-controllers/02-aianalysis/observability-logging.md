@@ -135,8 +135,8 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/metrics/server"
     "sigs.k8s.io/controller-runtime/pkg/healthz"
 
-    aianalysisv1 "github.com/jordigilh/kubernaut/pkg/apis/aianalysis/v1"
-    "github.com/jordigilh/kubernaut/pkg/aianalysis"
+    aianalysisv1 "github.com/Ayush-Singh986/kubernaut/pkg/apis/aianalysis/v1"
+    "github.com/Ayush-Singh986/kubernaut/pkg/aianalysis"
 )
 
 var (

@@ -175,5 +175,5 @@ The RemediationOrchestrator validates the RCA target against the `kubernaut.ai/m
 |---------|------|---------|
 | 1.0 | 2026-02-07 | Initial version with 5 production scenarios |
 | 1.1 | 2026-03-04 | BR-496: Added mismatch escalation (affectedResource ≠ root_owner). Updated cross-ref to DD-HAPI-006 v1.3. |
-| 1.3 | 2026-08-01 | [Issue #1806](https://github.com/jordigilh/kubernaut/issues/1806): Rewritten against the Go KA implementation. Field renamed `affectedResource` → `remediationTarget`; cross-ref updated to DD-KA-006 v2.0. |
+| 1.3 | 2026-08-01 | [Issue #1806](https://github.com/Ayush-Singh986/kubernaut/issues/1806): Rewritten against the Go KA implementation. Field renamed `affectedResource` → `remediationTarget`; cross-ref updated to DD-KA-006 v2.0. |
 | 1.2 | 2026-03-24 | Issue #524: `get_resource_context` renamed/split to `get_namespaced_resource_context` / `get_cluster_resource_context` in escalation narrative. |

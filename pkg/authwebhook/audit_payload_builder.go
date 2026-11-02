@@ -19,8 +19,8 @@ package authwebhook
 import (
 	"fmt"
 
-	remediationv1 "github.com/jordigilh/kubernaut/api/remediation/v1alpha1"
-	api "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
+	remediationv1 "github.com/Ayush-Singh986/kubernaut/api/remediation/v1alpha1"
+	api "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
 )
 
 // REFACTOR-AW-003: Audit payload construction extracted for maintainability

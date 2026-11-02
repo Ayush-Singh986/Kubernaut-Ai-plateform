@@ -24,8 +24,8 @@ import (
 	. "github.com/onsi/gomega"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/handlers"
-	"github.com/jordigilh/kubernaut/pkg/aianalysis/metrics"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/handlers"
+	"github.com/Ayush-Singh986/kubernaut/pkg/aianalysis/metrics"
 )
 
 var _ = Describe("UT-AA-668-001: AnalyzingHandler WithConfidenceThreshold", func() {

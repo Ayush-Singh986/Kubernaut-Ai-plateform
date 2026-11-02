@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: mock-llm
-          image: ghcr.io/jordigilh/kubernaut/mock-llm:pr-1161
+          image: ghcr.io/Ayush-Singh986/kubernaut/mock-llm:pr-1161
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

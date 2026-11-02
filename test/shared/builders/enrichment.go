@@ -19,7 +19,7 @@ limitations under the License.
 package builders
 
 import (
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // EnrichmentBuilder provides a fluent API for building EnrichmentResults test fixtures.

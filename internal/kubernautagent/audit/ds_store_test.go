@@ -24,12 +24,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/audit"
-	"github.com/jordigilh/kubernaut/internal/kubernautagent/investigator"
-	ogenclient "github.com/jordigilh/kubernaut/pkg/datastorage/ogen-client"
-	katypes "github.com/jordigilh/kubernaut/pkg/kubernautagent/types"
-	sharedaudit "github.com/jordigilh/kubernaut/pkg/shared/audit"
-	sharedtypes "github.com/jordigilh/kubernaut/pkg/shared/types"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/audit"
+	"github.com/Ayush-Singh986/kubernaut/internal/kubernautagent/investigator"
+	ogenclient "github.com/Ayush-Singh986/kubernaut/pkg/datastorage/ogen-client"
+	katypes "github.com/Ayush-Singh986/kubernaut/pkg/kubernautagent/types"
+	sharedaudit "github.com/Ayush-Singh986/kubernaut/pkg/shared/audit"
+	sharedtypes "github.com/Ayush-Singh986/kubernaut/pkg/shared/types"
 )
 
 // goconst dedup: test-fixture literals deduplicated below.

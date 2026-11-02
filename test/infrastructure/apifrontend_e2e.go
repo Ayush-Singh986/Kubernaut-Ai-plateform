@@ -44,7 +44,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jordigilh/kubernaut/pkg/fleet"
+	"github.com/Ayush-Singh986/kubernaut/pkg/fleet"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1041,7 +1041,7 @@ func afDeployMockLLM(ctx context.Context, kubeconfigPath, mockLLMImage, clusterI
 }
 
 func renderAFMockLLMManifest(data []byte, mockLLMImage, clusterID string, workflowUUIDs map[string]string) string {
-	manifest := strings.ReplaceAll(string(data), "ghcr.io/jordigilh/kubernaut/mock-llm:pr-1161", mockLLMImage)
+	manifest := strings.ReplaceAll(string(data), "ghcr.io/Ayush-Singh986/kubernaut/mock-llm:pr-1161", mockLLMImage)
 	manifest = strings.ReplaceAll(manifest, "imagePullPolicy: Always", "imagePullPolicy: IfNotPresent")
 	manifest = strings.ReplaceAll(manifest, "__HUB_CLUSTER_ID__", clusterID)
 	// The CRD seeder assigns the catalog UUID after admission. Keep the AF

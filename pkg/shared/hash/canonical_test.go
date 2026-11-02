@@ -19,7 +19,7 @@ package hash_test
 import (
 	"strings"
 
-	hash "github.com/jordigilh/kubernaut/pkg/shared/hash"
+	hash "github.com/Ayush-Singh986/kubernaut/pkg/shared/hash"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

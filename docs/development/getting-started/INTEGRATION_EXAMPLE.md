@@ -33,9 +33,9 @@ import (
     "context"
     "log"
 
-    "github.com/jordigilh/kubernaut/internal/config"
-    "github.com/jordigilh/kubernaut/pkg/ai/llm"
-    "github.com/jordigilh/kubernaut/pkg/workflow/engine"
+    "github.com/Ayush-Singh986/kubernaut/internal/config"
+    "github.com/Ayush-Singh986/kubernaut/pkg/ai/llm"
+    "github.com/Ayush-Singh986/kubernaut/pkg/workflow/engine"
 )
 
 func main() {

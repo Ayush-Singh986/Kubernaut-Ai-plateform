@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	ro "github.com/jordigilh/kubernaut/pkg/remediationorchestrator"
+	ro "github.com/Ayush-Singh986/kubernaut/pkg/remediationorchestrator"
 )
 
 var _ = Describe("Core Types (BR-ORCH-027, BR-ORCH-028)", func() {

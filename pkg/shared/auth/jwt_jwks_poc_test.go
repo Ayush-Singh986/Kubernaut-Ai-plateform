@@ -14,7 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	testauth "github.com/jordigilh/kubernaut/test/shared/auth"
+	testauth "github.com/Ayush-Singh986/kubernaut/test/shared/auth"
 )
 
 // newTestCache creates a jwk.Cache with an httprc.Client suitable for tests.
