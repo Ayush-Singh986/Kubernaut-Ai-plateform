@@ -22,7 +22,7 @@ Kubernaut closes the loop from Kubernetes alert to automated remediation. It ope
 <details>
 <summary>See autonomous mode demo (non-interactive)</summary>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Ayush-Singh986/kubernaut-demo-scenarios/main/scenarios/crashloop/crashloop-lite.gif" alt="CrashLoopBackOff demo — autonomous alert-to-fix" width="800"/>
+  <img src="https://raw.githubusercontent.com/jordigilh/kubernaut-demo-scenarios/main/scenarios/crashloop/crashloop-lite.gif" alt="CrashLoopBackOff demo — autonomous alert-to-fix" width="800"/>
 </p>
 <p align="center">
   This is 1 of 37 runnable scenarios in <a href="https://github.com/Ayush-Singh986/kubernaut-demo-scenarios"><strong>kubernaut-demo-scenarios</strong></a> — clone it and run any of them against your own cluster.
